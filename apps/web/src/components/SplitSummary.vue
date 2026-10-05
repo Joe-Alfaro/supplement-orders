@@ -16,14 +16,6 @@ const feePercent = `${PLATFORM_FEE_BPS / 100}%`
 <template>
   <table class="summary" aria-label="Split summary">
     <tbody>
-      <tr>
-        <th scope="row">Subtotal</th>
-        <td><MoneyText :cents="split.subtotalCents" /></td>
-      </tr>
-      <tr>
-        <th scope="row">Platform fee ({{ feePercent }})</th>
-        <td><MoneyText :cents="split.platformFeeCents" /></td>
-      </tr>
       <tr class="summary-total">
         <th scope="row">Patient pays</th>
         <td><MoneyText :cents="split.totalCents" /></td>
@@ -33,12 +25,12 @@ const feePercent = `${PLATFORM_FEE_BPS / 100}%`
         <td><MoneyText :cents="split.cogsCents" /></td>
       </tr>
       <tr>
+        <th scope="row">Platform fee ({{ feePercent }})</th>
+        <td><MoneyText :cents="split.platformFeeCents" /></td>
+      </tr>
+      <tr class="summary-total">
         <th scope="row">Your margin</th>
         <td><MoneyText :cents="split.providerMarginCents" /></td>
-      </tr>
-      <tr>
-        <th scope="row">Platform fee</th>
-        <td><MoneyText :cents="split.platformFeeCents" /></td>
       </tr>
     </tbody>
   </table>

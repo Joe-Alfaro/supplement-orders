@@ -1,29 +1,21 @@
 <script setup lang="ts">
-import type { OrderTotalsDto } from '@supplement-orders/domain'
 import MoneyText from './MoneyText.vue'
 
-// Patient-facing totals: never wholesale cost or margin.
+// Patient-facing totals: the patient pays exactly the subtotal. No wholesale
+// cost, platform fee, or margin is ever shown here.
 interface Props {
-  totals: OrderTotalsDto
+  totalCents: number
 }
 
 defineProps<Props>()
 </script>
 
 <template>
-  <table class="summary" aria-label="Order totals">
+  <table class="summary" aria-label="Order total">
     <tbody>
-      <tr>
-        <th scope="row">Subtotal</th>
-        <td><MoneyText :cents="totals.subtotalCents" /></td>
-      </tr>
-      <tr>
-        <th scope="row">Platform fee</th>
-        <td><MoneyText :cents="totals.platformFeeCents" /></td>
-      </tr>
       <tr class="summary-total">
         <th scope="row">Total</th>
-        <td><MoneyText :cents="totals.totalCents" /></td>
+        <td><MoneyText :cents="totalCents" /></td>
       </tr>
     </tbody>
   </table>

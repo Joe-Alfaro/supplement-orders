@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import type { OrderLineDto, ProviderOrderLineDto } from '@supplement-orders/domain'
+import { formatBps } from '../money'
 import MoneyText from './MoneyText.vue'
 
-// Read-only lines. Wholesale cost and margin columns appear only for provider lines with
-// `showCosts`; patient lines carry no cost data to show.
+// Read-only lines. Wholesale cost and margin % columns appear only for provider
+// lines with `showCosts`; patient lines carry no cost data to show.
 interface Props {
   lines: (OrderLineDto | ProviderOrderLineDto)[]
   showCosts?: boolean
@@ -26,22 +27,44 @@ function isProviderLine(
         <th v-if="showCosts" scope="col">Wholesale cost</th>
         <th scope="col">Qty</th>
         <th scope="col">Price each</th>
-        <th v-if="showCosts" scope="col">Your margin (each)</th>
+        <th v-if="showCosts" scope="col">Margin %</th>
         <th scope="col">Line total</th>
       </tr>
     </thead>
     <tbody>
-      <tr v-for="line in lines" :key="line.productId">
-        <td>{{ line.productName }}</td>
+      <tr
+        v-for="(line, index) in lines"
+        :key="line.productId ?? `line-${index}`"
+      >
+        <td>{{ line.productName ?? '—' }}</td>
         <td v-if="showCosts && isProviderLine(line)">
-          <MoneyText :cents="line.unitCogsCents" />
+          <MoneyText
+            v-if="line.unitCogsCents !== null"
+            :cents="line.unitCogsCents"
+          />
+          <span v-else>—</span>
         </td>
         <td class="num">{{ line.quantity }}</td>
-        <td><MoneyText :cents="line.unitPriceCents" /></td>
-        <td v-if="showCosts && isProviderLine(line)">
-          <MoneyText :cents="line.unitMarginCents" />
+        <td>
+          <MoneyText
+            v-if="line.unitPriceCents !== null"
+            :cents="line.unitPriceCents"
+          />
+          <span v-else>—</span>
         </td>
-        <td><MoneyText :cents="line.lineTotalCents" /></td>
+        <td v-if="showCosts && isProviderLine(line)" class="num">
+          <span v-if="line.marginBps !== null">
+            {{ formatBps(line.marginBps) }}%
+          </span>
+          <span v-else>—</span>
+        </td>
+        <td>
+          <MoneyText
+            v-if="line.lineTotalCents !== null"
+            :cents="line.lineTotalCents"
+          />
+          <span v-else>—</span>
+        </td>
       </tr>
     </tbody>
   </table>

@@ -71,7 +71,7 @@ async function pay() {
 
     <h2>Items</h2>
     <LinesTable :lines="order.lines" />
-    <TotalsSummary :totals="order.totals" />
+    <TotalsSummary :total-cents="order.totalCents" />
 
     <section v-if="order.status === 'pending_payment'" aria-label="Payment">
       <p v-if="isDev">
@@ -91,8 +91,8 @@ async function pay() {
           <span v-if="paying" class="spinner" aria-hidden="true"></span>
           {{
             paying
-              ? `Paying ${formatCents(order.totals.totalCents)}…`
-              : `Pay ${formatCents(order.totals.totalCents)}`
+              ? `Paying ${formatCents(order.totalCents)}…`
+              : `Pay ${formatCents(order.totalCents)}`
           }}
         </button>
       </p>
@@ -106,7 +106,7 @@ async function pay() {
       <p role="status">
         Paid
         <strong>{{
-          formatCents(order.payment?.amountCents ?? order.totals.totalCents)
+          formatCents(order.payment?.amountCents ?? order.totalCents)
         }}</strong>
         <template v-if="order.paidAt">
           on {{ formatDateTime(order.paidAt) }}</template

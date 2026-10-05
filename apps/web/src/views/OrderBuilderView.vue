@@ -14,6 +14,7 @@ import {
 } from '../api'
 import { useOrderDraft } from '../builder'
 import { ErrorBanner, MoneyText, SplitSummary } from '../components'
+import { formatCents, PLATFORM_FEE_BPS } from '../money'
 
 interface Props {
   patientId: string
@@ -38,6 +39,7 @@ const banner = ref<string | null>(null)
 
 const draft = useOrderDraft(products)
 const { lines, evaluated, split, canSend } = draft
+const feePercent = `${PLATFORM_FEE_BPS / 100}%`
 
 async function load() {
   loading.value = true
@@ -90,8 +92,7 @@ function handleError(err: unknown) {
 async function run(action: () => Promise<void>) {
   banner.value = null
   status.value = null
-  draft.showAllErrors.value = true
-  if (!draft.canSaveDraft.value) {
+  if (!draft.canSave.value) {
     banner.value = 'Fix the highlighted fields first.'
     return
   }
@@ -126,7 +127,7 @@ function sendToPatient() {
 
 function selectProduct(key: number, event: Event) {
   const { value } = event.target as HTMLSelectElement
-  draft.updateLine(key, { productId: value === '' ? null : Number(value) })
+  draft.setProduct(key, value === '' ? null : Number(value))
 }
 
 function inputValue(event: Event) {
@@ -160,8 +161,8 @@ function fieldId(key: number, field: string) {
           <th scope="col">Product</th>
           <th scope="col">Wholesale cost</th>
           <th scope="col">Qty</th>
+          <th scope="col">Margin %</th>
           <th scope="col">Patient price (each)</th>
-          <th scope="col">Your margin (each)</th>
           <th scope="col">Line total</th>
           <th scope="col"><span class="visually-hidden">Remove</span></th>
         </tr>
@@ -224,11 +225,7 @@ function fieldId(key: number, field: string) {
                   ? fieldId(row.line.key, 'qty-error')
                   : undefined
               "
-              @input="
-                draft.updateLine(row.line.key, {
-                  quantityInput: inputValue($event),
-                })
-              "
+              @input="draft.setQuantity(row.line.key, inputValue($event))"
             />
             <p
               v-if="row.errors.quantity"
@@ -239,10 +236,41 @@ function fieldId(key: number, field: string) {
             </p>
           </td>
           <td>
+            <label
+              :for="fieldId(row.line.key, 'margin')"
+              class="visually-hidden"
+              >Margin % for line {{ index + 1 }}</label
+            >
+            <input
+              :id="fieldId(row.line.key, 'margin')"
+              class="margin"
+              type="text"
+              inputmode="decimal"
+              placeholder="0.00"
+              :value="row.line.marginInput"
+              :class="{ negative: row.line.marginInput.startsWith('-') }"
+              :aria-invalid="row.errors.margin ? 'true' : undefined"
+              :aria-describedby="
+                row.errors.margin
+                  ? fieldId(row.line.key, 'margin-error')
+                  : undefined
+              "
+              @input="draft.setMargin(row.line.key, inputValue($event))"
+              @blur="draft.normalizeMargin(row.line.key)"
+            /><span aria-hidden="true">%</span>
+            <p
+              v-if="row.errors.margin"
+              :id="fieldId(row.line.key, 'margin-error')"
+              class="field-error"
+            >
+              {{ row.errors.margin }}
+            </p>
+          </td>
+          <td>
             <label :for="fieldId(row.line.key, 'price')" class="visually-hidden"
               >Patient price for line {{ index + 1 }}</label
             >
-            <span class="dollar">$</span>
+            <span class="dollar" aria-hidden="true">$</span>
             <input
               :id="fieldId(row.line.key, 'price')"
               class="price"
@@ -250,19 +278,24 @@ function fieldId(key: number, field: string) {
               inputmode="decimal"
               placeholder="0.00"
               :value="row.line.priceInput"
-              :aria-invalid="row.errors.unitPriceCents ? 'true' : undefined"
-              :aria-describedby="
-                row.errors.unitPriceCents
-                  ? fieldId(row.line.key, 'price-error')
+              :aria-invalid="
+                row.errors.unitPriceCents || row.belowMinimum
+                  ? 'true'
                   : undefined
               "
-              @input="
-                draft.updateLine(row.line.key, {
-                  priceInput: inputValue($event),
-                })
-              "
-              @blur="draft.blurPrice(row.line.key)"
+              :aria-describedby="`${fieldId(row.line.key, 'price-min')} ${fieldId(row.line.key, 'price-error')}`"
+              @input="draft.setPrice(row.line.key, inputValue($event))"
+              @blur="draft.normalizePrice(row.line.key)"
             />
+            <p
+              v-if="row.minPriceCents !== null"
+              :id="fieldId(row.line.key, 'price-min')"
+              class="hint"
+              :class="{ negative: row.belowMinimum }"
+              :data-testid="`min-${index}`"
+            >
+              Min {{ formatCents(row.minPriceCents) }}
+            </p>
             <p
               v-if="row.errors.unitPriceCents"
               :id="fieldId(row.line.key, 'price-error')"
@@ -270,13 +303,6 @@ function fieldId(key: number, field: string) {
             >
               {{ row.errors.unitPriceCents }}
             </p>
-          </td>
-          <td :data-testid="`margin-${index}`">
-            <MoneyText
-              v-if="row.marginCents !== null"
-              :cents="row.marginCents"
-            />
-            <span v-else>—</span>
           </td>
           <td>
             <MoneyText
@@ -299,8 +325,12 @@ function fieldId(key: number, field: string) {
     </p>
 
     <h2>Split summary</h2>
-    <SplitSummary v-if="split.ok" :split="split.split" />
-    <p v-else class="muted">{{ split.message }}</p>
+    <SplitSummary v-if="split" :split="split" />
+    <p v-else class="muted">
+      Complete every line (product, quantity, and a price at or above its
+      minimum) to see the split. The platform fee is {{ feePercent }} of the
+      order and comes out of your margin.
+    </p>
 
     <p class="actions">
       <button type="button" :disabled="saving" @click="saveDraft">

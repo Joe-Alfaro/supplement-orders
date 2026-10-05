@@ -22,7 +22,7 @@ const pending: PatientOrderDetailDto = {
   sentAt: '2026-10-05T12:05:00.000Z',
   paidAt: null,
   patientAddress: '214 Alder St, Portland, OR 97205',
-  totals: { subtotalCents: 12000, platformFeeCents: 90, totalCents: 12090 },
+  totalCents: 12000,
   lines: [
     {
       productId: 1,
@@ -42,7 +42,7 @@ const paid: PatientOrderDetailDto = {
   paidAt: '2026-10-05T12:10:00.000Z',
   payment: {
     id: 5,
-    amountCents: 12090,
+    amountCents: 12000,
     reference: 'fake_ch_123',
     createdAt: '2026-10-05T12:10:00.000Z',
   },
@@ -63,7 +63,7 @@ async function renderPayScreen() {
     path: '/my-orders/42',
     props: { orderId: '42' },
   })
-  return screen.findByRole('button', { name: 'Pay $120.90' })
+  return screen.findByRole('button', { name: 'Pay $120.00' })
 }
 
 beforeEach(() => {
@@ -103,7 +103,7 @@ describe('PatientOrderView', () => {
 
     expect(await screen.findByText(/Card declined/)).toBeTruthy()
     expect(api.payOrder).toHaveBeenCalledWith(42, { simulateFailure: true })
-    const retry = screen.getByRole('button', { name: 'Pay $120.90' })
+    const retry = screen.getByRole('button', { name: 'Pay $120.00' })
     expect(retry).toHaveProperty('disabled', false)
     expect(screen.queryByRole('heading', { name: 'Receipt' })).toBeNull()
   })
@@ -112,7 +112,7 @@ describe('PatientOrderView', () => {
     ['pending', pending],
     ['paid', paid],
   ])(
-    'never renders wholesale cost, COGS or margin (%s)',
+    'never renders wholesale cost, COGS, margin, or the platform fee (%s)',
     async (_label, order) => {
       vi.mocked(api.getOrder).mockResolvedValue(order)
       const { container } = await renderWithRouter(PatientOrderView, {
@@ -125,6 +125,7 @@ describe('PatientOrderView', () => {
       expect(text).not.toMatch(/Wholesale cost/i)
       expect(text).not.toMatch(/COGS/i)
       expect(text).not.toMatch(/margin/i)
+      expect(text).not.toMatch(/Platform fee/i)
     },
   )
 })

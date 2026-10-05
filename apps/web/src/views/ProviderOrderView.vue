@@ -75,7 +75,10 @@ onMounted(load)
     <LinesTable :lines="order.lines" show-costs />
 
     <h2>Split</h2>
-    <SplitSummary :split="order.split" />
+    <SplitSummary v-if="order.split" :split="order.split" />
+    <p v-else class="muted">
+      This draft is incomplete, so there is no split yet.
+    </p>
 
     <template v-if="order.status === 'paid' && order.payment">
       <h2>Ledger</h2>

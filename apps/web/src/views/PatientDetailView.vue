@@ -65,8 +65,13 @@ function orderLink(order: ProviderOrderSummaryDto) {
             }}</RouterLink>
           </td>
           <td><StatusBadge :status="order.status" /></td>
-          <td><MoneyText :cents="order.split.totalCents" /></td>
-          <td><MoneyText :cents="order.split.providerMarginCents" /></td>
+          <template v-if="order.split">
+            <td><MoneyText :cents="order.split.totalCents" /></td>
+            <td><MoneyText :cents="order.split.providerMarginCents" /></td>
+          </template>
+          <template v-else>
+            <td colspan="2" class="muted">Incomplete draft</td>
+          </template>
         </tr>
       </tbody>
     </table>

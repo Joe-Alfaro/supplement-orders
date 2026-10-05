@@ -238,3 +238,18 @@ tr.row-link:focus {
   max-width: 28rem;
   margin: 4rem auto;
 }
+
+input.margin {
+  width: 4.5rem;
+}
+
+.hint {
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+  color: #555;
+}
+
+.hint.negative {
+  color: #b00020;
+  font-weight: 600;
+}

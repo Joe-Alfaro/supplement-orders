@@ -54,7 +54,7 @@ function openOrder(orderId: number) {
         >
           <td>{{ formatDate(order.createdAt) }}</td>
           <td>{{ order.providerName }}</td>
-          <td><MoneyText :cents="order.totals.totalCents" /></td>
+          <td><MoneyText :cents="order.totalCents" /></td>
           <td><StatusBadge :status="order.status" /></td>
         </tr>
       </tbody>

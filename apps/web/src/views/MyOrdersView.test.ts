@@ -23,7 +23,7 @@ function order(id: number, providerName: string): PatientOrderSummaryDto {
     createdAt: '2026-10-05T12:00:00.000Z',
     sentAt: '2026-10-05T12:00:00.000Z',
     paidAt: null,
-    totals: { subtotalCents: 1000, platformFeeCents: 8, totalCents: 1008 },
+    totalCents: 1000,
   }
 }
 
