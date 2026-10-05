@@ -214,9 +214,9 @@ describe('validation errors', () => {
       .set(provider)
 
     expect(empty.status).toBe(422)
-    expect(empty.body.error).toMatchObject({
+    expect(empty.body.error).toEqual({
       code: 'EMPTY_ORDER',
-      field: 'lines',
+      message: expect.any(String),
     })
     expect(edit.status).toBe(409)
     expect(resend.body.error.code).toBe('ORDER_NOT_DRAFT')
