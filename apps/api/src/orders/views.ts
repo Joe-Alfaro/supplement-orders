@@ -44,6 +44,7 @@ async function selectOrders(db: Db, where: SQL | undefined) {
       patientId: orders.patientId,
       patientName: patientUsers.name,
       patientAddress: patients.address,
+      patientDateOfBirth: patients.dateOfBirth,
       providerId: orders.providerId,
       providerName: providerUsers.name,
       subtotalCents: orders.subtotalCents,
@@ -301,6 +302,7 @@ export async function loadProviderOrderDetail(
   }))
   return {
     ...providerSummary(order, lines),
+    patientDateOfBirth: order.patientDateOfBirth,
     patientAddress: order.patientAddress,
     lines: lines.map(providerLine),
     payment,

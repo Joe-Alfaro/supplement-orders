@@ -5,7 +5,7 @@ import { generatePatients, generateProducts } from './seed-bulk'
 
 interface SeedProvider {
   name: string
-  patients: { name: string; address: string }[]
+  patients: { name: string; dateOfBirth: string; address: string }[]
 }
 
 // Two providers so ownership boundaries are demonstrable; the first has two patients.
@@ -13,15 +13,31 @@ const SEED_PROVIDERS: SeedProvider[] = [
   {
     name: 'Dr. Maya Rivera',
     patients: [
-      { name: 'Jordan Lee', address: '214 Alder St, Portland, OR 97205' },
-      { name: 'Sam Patel', address: '88 Elm Ave, Austin, TX 78704' },
+      {
+        name: 'Jordan Lee',
+        dateOfBirth: '1984-03-14',
+        address: '214 Alder St, Portland, OR 97205',
+      },
+      {
+        name: 'Sam Patel',
+        dateOfBirth: '1971-11-02',
+        address: '88 Elm Ave, Austin, TX 78704',
+      },
     ],
   },
   {
     name: 'Dr. Owen Brooks',
     patients: [
-      { name: 'Alex Kim', address: '1502 Pine Rd, Denver, CO 80203' },
-      { name: 'Riley Chen', address: '9 Harbor Way, Boston, MA 02110' },
+      {
+        name: 'Alex Kim',
+        dateOfBirth: '1993-07-21',
+        address: '1502 Pine Rd, Denver, CO 80203',
+      },
+      {
+        name: 'Riley Chen',
+        dateOfBirth: '1958-01-30',
+        address: '9 Harbor Way, Boston, MA 02110',
+      },
     ],
   },
 ]
@@ -101,6 +117,7 @@ async function seedProvider(db: Db, seed: SeedProvider) {
       .values({
         userId: patientUser!.id,
         providerId: provider!.id,
+        dateOfBirth: patient.dateOfBirth,
         address: patient.address,
       })
       .returning()
@@ -136,6 +153,7 @@ async function seedBulkPatients(db: Db, providerIds: number[]) {
     generated.map((patient, i) => ({
       userId: userIds[i]!,
       providerId: providerIds[i % providerIds.length]!,
+      dateOfBirth: patient.dateOfBirth,
       address: patient.address,
     })),
   )
