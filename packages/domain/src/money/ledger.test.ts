@@ -13,12 +13,14 @@ interface LedgerFailureCase {
   amountPaidCents: number
 }
 
+// Revision 2 example: patient pays the $120.00 subtotal. The $0.90 fee comes
+// out of the markup, so margin is $49.10 rather than $50.00.
 const EXAMPLE_SPLIT: OrderSplit = {
   subtotalCents: 12000,
   platformFeeCents: 90,
-  totalCents: 12090,
+  totalCents: 12000,
   cogsCents: 7000,
-  providerMarginCents: 5000,
+  providerMarginCents: 4910,
 }
 
 const ZERO_SPLIT: OrderSplit = {
@@ -29,11 +31,13 @@ const ZERO_SPLIT: OrderSplit = {
   providerMarginCents: 0,
 }
 
+// One unit at the minimum for cost 66. Markup is 1, which equals the fee, so
+// the provider-margin entry is zero and is still emitted.
 const ZERO_MARGIN_SPLIT: OrderSplit = {
-  subtotalCents: 800,
-  platformFeeCents: 6,
-  totalCents: 806,
-  cogsCents: 800,
+  subtotalCents: 67,
+  platformFeeCents: 1,
+  totalCents: 67,
+  cogsCents: 66,
   providerMarginCents: 0,
 }
 
@@ -75,16 +79,16 @@ describe('toLedgerEntries', () => {
   it('returns cogs, provider margin, and platform fee in that order', () => {
     expect(toLedgerEntries(EXAMPLE_SPLIT)).toEqual([
       { type: 'cogs', amountCents: 7000 },
-      { type: 'provider_margin', amountCents: 5000 },
+      { type: 'provider_margin', amountCents: 4910 },
       { type: 'platform_fee', amountCents: 90 },
     ])
   })
 
   it('keeps a zero provider-margin entry', () => {
     expect(toLedgerEntries(ZERO_MARGIN_SPLIT)).toEqual([
-      { type: 'cogs', amountCents: 800 },
+      { type: 'cogs', amountCents: 66 },
       { type: 'provider_margin', amountCents: 0 },
-      { type: 'platform_fee', amountCents: 6 },
+      { type: 'platform_fee', amountCents: 1 },
     ])
   })
 
@@ -116,9 +120,9 @@ describe('assertLedgerBalances', () => {
     const entries: LedgerEntryDraft[] = [
       { type: 'platform_fee', amountCents: 90 },
       { type: 'cogs', amountCents: 7000 },
-      { type: 'provider_margin', amountCents: 5000 },
+      { type: 'provider_margin', amountCents: 4910 },
     ]
-    expect(assertLedgerBalances(entries, 12090)).toBeUndefined()
+    expect(assertLedgerBalances(entries, 12000)).toBeUndefined()
   })
 
   it.each<LedgerFailureCase>([
