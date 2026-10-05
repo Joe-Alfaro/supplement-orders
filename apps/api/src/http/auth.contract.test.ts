@@ -422,11 +422,12 @@ describe('personas and users', () => {
     const pending = await sendDraft(draft.id)
     const productsBefore = await context()
       .request.get('/api/products')
+      .query({ limit: 100 })
       .set(USER_ID_HEADER, String(context().seed.providerUserId))
     expect(productsBefore.status).toBe(200)
     const stockBefore = z
       .array(productDtoSchema)
-      .parse(productsBefore.body)
+      .parse(asRecord(productsBefore.body).items)
       .map((product) => ({
         id: product.id,
         stockQuantity: product.stockQuantity,
@@ -449,11 +450,12 @@ describe('personas and users', () => {
     expect(detail.ledger).toEqual([])
     const productsAfter = await context()
       .request.get('/api/products')
+      .query({ limit: 100 })
       .set(USER_ID_HEADER, String(context().seed.providerUserId))
     expect(productsAfter.status).toBe(200)
     const stockAfter = z
       .array(productDtoSchema)
-      .parse(productsAfter.body)
+      .parse(asRecord(productsAfter.body).items)
       .map((product) => ({
         id: product.id,
         stockQuantity: product.stockQuantity,
