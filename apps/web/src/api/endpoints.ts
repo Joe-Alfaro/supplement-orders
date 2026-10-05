@@ -2,9 +2,11 @@ import type {
   CreateOrderRequest,
   DashboardDto,
   ListOrdersQuery,
+  ListQuery,
   OrderDetailDto,
   OrderLineInput,
   OrderSummaryDto,
+  Page,
   PatientDto,
   PatientOrderDetailDto,
   PayOrderRequest,
@@ -13,6 +15,7 @@ import type {
   ReplaceOrderLinesRequest,
   UserDto,
 } from '@supplement-orders/domain'
+import { PAGE_LIMIT_MAX } from '@supplement-orders/domain'
 import { request } from './client'
 
 // One typed function per endpoint in FRONTEND_DESIGN.md §7.
@@ -21,12 +24,43 @@ export function listUsers() {
   return request<UserDto[]>('GET', '/users')
 }
 
+function listQueryString(query: ListQuery) {
+  const params = new URLSearchParams()
+  if (query.q) params.set('q', query.q)
+  if (query.offset !== undefined) params.set('offset', String(query.offset))
+  if (query.limit !== undefined) params.set('limit', String(query.limit))
+  const search = params.toString()
+  return search ? `?${search}` : ''
+}
+
+export function searchProducts(query: ListQuery = {}) {
+  return request<Page<ProductDto>>('GET', `/products${listQueryString(query)}`)
+}
+
+export function searchPatients(query: ListQuery = {}) {
+  return request<Page<PatientDto>>('GET', `/patients${listQueryString(query)}`)
+}
+
+/**
+ * Transitional: collects every page into one array so screens built before
+ * pagination keep working. Replace with searchProducts/searchPatients.
+ */
+async function collectAll<T>(
+  fetchPage: (query: ListQuery) => Promise<Page<T>>,
+  offset = 0,
+): Promise<T[]> {
+  const page = await fetchPage({ offset, limit: PAGE_LIMIT_MAX })
+  const next = offset + page.items.length
+  if (page.items.length === 0 || next >= page.total) return page.items
+  return [...page.items, ...(await collectAll(fetchPage, next))]
+}
+
 export function listProducts() {
-  return request<ProductDto[]>('GET', '/products')
+  return collectAll(searchProducts)
 }
 
 export function listPatients() {
-  return request<PatientDto[]>('GET', '/patients')
+  return collectAll(searchPatients)
 }
 
 export function getPatient(patientId: number) {
