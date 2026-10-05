@@ -1,11 +1,16 @@
 import {
   computeSplit,
+  marginBpsFromPrice,
+  minUnitPriceCents,
+  SplitValidationError,
   type LedgerEntryDto,
+  type OrderLineDto,
   type OrderSplitDto,
   type PatientOrderDetailDto,
   type PatientOrderSummaryDto,
   type PaymentDto,
   type ProviderOrderDetailDto,
+  type ProviderOrderLineDto,
   type ProviderOrderSummaryDto,
 } from '@supplement-orders/domain'
 import { and, asc, desc, eq, inArray, ne, type SQL } from 'drizzle-orm'
@@ -72,7 +77,7 @@ async function selectLines(db: Db, orderIds: number[]) {
       unitCogsCents: orderItems.unitCogsCents,
     })
     .from(orderItems)
-    .innerJoin(products, eq(products.id, orderItems.productId))
+    .leftJoin(products, eq(products.id, orderItems.productId))
     .where(inArray(orderItems.orderId, orderIds))
     .orderBy(asc(orderItems.id))
 }
@@ -80,42 +85,42 @@ async function selectLines(db: Db, orderIds: number[]) {
 type LineRow = Awaited<ReturnType<typeof selectLines>>[number]
 
 /**
- * Drafts are priced live from their lines. Once sent, the persisted snapshot is
- * authoritative for what the patient pays; COGS and margin come from the
- * snapshotted line costs.
+ * Sent orders report the split snapshotted on send. Drafts are priced live, and
+ * get no split while they would fail send validation (no lines, an incomplete
+ * line, or a price below its minimum): the server never reports a split it
+ * would refuse to charge.
  */
-function splitFor(order: OrderRow, lines: LineRow[]): OrderSplitDto {
-  const live =
-    lines.length === 0
-      ? {
-          subtotalCents: 0,
-          platformFeeCents: 0,
-          totalCents: 0,
-          cogsCents: 0,
-          providerMarginCents: 0,
-        }
-      : computeSplit(lines)
-  const { cogsCents, providerMarginCents } = live
+function splitFor(order: OrderRow, lines: LineRow[]): OrderSplitDto | null {
   if (
-    order.subtotalCents === null ||
-    order.platformFeeCents === null ||
-    order.totalCents === null
+    order.subtotalCents !== null &&
+    order.platformFeeCents !== null &&
+    order.totalCents !== null
   ) {
-    const { subtotalCents, platformFeeCents, totalCents } = live
+    const cogsCents = lines.reduce(
+      (sum, l) => sum + l.quantity * (l.unitCogsCents ?? 0),
+      0,
+    )
     return {
-      subtotalCents,
-      platformFeeCents,
-      totalCents,
+      subtotalCents: order.subtotalCents,
+      platformFeeCents: order.platformFeeCents,
+      totalCents: order.totalCents,
       cogsCents,
-      providerMarginCents,
+      providerMarginCents:
+        order.subtotalCents - cogsCents - order.platformFeeCents,
     }
   }
-  return {
-    subtotalCents: order.subtotalCents,
-    platformFeeCents: order.platformFeeCents,
-    totalCents: order.totalCents,
-    cogsCents,
-    providerMarginCents,
+  const complete = lines.flatMap(
+    ({ quantity, unitPriceCents, unitCogsCents }) =>
+      unitPriceCents === null || unitCogsCents === null
+        ? []
+        : [{ quantity, unitPriceCents, unitCogsCents }],
+  )
+  if (complete.length === 0 || complete.length !== lines.length) return null
+  try {
+    return computeSplit(complete)
+  } catch (err) {
+    if (err instanceof SplitValidationError) return null
+    throw err
   }
 }
 
@@ -144,15 +149,59 @@ function providerSummary(
   }
 }
 
-function patientSummary(
-  order: OrderRow,
-  lines: LineRow[],
-): PatientOrderSummaryDto {
-  const { subtotalCents, platformFeeCents, totalCents } = splitFor(order, lines)
+/** Patients only ever see sent orders, which always carry a stored total. */
+function patientSummary(order: OrderRow): PatientOrderSummaryDto {
+  if (order.totalCents === null) {
+    throw new Error(
+      `Order ${order.id} has no total but is visible to its patient`,
+    )
+  }
   return {
     ...summaryBase(order),
     view: 'patient',
-    totals: { subtotalCents, platformFeeCents, totalCents },
+    totalCents: order.totalCents,
+  }
+}
+
+function providerLine(l: LineRow): ProviderOrderLineDto {
+  const hasProduct = l.unitCogsCents !== null
+  return {
+    productId: l.productId,
+    productName: l.productName,
+    sku: l.sku,
+    quantity: l.quantity,
+    unitPriceCents: l.unitPriceCents,
+    lineTotalCents:
+      l.unitPriceCents === null ? null : l.quantity * l.unitPriceCents,
+    unitCogsCents: l.unitCogsCents,
+    marginBps:
+      l.unitCogsCents === null || l.unitPriceCents === null
+        ? null
+        : marginBpsFromPrice(l.unitCogsCents, l.unitPriceCents),
+    minUnitPriceCents: hasProduct
+      ? minUnitPriceCents(l.unitCogsCents ?? 0)
+      : null,
+  }
+}
+
+function patientLine(l: LineRow): OrderLineDto {
+  if (
+    l.productId === null ||
+    l.productName === null ||
+    l.sku === null ||
+    l.unitPriceCents === null
+  ) {
+    throw new Error(
+      `Order ${l.orderId} has an incomplete line but is not a draft`,
+    )
+  }
+  return {
+    productId: l.productId,
+    productName: l.productName,
+    sku: l.sku,
+    quantity: l.quantity,
+    unitPriceCents: l.unitPriceCents,
+    lineTotalCents: l.quantity * l.unitPriceCents,
   }
 }
 
@@ -190,13 +239,7 @@ export async function listPatientOrders(db: Db, patientId: number) {
     db,
     and(eq(orders.patientId, patientId), ne(orders.status, 'draft')),
   )
-  const lines = groupLines(
-    await selectLines(
-      db,
-      rows.map((o) => o.id),
-    ),
-  )
-  return rows.map((o) => patientSummary(o, lines.get(o.id) ?? []))
+  return rows.map(patientSummary)
 }
 
 /** Ownership-check columns for an order, or undefined if it does not exist. */
@@ -257,16 +300,7 @@ export async function loadProviderOrderDetail(
   return {
     ...providerSummary(order, lines),
     patientAddress: order.patientAddress,
-    lines: lines.map((l) => ({
-      productId: l.productId,
-      productName: l.productName,
-      sku: l.sku,
-      quantity: l.quantity,
-      unitPriceCents: l.unitPriceCents,
-      lineTotalCents: l.quantity * l.unitPriceCents,
-      unitCogsCents: l.unitCogsCents,
-      unitMarginCents: l.unitPriceCents - l.unitCogsCents,
-    })),
+    lines: lines.map(providerLine),
     payment,
     ledger,
   }
@@ -278,16 +312,9 @@ export async function loadPatientOrderDetail(
 ): Promise<PatientOrderDetailDto> {
   const { order, lines, payment } = await loadOne(db, orderId)
   return {
-    ...patientSummary(order, lines),
+    ...patientSummary(order),
     patientAddress: order.patientAddress,
-    lines: lines.map((l) => ({
-      productId: l.productId,
-      productName: l.productName,
-      sku: l.sku,
-      quantity: l.quantity,
-      unitPriceCents: l.unitPriceCents,
-      lineTotalCents: l.quantity * l.unitPriceCents,
-    })),
+    lines: lines.map(patientLine),
     payment,
   }
 }

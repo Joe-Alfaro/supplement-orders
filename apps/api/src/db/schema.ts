@@ -104,9 +104,14 @@ export const orders = pgTable(
       'orders_totals_present_once_sent',
       sql`${t.status} = 'draft' or (${t.subtotalCents} is not null and ${t.platformFeeCents} is not null and ${t.totalCents} is not null)`,
     ),
+    // Revision 2: the fee comes out of the provider's markup; the patient pays the subtotal.
     check(
-      'orders_total_is_subtotal_plus_fee',
-      sql`${t.totalCents} is null or ${t.totalCents} = ${t.subtotalCents} + ${t.platformFeeCents}`,
+      'orders_total_is_subtotal',
+      sql`${t.totalCents} is null or ${t.totalCents} = ${t.subtotalCents}`,
+    ),
+    check(
+      'orders_fee_within_subtotal',
+      sql`${t.platformFeeCents} is null or ${t.platformFeeCents} <= ${t.subtotalCents}`,
     ),
     check(
       'orders_paid_at_iff_paid',
@@ -115,6 +120,8 @@ export const orders = pgTable(
   ],
 )
 
+// Draft lines may be incomplete (no product or no price yet). Completeness of
+// sent orders is enforced by the send service, which is the only path out of draft.
 export const orderItems = pgTable(
   'order_items',
   {
@@ -122,18 +129,21 @@ export const orderItems = pgTable(
     orderId: integer('order_id')
       .notNull()
       .references(() => orders.id, { onDelete: 'cascade' }),
-    productId: integer('product_id')
-      .notNull()
-      .references(() => products.id),
+    productId: integer('product_id').references(() => products.id),
     quantity: integer('quantity').notNull(),
-    unitPriceCents: cents('unit_price_cents').notNull(),
-    unitCogsCents: cents('unit_cogs_cents').notNull(),
+    unitPriceCents: cents('unit_price_cents'),
+    unitCogsCents: cents('unit_cogs_cents'),
   },
   (t) => [
+    // Postgres treats NULLs as distinct, so several product-less lines may coexist.
     unique('order_items_order_product_unique').on(t.orderId, t.productId),
     check('order_items_quantity_positive', sql`${t.quantity} >= 1`),
     check('order_items_price_nonnegative', sql`${t.unitPriceCents} >= 0`),
     check('order_items_cogs_nonnegative', sql`${t.unitCogsCents} >= 0`),
+    check(
+      'order_items_cogs_iff_product',
+      sql`(${t.productId} is null) = (${t.unitCogsCents} is null)`,
+    ),
   ],
 )
 

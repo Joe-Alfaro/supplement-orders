@@ -3,7 +3,7 @@ import {
   computeSplit,
   SplitValidationError,
   toLedgerEntries,
-  type OrderLineInput,
+  type DraftLine,
   type SplitLine,
 } from '@supplement-orders/domain'
 import { and, asc, eq, gte, inArray, sql } from 'drizzle-orm'
@@ -30,7 +30,7 @@ const SPLIT_ERROR_FIELDS: Record<SplitValidationError['code'], string | null> =
     EMPTY_ORDER: null,
     INVALID_QUANTITY: 'quantity',
     INVALID_AMOUNT: 'unitPriceCents',
-    PRICE_BELOW_COGS: 'unitPriceCents',
+    PRICE_BELOW_MINIMUM: 'unitPriceCents',
     UNSAFE_AMOUNT: 'unitPriceCents',
   }
 
@@ -116,21 +116,26 @@ export async function createDraft(
 }
 
 /**
- * Replaces every line of a draft. COGS is snapshotted from the product now and
- * refreshed on send. Lines are validated in request order so error fields
- * (`lines.N.*`) point at the request.
+ * Replaces every line of a draft, keeping request order. Lines may be incomplete
+ * (no product or no price yet). Saving rejects only what can never become valid:
+ * a duplicate or unknown product. Completeness, stock, and the minimum price are
+ * checked on send. Wholesale cost is snapshotted now and refreshed on send.
  */
 export async function replaceDraftLines(
   db: Db,
   user: ProviderUser,
   orderId: number,
-  lines: OrderLineInput[],
+  lines: DraftLine[],
 ) {
   await db.transaction(async (tx) => {
     await lockOwnedDraft(tx, user, orderId)
 
+    const productIds = lines.flatMap((l) =>
+      l.productId === null ? [] : [l.productId],
+    )
     const seen = new Set<number>()
     lines.forEach((line, index) => {
+      if (line.productId === null) return
       if (seen.has(line.productId)) {
         throw new ApiError(
           422,
@@ -143,21 +148,18 @@ export async function replaceDraftLines(
     })
 
     const productRows =
-      lines.length === 0
+      productIds.length === 0
         ? []
         : await tx
-            .select()
+            .select({ id: products.id, cogsCents: products.cogsCents })
             .from(products)
-            .where(
-              inArray(
-                products.id,
-                lines.map((l) => l.productId),
-              ),
-            )
-    const byId = new Map(productRows.map((p) => [p.id, p]))
-    const snapshotted = lines.map((line, index) => {
-      const product = byId.get(line.productId)
-      if (!product) {
+            .where(inArray(products.id, productIds))
+    const cogsById = new Map(productRows.map((p) => [p.id, p.cogsCents]))
+    const rows = lines.map((line, index) => {
+      if (line.productId === null)
+        return { ...line, orderId, unitCogsCents: null }
+      const unitCogsCents = cogsById.get(line.productId)
+      if (unitCogsCents === undefined) {
         throw new ApiError(
           422,
           'UNKNOWN_PRODUCT',
@@ -165,15 +167,11 @@ export async function replaceDraftLines(
           `lines.${index}.productId`,
         )
       }
-      if (line.quantity > product.stockQuantity) {
-        throw insufficientStock(index, product.stockQuantity)
-      }
-      return { ...line, orderId, unitCogsCents: product.cogsCents }
+      return { ...line, orderId, unitCogsCents }
     })
-    if (snapshotted.length > 0) computeSplitOrThrow(snapshotted)
 
     await tx.delete(orderItems).where(eq(orderItems.orderId, orderId))
-    if (snapshotted.length > 0) await tx.insert(orderItems).values(snapshotted)
+    if (rows.length > 0) await tx.insert(orderItems).values(rows)
     await tx
       .update(orders)
       .set({ updatedAt: new Date() })
@@ -181,9 +179,20 @@ export async function replaceDraftLines(
   })
 }
 
+function incompleteLine(index: number, part: 'productId' | 'unitPriceCents') {
+  const what = part === 'productId' ? 'a product' : 'a price'
+  return new ApiError(
+    422,
+    'INCOMPLETE_LINE',
+    `Line ${index + 1} needs ${what} before the order can be sent`,
+    `lines.${index}.${part}`,
+  )
+}
+
 /**
- * Draft -> pending_payment. Re-snapshots COGS, validates via computeSplit, and
- * persists the split the patient will be charged. Notifies after commit.
+ * Draft -> pending_payment. Requires at least one line, every line complete,
+ * enough stock, and every price at or above its minimum (via computeSplit).
+ * Re-snapshots wholesale cost and persists the split. Notifies after commit.
  */
 export async function sendOrder(
   { db, notifier }: AppContext,
@@ -192,19 +201,46 @@ export async function sendOrder(
 ) {
   await db.transaction(async (tx) => {
     await lockOwnedDraft(tx, user, orderId)
-    const lines = await tx
+    const rows = await tx
       .select({
         itemId: orderItems.id,
+        productId: orderItems.productId,
         quantity: orderItems.quantity,
         unitPriceCents: orderItems.unitPriceCents,
-        unitCogsCents: products.cogsCents,
+        currentCogsCents: products.cogsCents,
         stockQuantity: products.stockQuantity,
       })
       .from(orderItems)
-      .innerJoin(products, eq(products.id, orderItems.productId))
+      .leftJoin(products, eq(products.id, orderItems.productId))
       .where(eq(orderItems.orderId, orderId))
       .orderBy(asc(orderItems.id))
 
+    if (rows.length === 0) {
+      throw new ApiError(
+        422,
+        'EMPTY_ORDER',
+        'Add at least one line before sending',
+      )
+    }
+    const lines = rows.map((row, index) => {
+      if (
+        row.productId === null ||
+        row.currentCogsCents === null ||
+        row.stockQuantity === null
+      ) {
+        throw incompleteLine(index, 'productId')
+      }
+      if (row.unitPriceCents === null) {
+        throw incompleteLine(index, 'unitPriceCents')
+      }
+      return {
+        itemId: row.itemId,
+        quantity: row.quantity,
+        unitPriceCents: row.unitPriceCents,
+        unitCogsCents: row.currentCogsCents,
+        stockQuantity: row.stockQuantity,
+      }
+    })
     lines.forEach((line, index) => {
       if (line.quantity > line.stockQuantity) {
         throw insufficientStock(index, line.stockQuantity)
@@ -270,7 +306,7 @@ export async function payOrder(
       )
     }
 
-    const lines = await tx
+    const rows = await tx
       .select({
         productId: orderItems.productId,
         quantity: orderItems.quantity,
@@ -280,6 +316,19 @@ export async function payOrder(
       .from(orderItems)
       .where(eq(orderItems.orderId, orderId))
       .orderBy(asc(orderItems.id))
+    // Send is the only way out of draft and it rejects incomplete lines.
+    const lines = rows.map(
+      ({ productId, unitPriceCents, unitCogsCents, quantity }) => {
+        if (
+          productId === null ||
+          unitPriceCents === null ||
+          unitCogsCents === null
+        ) {
+          throw new Error(`Order ${orderId} was sent with an incomplete line`)
+        }
+        return { productId, quantity, unitPriceCents, unitCogsCents }
+      },
+    )
     const split = computeSplit(lines)
     if (split.totalCents !== order.totalCents) {
       throw new Error(
