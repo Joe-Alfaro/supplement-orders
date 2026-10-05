@@ -7,7 +7,7 @@ import DashboardView from './DashboardView.vue'
 
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>()
-  return { ...actual, getDashboard: vi.fn(), listProducts: vi.fn() }
+  return { ...actual, getDashboard: vi.fn(), searchProducts: vi.fn() }
 })
 
 const dashboard: DashboardDto = {
@@ -40,7 +40,7 @@ const products: ProductDto[] = [
 
 beforeEach(() => {
   vi.mocked(api.getDashboard).mockResolvedValue(dashboard)
-  vi.mocked(api.listProducts).mockResolvedValue({
+  vi.mocked(api.searchProducts).mockResolvedValue({
     items: products,
     total: products.length,
     offset: 0,

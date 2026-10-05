@@ -23,22 +23,21 @@ export function listUsers() {
   return request<UserDto[]>('GET', '/users')
 }
 
-/** Query string for a paged list; blank `q` and defaults are omitted. */
+/** Query string for a paged list; empty values are omitted. */
 function listQueryString(query: ListQuery) {
   const params = new URLSearchParams()
-  const q = query.q?.trim()
-  if (q) params.set('q', q)
-  if (query.offset) params.set('offset', String(query.offset))
+  if (query.q) params.set('q', query.q)
+  if (query.offset !== undefined) params.set('offset', String(query.offset))
   if (query.limit !== undefined) params.set('limit', String(query.limit))
   const search = params.toString()
-  return search === '' ? '' : `?${search}`
+  return search ? `?${search}` : ''
 }
 
-export function listProducts(query: ListQuery = {}) {
+export function searchProducts(query: ListQuery = {}) {
   return request<ProductPageDto>('GET', `/products${listQueryString(query)}`)
 }
 
-export function listPatients(query: ListQuery = {}) {
+export function searchPatients(query: ListQuery = {}) {
   return request<PatientPageDto>('GET', `/patients${listQueryString(query)}`)
 }
 

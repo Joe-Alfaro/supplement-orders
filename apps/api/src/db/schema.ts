@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm'
 import {
   bigint,
   check,
+  index,
   integer,
   pgEnum,
   pgTable,
@@ -36,11 +37,21 @@ export const ledgerEntryTypeEnum = pgEnum('ledger_entry_type', [
   'platform_fee',
 ])
 
-export const users = pgTable('users', {
-  id: serial('id').primaryKey(),
-  name: text('name').notNull(),
-  role: roleEnum('role').notNull(),
-})
+// List endpoints order by (name, id) and search with ILIKE '%q%'. The (name, id)
+// index serves the ordering and pagination; lower(name) serves case-insensitive
+// lookups. Substring search cannot use a btree; pg_trgm GIN is the next step.
+export const users = pgTable(
+  'users',
+  {
+    id: serial('id').primaryKey(),
+    name: text('name').notNull(),
+    role: roleEnum('role').notNull(),
+  },
+  (t) => [
+    index('users_name_id_idx').on(t.name, t.id),
+    index('users_lower_name_idx').on(sql`lower(${t.name})`),
+  ],
+)
 
 export const providers = pgTable('providers', {
   id: serial('id').primaryKey(),
@@ -50,17 +61,21 @@ export const providers = pgTable('providers', {
     .references(() => users.id),
 })
 
-export const patients = pgTable('patients', {
-  id: serial('id').primaryKey(),
-  userId: integer('user_id')
-    .notNull()
-    .unique()
-    .references(() => users.id),
-  providerId: integer('provider_id')
-    .notNull()
-    .references(() => providers.id),
-  address: text('address').notNull(),
-})
+export const patients = pgTable(
+  'patients',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .unique()
+      .references(() => users.id),
+    providerId: integer('provider_id')
+      .notNull()
+      .references(() => providers.id),
+    address: text('address').notNull(),
+  },
+  (t) => [index('patients_provider_id_idx').on(t.providerId)],
+)
 
 export const products = pgTable(
   'products',
@@ -74,6 +89,8 @@ export const products = pgTable(
   (t) => [
     check('products_cogs_nonnegative', sql`${t.cogsCents} >= 0`),
     check('products_stock_nonnegative', sql`${t.stockQuantity} >= 0`),
+    index('products_name_id_idx').on(t.name, t.id),
+    index('products_lower_name_idx').on(sql`lower(${t.name})`),
   ],
 )
 

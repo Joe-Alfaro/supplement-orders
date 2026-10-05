@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ProductDto } from '@supplement-orders/domain'
 import { computed, nextTick, ref, watch } from 'vue'
-import { listProducts } from '../api'
+import { searchProducts } from '../api'
 import {
   evaluatePricing,
   marginInputFromPrice,
@@ -29,7 +29,7 @@ const dialog = ref<HTMLDialogElement | null>(null)
 const searchInput = ref<HTMLInputElement | null>(null)
 const quantityInputEl = ref<HTMLInputElement | null>(null)
 
-const search = usePagedSearch(listProducts)
+const search = usePagedSearch(searchProducts)
 
 const step = ref<1 | 2>(1)
 const chosen = ref<ProductDto | null>(null)

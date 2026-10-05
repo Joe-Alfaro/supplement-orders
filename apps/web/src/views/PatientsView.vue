@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { listPatients } from '../api'
+import { searchPatients } from '../api'
 import { ErrorBanner, PaginationControls, StatusBadge } from '../components'
 import { usePagedSearch } from '../search'
 
@@ -9,7 +9,7 @@ const route = useRoute()
 const router = useRouter()
 
 const initialQuery = typeof route.query.q === 'string' ? route.query.q : ''
-const search = usePagedSearch(listPatients, { initialQuery })
+const search = usePagedSearch(searchPatients, { initialQuery })
 const { query, activeQuery, items, page, loading, error } = search
 
 onMounted(search.load)

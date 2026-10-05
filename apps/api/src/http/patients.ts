@@ -1,15 +1,32 @@
-import type { OrderStatus, PatientDto } from '@supplement-orders/domain'
-import { asc, desc, eq } from 'drizzle-orm'
+import {
+  listPatientsQuerySchema,
+  type OrderStatus,
+  type PatientDto,
+  type PatientPageDto,
+} from '@supplement-orders/domain'
+import { and, asc, count, desc, eq, inArray, type SQL } from 'drizzle-orm'
 import { Router } from 'express'
 import type { Db } from '../db/client'
 import { orders, patients, users } from '../db/schema'
 import { requireRole } from '../seams'
 import type { AppContext } from '../server'
 import { forbidden, notFound } from './errors'
-import { parseId } from './validate'
+import { matchesSearch } from './search'
+import { parseId, parseOrThrow } from './validate'
 
-async function loadPatients(db: Db, providerId: number, patientId?: number) {
-  const rows = await db
+interface PageWindow {
+  offset: number
+  limit: number
+}
+
+/** Patients matching `where`, with order counts for just the returned rows. */
+async function selectPatients(
+  db: Db,
+  providerId: number,
+  where: SQL | undefined,
+  window?: PageWindow,
+): Promise<PatientDto[]> {
+  const query = db
     .select({
       id: patients.id,
       userId: patients.userId,
@@ -19,16 +36,25 @@ async function loadPatients(db: Db, providerId: number, patientId?: number) {
     })
     .from(patients)
     .innerJoin(users, eq(users.id, patients.userId))
-    .where(
-      patientId === undefined
-        ? eq(patients.providerId, providerId)
-        : eq(patients.id, patientId),
-    )
-    .orderBy(asc(users.name))
+    .where(where)
+    .orderBy(asc(users.name), asc(patients.id))
+  const rows = window
+    ? await query.limit(window.limit).offset(window.offset)
+    : await query
+  if (rows.length === 0) return []
+
   const orderRows = await db
     .select({ patientId: orders.patientId, status: orders.status })
     .from(orders)
-    .where(eq(orders.providerId, providerId))
+    .where(
+      and(
+        eq(orders.providerId, providerId),
+        inArray(
+          orders.patientId,
+          rows.map((r) => r.id),
+        ),
+      ),
+    )
     .orderBy(desc(orders.createdAt), desc(orders.id))
 
   return rows.map((row): PatientDto => {
@@ -44,13 +70,40 @@ export function patientsRouter({ db, auth }: AppContext) {
 
   router.get('/', async (req, res) => {
     const user = requireRole(await auth.getCurrentUser(req), 'provider')
-    res.json(await loadPatients(db, user.providerId))
+    const { q, offset, limit } = parseOrThrow(
+      listPatientsQuerySchema,
+      req.query,
+    )
+    const where = and(
+      eq(patients.providerId, user.providerId),
+      matchesSearch(q, [users.name, patients.address]),
+    )
+
+    const [items, [counted]] = await Promise.all([
+      selectPatients(db, user.providerId, where, { offset, limit }),
+      db
+        .select({ total: count() })
+        .from(patients)
+        .innerJoin(users, eq(users.id, patients.userId))
+        .where(where),
+    ])
+    const body: PatientPageDto = {
+      items,
+      total: counted?.total ?? 0,
+      offset,
+      limit,
+    }
+    res.json(body)
   })
 
   router.get('/:id', async (req, res) => {
     const user = requireRole(await auth.getCurrentUser(req), 'provider')
     const id = parseId(req.params.id)
-    const [patient] = await loadPatients(db, user.providerId, id)
+    const [patient] = await selectPatients(
+      db,
+      user.providerId,
+      eq(patients.id, id),
+    )
     if (!patient) throw notFound('Patient')
     if (patient.providerId !== user.providerId) {
       throw forbidden('This patient belongs to another provider')

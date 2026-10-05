@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { getDashboard, listProducts } from '../api'
+import { getDashboard, searchProducts } from '../api'
 import {
   ErrorBanner,
   MoneyText,
@@ -15,7 +15,7 @@ import { useResource } from '../useResource'
 const router = useRouter()
 const sales = useResource(getDashboard)
 // Read-only: stock only changes when orders are paid.
-const inventory = usePagedSearch(listProducts)
+const inventory = usePagedSearch(searchProducts)
 
 onMounted(() => {
   sales.load()

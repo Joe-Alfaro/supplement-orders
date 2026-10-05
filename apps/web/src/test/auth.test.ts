@@ -12,7 +12,7 @@ vi.mock('../api', async (importOriginal) => {
   return {
     ...actual,
     listUsers: vi.fn(),
-    listPatients: vi.fn(),
+    searchPatients: vi.fn(),
     listOrders: vi.fn(),
   }
 })
@@ -44,7 +44,7 @@ async function renderApp(path: string) {
 
 beforeEach(() => {
   vi.mocked(api.listUsers).mockResolvedValue(users)
-  vi.mocked(api.listPatients).mockResolvedValue({
+  vi.mocked(api.searchPatients).mockResolvedValue({
     items: [],
     total: 0,
     offset: 0,

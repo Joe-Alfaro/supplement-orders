@@ -7,7 +7,7 @@ import PatientsView from './PatientsView.vue'
 
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>()
-  return { ...actual, listPatients: vi.fn() }
+  return { ...actual, searchPatients: vi.fn() }
 })
 
 function patient(id: number, name: string): PatientDto {
@@ -34,7 +34,7 @@ function patientPage(query: ListQuery): PatientPageDto {
 }
 
 beforeEach(() => {
-  vi.mocked(api.listPatients)
+  vi.mocked(api.searchPatients)
     .mockReset()
     .mockImplementation(async (query = {}) => patientPage(query))
 })
@@ -51,13 +51,13 @@ describe('PatientsView', () => {
     await fireEvent.update(search, 'lee')
 
     await vi.waitFor(() =>
-      expect(api.listPatients).toHaveBeenLastCalledWith({
+      expect(api.searchPatients).toHaveBeenLastCalledWith({
         q: 'lee',
         offset: 0,
         limit: 25,
       }),
     )
-    expect(api.listPatients).not.toHaveBeenCalledWith(
+    expect(api.searchPatients).not.toHaveBeenCalledWith(
       expect.objectContaining({ q: 'l' }),
     )
     await vi.waitFor(() =>
@@ -69,7 +69,7 @@ describe('PatientsView', () => {
   it('starts from q in the URL and pages with Previous/Next', async () => {
     await renderWithRouter(PatientsView, { path: '/patients?q=lee' })
     expect(await screen.findByDisplayValue('lee')).toBeTruthy()
-    expect(api.listPatients).toHaveBeenCalledWith({
+    expect(api.searchPatients).toHaveBeenCalledWith({
       q: 'lee',
       offset: 0,
       limit: 25,
@@ -84,7 +84,7 @@ describe('PatientsView', () => {
     )
 
     expect(await screen.findByText('Showing 26–50 of 312')).toBeTruthy()
-    expect(api.listPatients).toHaveBeenLastCalledWith({
+    expect(api.searchPatients).toHaveBeenLastCalledWith({
       q: 'lee',
       offset: 25,
       limit: 25,
@@ -99,7 +99,7 @@ describe('PatientsView', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Clear search' }))
 
     expect(await screen.findByText('Showing 1–25 of 312')).toBeTruthy()
-    expect(api.listPatients).toHaveBeenLastCalledWith({
+    expect(api.searchPatients).toHaveBeenLastCalledWith({
       q: '',
       offset: 0,
       limit: 25,

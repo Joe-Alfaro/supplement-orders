@@ -15,7 +15,7 @@ vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>()
   return {
     ...actual,
-    listProducts: vi.fn(),
+    searchProducts: vi.fn(),
     getPatient: vi.fn(),
     getOrder: vi.fn(),
     createOrder: vi.fn(),
@@ -135,7 +135,7 @@ async function addProduct(
 }
 
 beforeEach(() => {
-  vi.mocked(api.listProducts)
+  vi.mocked(api.searchProducts)
     .mockReset()
     .mockImplementation(async (query = {}) => productPage(query))
   vi.mocked(api.getPatient).mockResolvedValue(patient)
@@ -316,14 +316,14 @@ describe('Add-product modal', () => {
     await fireEvent.update(search, 'mag')
 
     await vi.waitFor(() =>
-      expect(api.listProducts).toHaveBeenLastCalledWith({
+      expect(api.searchProducts).toHaveBeenLastCalledWith({
         q: 'mag',
         offset: 0,
         limit: 25,
       }),
     )
     // Only the settled query went out, not each keystroke.
-    expect(api.listProducts).not.toHaveBeenCalledWith(
+    expect(api.searchProducts).not.toHaveBeenCalledWith(
       expect.objectContaining({ q: 'm' }),
     )
     await vi.waitFor(() =>

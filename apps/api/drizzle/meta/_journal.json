@@ -15,6 +15,13 @@
       "when": 1791228643375,
       "tag": "0001_rev2_draft_lines_and_total",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791232079677,
+      "tag": "0002_rev3_list_indexes",
+      "breakpoints": true
     }
   ]
 }
