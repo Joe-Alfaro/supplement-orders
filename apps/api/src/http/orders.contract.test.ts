@@ -19,9 +19,10 @@ import { createTestContext } from '../testing/harness'
 import type { TestContext } from '../testing/harness'
 
 // Black-box HTTP contract. The harness module is owned by the API worker.
-// Money expectations use the documented half-up formula, not a domain import.
+// Money expectations use the documented integer formulas, not a domain import.
+// Revision 2: the patient pays the subtotal. The fee comes out of the markup.
 // Only POST /api/orders is specified as 201. Successful PUT, send, and pay
-// are 200. Replacing a draft line priced below COGS is 422.
+// are 200. A below-minimum price is saved; send rejects it.
 
 const ISO_TIMESTAMP =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
@@ -60,7 +61,8 @@ const PROVIDER_LINE_KEYS = [
   'unitPriceCents',
   'lineTotalCents',
   'unitCogsCents',
-  'unitMarginCents',
+  'marginBps',
+  'minUnitPriceCents',
 ]
 
 const PAYMENT_KEYS = ['id', 'amountCents', 'reference', 'createdAt']
@@ -143,7 +145,11 @@ function expectError(
 function expectProviderDetail(body: unknown): ProviderOrderDetailDto {
   expectExactKeys(body, PROVIDER_DETAIL_KEYS)
   const record = asRecord(body)
-  expectExactKeys(record.split, SPLIT_KEYS)
+  if (record.split === null) {
+    expect(record.split).toBeNull()
+  } else {
+    expectExactKeys(record.split, SPLIT_KEYS)
+  }
   if (!Array.isArray(record.lines) || !Array.isArray(record.ledger)) {
     throw new Error('order lines and ledger must be arrays')
   }
@@ -178,6 +184,41 @@ function platformFeeCents(subtotalCents: number): number {
   return Math.floor((subtotalCents * 75 + 5_000) / 10_000)
 }
 
+function ceilUnitFeeCents(priceCents: number): number {
+  return Math.floor((priceCents * 75 + 9_999) / 10_000)
+}
+
+function minUnitPriceCents(unitCogsCents: number): number {
+  function covers(priceCents: number): boolean {
+    return priceCents - unitCogsCents >= ceilUnitFeeCents(priceCents)
+  }
+  function search(low: number, high: number): number {
+    if (low === high) {
+      return low
+    }
+    const mid = Math.floor((low + high) / 2)
+    if (covers(mid)) {
+      return search(low, mid)
+    }
+    return search(mid + 1, high)
+  }
+  if (unitCogsCents === 0) {
+    return 0
+  }
+  return search(unitCogsCents, unitCogsCents * 2)
+}
+
+function marginBpsFromPrice(
+  unitCogsCents: number,
+  unitPriceCents: number,
+): number {
+  if (unitPriceCents === 0) {
+    return 0
+  }
+  const numerator = (unitPriceCents - unitCogsCents) * 10_000
+  return Math.floor((numerator * 2 + unitPriceCents) / (unitPriceCents * 2))
+}
+
 function expectedSplit(line: ExampleLine): ExpectedSplit {
   const subtotalCents = line.quantity * line.unitPriceCents
   const cogsCents = line.quantity * line.unitCogsCents
@@ -185,23 +226,23 @@ function expectedSplit(line: ExampleLine): ExpectedSplit {
   return {
     subtotalCents,
     platformFeeCents: feeCents,
-    totalCents: subtotalCents + feeCents,
+    totalCents: subtotalCents,
     cogsCents,
-    providerMarginCents: subtotalCents - cogsCents,
+    providerMarginCents: subtotalCents - cogsCents - feeCents,
   }
 }
 
 function exampleLine(products: TestContext['seed']['products']): ExampleLine {
-  // The harness does not bound COGS. The published $120.00 example can be sent
-  // only when some seeded product costs at most $120.00, and price < COGS needs
-  // a positive cost. One product in that range satisfies both.
+  // $120.00 can be sent only when the minimum for that cost is at most $120.00.
+  // A positive cost is what makes a one-cent-under-cost price expressible.
   const product = products.find(
-    (item) => item.cogsCents >= 1 && item.cogsCents <= 12_000,
+    (item) =>
+      item.cogsCents >= 1 && minUnitPriceCents(item.cogsCents) <= 12_000,
   )
   expect(product).toBeDefined()
   if (!product) {
     throw new Error(
-      'seed must include a product with COGS between 1 and 12000 cents',
+      'seed must include a product whose minimum price is at most 12000 cents',
     )
   }
   return {
@@ -275,6 +316,13 @@ async function getProviderOrder(
   return expectProviderDetail(response.body)
 }
 
+function requireSplit(detail: ProviderOrderDetailDto): ExpectedSplit {
+  if (detail.split === null) {
+    throw new Error('expected a server split')
+  }
+  return detail.split
+}
+
 function stockOf(products: readonly ProductDto[], productId: number): number {
   const product = products.find((item) => item.id === productId)
   expect(product).toBeDefined()
@@ -319,13 +367,7 @@ describe('order draft and send', () => {
     expect(draft.payment).toBeNull()
     expect(draft.sentAt).toBeNull()
     expect(draft.paidAt).toBeNull()
-    expect(draft.split).toEqual({
-      subtotalCents: 0,
-      platformFeeCents: 0,
-      totalCents: 0,
-      cogsCents: 0,
-      providerMarginCents: 0,
-    })
+    expect(draft.split).toBeNull()
   })
 
   it('sends the $120.00 order and returns the server split', async () => {
@@ -353,29 +395,39 @@ describe('order draft and send', () => {
     expect(edited.status).toBe('draft')
     expect(edited.split).toEqual(expected)
     expect(edited.lines).toHaveLength(1)
-    expect(edited.lines[0]?.unitCogsCents).toBe(line.unitCogsCents)
-    expect(edited.lines[0]?.unitPriceCents).toBe(12_000)
-    expect(edited.lines[0]?.lineTotalCents).toBe(12_000)
-    expect(edited.lines[0]?.unitMarginCents).toBe(12_000 - line.unitCogsCents)
+    const savedLine = edited.lines[0]
+    expect(savedLine?.unitCogsCents).toBe(line.unitCogsCents)
+    expect(savedLine?.unitPriceCents).toBe(12_000)
+    expect(savedLine?.lineTotalCents).toBe(12_000)
+    expect(savedLine?.minUnitPriceCents).toBe(
+      minUnitPriceCents(line.unitCogsCents),
+    )
+    expect(savedLine?.marginBps).toBe(
+      marginBpsFromPrice(line.unitCogsCents, 12_000),
+    )
+    expect(savedLine?.unitPriceCents).toBeGreaterThanOrEqual(
+      savedLine?.minUnitPriceCents ?? 0,
+    )
 
     const sentResponse = await sendOrder(draft.id)
     expect(sentResponse.status).toBe(200)
     const sent = expectProviderDetail(sentResponse.body)
+    const sentSplit = requireSplit(sent)
 
     expect(sent.status).toBe('pending_payment')
-    expect(sent.split).toEqual(expected)
-    expect(sent.split.subtotalCents).toBe(12_000)
-    expect(sent.split.platformFeeCents).toBe(90)
-    expect(sent.split.totalCents).toBe(12_090)
-    expect(sent.split.cogsCents + sent.split.providerMarginCents).toBe(12_000)
+    expect(sentSplit).toEqual(expected)
+    expect(sentSplit.subtotalCents).toBe(12_000)
+    expect(sentSplit.platformFeeCents).toBe(90)
+    expect(sentSplit.totalCents).toBe(12_000)
+    expect(sentSplit.providerMarginCents).toBe(12_000 - line.unitCogsCents - 90)
     expect(
-      sent.split.cogsCents +
-        sent.split.providerMarginCents +
-        sent.split.platformFeeCents,
-    ).toBe(sent.split.totalCents)
+      sentSplit.cogsCents +
+        sentSplit.providerMarginCents +
+        sentSplit.platformFeeCents,
+    ).toBe(sentSplit.totalCents)
     if (line.unitCogsCents === 7_000) {
-      expect(sent.split.cogsCents).toBe(7_000)
-      expect(sent.split.providerMarginCents).toBe(5_000)
+      expect(sentSplit.cogsCents).toBe(7_000)
+      expect(sentSplit.providerMarginCents).toBe(4_910)
     }
     expect(sent.payment).toBeNull()
     expect(sent.ledger).toEqual([])
@@ -384,37 +436,159 @@ describe('order draft and send', () => {
     expect(stockOf(await listProducts(), line.productId)).toBe(stockBefore)
   })
 
-  it('rejects saving a draft line priced below COGS', async () => {
-    // Drafts are validated on every save. The field is the dotted path into
-    // the replace-lines body, and index 0 is the only line. The illegal line
-    // is not stored, so the order stays an empty draft.
-    const line = exampleLine(context().seed.products)
+  it('saves a below-minimum price and rejects it on send', async () => {
+    // Save does not enforce the minimum. N is the offending line. A price
+    // one cent under cost is below the minimum and still stored.
+    const products = context().seed.products
+    const priced = exampleLine(products)
+    const belowCost = products.find((item) => item.id !== priced.productId)
+    expect(belowCost).toBeDefined()
+    if (!belowCost) {
+      throw new Error('seed must include a second product')
+    }
+    const lowPrice = belowCost.cogsCents - 1
     const draft = await createDraft()
-    const saved = await context()
-      .request.put(`/api/orders/${draft.id}/lines`)
-      .set(USER_ID_HEADER, String(context().seed.providerUserId))
-      .send({
-        lines: [
-          {
-            productId: line.productId,
-            quantity: 1,
-            unitPriceCents: line.unitCogsCents - 1,
-          },
-        ],
-      })
-    expectError(saved, 422, 'PRICE_BELOW_COGS', 'lines.0.unitPriceCents')
+    const saved = await putLines(draft.id, [
+      {
+        productId: priced.productId,
+        quantity: 1,
+        unitPriceCents: priced.unitPriceCents,
+      },
+      {
+        productId: belowCost.id,
+        quantity: 1,
+        unitPriceCents: lowPrice,
+      },
+    ])
+
+    expect(saved.split).toBeNull()
+    expect(saved.lines[1]?.unitPriceCents).toBe(lowPrice)
+    expect(saved.lines[1]?.unitCogsCents).toBe(belowCost.cogsCents)
+    expect(saved.lines[1]?.minUnitPriceCents).toBe(
+      minUnitPriceCents(belowCost.cogsCents),
+    )
+    expect(saved.lines[1]?.marginBps).toBe(
+      marginBpsFromPrice(belowCost.cogsCents, lowPrice),
+    )
+    expect(saved.lines[1]?.marginBps ?? 0).toBeLessThan(0)
+
+    const sent = await sendOrder(draft.id)
+    expectError(sent, 422, 'PRICE_BELOW_MINIMUM', 'lines.1.unitPriceCents')
 
     const current = await getProviderOrder(draft.id)
     expect(current.status).toBe('draft')
-    expect(current.lines).toEqual([])
     expect(current.sentAt).toBeNull()
-    expect(current.split).toEqual({
-      subtotalCents: 0,
-      platformFeeCents: 0,
-      totalCents: 0,
-      cogsCents: 0,
-      providerMarginCents: 0,
+    expect(current.split).toBeNull()
+    expect(current.lines.map((line) => line.unitPriceCents)).toEqual([
+      priced.unitPriceCents,
+      lowPrice,
+    ])
+  })
+
+  it('saves incomplete lines in order and names the gap on send', async () => {
+    // A missing product is reported before a missing price on the same line.
+    // Quantity defaults to 1 when the client omits it.
+    const products = context().seed.products
+    const missingPrice = exampleLine(products)
+    const complete = products.find((item) => item.id !== missingPrice.productId)
+    expect(complete).toBeDefined()
+    if (!complete) {
+      throw new Error('seed must include a second product')
+    }
+    const catalog = await listProducts()
+    const named = catalog.find((item) => item.id === missingPrice.productId)
+    expect(named).toBeDefined()
+    if (!named) {
+      throw new Error('priced product is missing from the catalog')
+    }
+
+    const draft = await createDraft()
+    const saved = await putLines(draft.id, [
+      { productId: missingPrice.productId, unitPriceCents: null },
+      {},
+      {
+        productId: complete.id,
+        quantity: 2,
+        unitPriceCents: 12_000,
+      },
+    ])
+    const reloaded = await getProviderOrder(draft.id)
+
+    expect(saved.split).toBeNull()
+    expect(reloaded.lines).toEqual(saved.lines)
+    expect(saved.lines.map((line) => line.productId)).toEqual([
+      missingPrice.productId,
+      null,
+      complete.id,
+    ])
+    expect(saved.lines[0]).toMatchObject({
+      productName: named.name,
+      sku: named.sku,
+      quantity: 1,
+      unitPriceCents: null,
+      lineTotalCents: null,
+      unitCogsCents: missingPrice.unitCogsCents,
+      marginBps: null,
+      minUnitPriceCents: minUnitPriceCents(missingPrice.unitCogsCents),
     })
+    expect(saved.lines[1]).toMatchObject({
+      productName: null,
+      sku: null,
+      quantity: 1,
+      unitPriceCents: null,
+      lineTotalCents: null,
+      unitCogsCents: null,
+      marginBps: null,
+      minUnitPriceCents: null,
+    })
+    expect(saved.lines[2]).toMatchObject({
+      quantity: 2,
+      unitPriceCents: 12_000,
+      lineTotalCents: 24_000,
+      unitCogsCents: complete.cogsCents,
+      marginBps: marginBpsFromPrice(complete.cogsCents, 12_000),
+      minUnitPriceCents: minUnitPriceCents(complete.cogsCents),
+    })
+
+    const missingProduct = await createDraft()
+    await putLines(missingProduct.id, [
+      {
+        productId: complete.id,
+        quantity: 1,
+        unitPriceCents: 12_000,
+      },
+      { unitPriceCents: 1_000 },
+    ])
+    const noProduct = await sendOrder(missingProduct.id)
+    expectError(noProduct, 422, 'INCOMPLETE_LINE', 'lines.1.productId')
+
+    const missingOnlyPrice = await createDraft()
+    await putLines(missingOnlyPrice.id, [{ productId: missingPrice.productId }])
+    const noPrice = await sendOrder(missingOnlyPrice.id)
+    expectError(noPrice, 422, 'INCOMPLETE_LINE', 'lines.0.unitPriceCents')
+
+    const missingBoth = await createDraft()
+    await putLines(missingBoth.id, [{}])
+    const neither = await sendOrder(missingBoth.id)
+    expectError(neither, 422, 'INCOMPLETE_LINE', 'lines.0.productId')
+  })
+
+  it('does not expose a stock update endpoint', async () => {
+    const catalog = await listProducts()
+    const product = catalog[0]
+    expect(product).toBeDefined()
+    if (!product) {
+      throw new Error('catalog is empty')
+    }
+    const response = await context()
+      .request.patch(`/api/products/${product.id}/stock`)
+      .set(USER_ID_HEADER, String(context().seed.providerUserId))
+      .send({ stockQuantity: product.stockQuantity + 1 })
+
+    expectError(response, 404, 'NOT_FOUND')
+    expect(stockOf(await listProducts(), product.id)).toBe(
+      product.stockQuantity,
+    )
   })
 
   it('rejects sending a draft with no lines', async () => {

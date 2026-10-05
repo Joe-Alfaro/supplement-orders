@@ -27,6 +27,7 @@ import type { TestContext } from '../testing/harness'
 // A draft is not in the patient's resource set, so reading it is 404.
 // Another person's order is 403, which the error map reserves for that case.
 // A non-numeric X-User-Id is unspecified and is not asserted here.
+// The patient summary is a single totalCents: the subtotal, with no fee or margin.
 
 const ISO_TIMESTAMP =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
@@ -58,7 +59,7 @@ const PATIENT_SUMMARY_KEYS = [
   'sentAt',
   'paidAt',
   'view',
-  'totals',
+  'totalCents',
 ]
 
 const PATIENT_DETAIL_KEYS = [
@@ -67,8 +68,6 @@ const PATIENT_DETAIL_KEYS = [
   'lines',
   'payment',
 ]
-
-const TOTALS_KEYS = ['subtotalCents', 'platformFeeCents', 'totalCents']
 
 const SPLIT_KEYS = [
   'subtotalCents',
@@ -94,7 +93,8 @@ const PROVIDER_LINE_KEYS = [
   'unitPriceCents',
   'lineTotalCents',
   'unitCogsCents',
-  'unitMarginCents',
+  'marginBps',
+  'minUnitPriceCents',
 ]
 
 const PATIENT_LINE_KEYS = [
@@ -169,7 +169,11 @@ function expectError(
 function expectProviderDetail(body: unknown): ProviderOrderDetailDto {
   expectExactKeys(body, PROVIDER_DETAIL_KEYS)
   const record = asRecord(body)
-  expectExactKeys(record.split, SPLIT_KEYS)
+  if (record.split === null) {
+    expect(record.split).toBeNull()
+  } else {
+    expectExactKeys(record.split, SPLIT_KEYS)
+  }
   if (!Array.isArray(record.lines) || !Array.isArray(record.ledger)) {
     throw new Error('order lines and ledger must be arrays')
   }
@@ -190,7 +194,6 @@ function expectProviderDetail(body: unknown): ProviderOrderDetailDto {
 function expectPatientDetail(body: unknown): PatientOrderDetailDto {
   expectExactKeys(body, PATIENT_DETAIL_KEYS)
   const record = asRecord(body)
-  expectExactKeys(record.totals, TOTALS_KEYS)
   if (!Array.isArray(record.lines)) {
     throw new Error('order lines must be an array')
   }
@@ -209,7 +212,6 @@ function expectPatientSummaries(body: unknown): PatientOrderSummaryDto[] {
   }
   body.forEach((order) => {
     expectExactKeys(order, PATIENT_SUMMARY_KEYS)
-    expectExactKeys(asRecord(order).totals, TOTALS_KEYS)
   })
   return z.array(patientOrderSummaryDtoSchema).parse(body)
 }
@@ -220,7 +222,12 @@ function expectProviderSummaries(body: unknown): ProviderOrderSummaryDto[] {
   }
   body.forEach((order) => {
     expectExactKeys(order, PROVIDER_SUMMARY_KEYS)
-    expectExactKeys(asRecord(order).split, SPLIT_KEYS)
+    const split = asRecord(order).split
+    if (split === null) {
+      expect(split).toBeNull()
+    } else {
+      expectExactKeys(split, SPLIT_KEYS)
+    }
   })
   return z.array(providerOrderSummaryDtoSchema).parse(body)
 }
@@ -237,14 +244,40 @@ async function listUsers(): Promise<UserDto[]> {
   return z.array(userDtoSchema).parse(response.body)
 }
 
+function ceilUnitFeeCents(priceCents: number): number {
+  return Math.floor((priceCents * 75 + 9_999) / 10_000)
+}
+
+function minUnitPriceCents(unitCogsCents: number): number {
+  function covers(priceCents: number): boolean {
+    return priceCents - unitCogsCents >= ceilUnitFeeCents(priceCents)
+  }
+  function search(low: number, high: number): number {
+    if (low === high) {
+      return low
+    }
+    const mid = Math.floor((low + high) / 2)
+    if (covers(mid)) {
+      return search(low, mid)
+    }
+    return search(mid + 1, high)
+  }
+  if (unitCogsCents === 0) {
+    return 0
+  }
+  return search(unitCogsCents, unitCogsCents * 2)
+}
+
 function exampleLine(): ExampleLine {
+  // $120.00 can be sent only when the minimum for that cost is at most $120.00.
   const product = context().seed.products.find(
-    (item) => item.cogsCents <= 12_000,
+    (item) =>
+      item.cogsCents >= 1 && minUnitPriceCents(item.cogsCents) <= 12_000,
   )
   expect(product).toBeDefined()
   if (!product) {
     throw new Error(
-      'seed must include a product with COGS of at most 12000 cents',
+      'seed must include a product whose minimum price is at most 12000 cents',
     )
   }
   return {
@@ -283,6 +316,15 @@ async function sendDraft(orderId: number): Promise<ProviderOrderDetailDto> {
     .set(USER_ID_HEADER, String(context().seed.providerUserId))
   expect(sent.status).toBe(200)
   return expectProviderDetail(sent.body)
+}
+
+function requireSplit(
+  detail: ProviderOrderDetailDto,
+): NonNullable<ProviderOrderDetailDto['split']> {
+  if (detail.split === null) {
+    throw new Error('expected a server split')
+  }
+  return detail.split
 }
 
 function orderIds(orders: readonly { id: number }[]): number[] {
@@ -436,6 +478,7 @@ describe('personas and users', () => {
     expectError(hiddenDetail, 404, 'NOT_FOUND')
 
     const sent = await sendDraft(draft.id)
+    const split = requireSplit(sent)
     const visibleList = await context()
       .request.get('/api/orders')
       .set(USER_ID_HEADER, String(context().seed.patientUserId))
@@ -443,11 +486,8 @@ describe('personas and users', () => {
     const visible = expectPatientSummaries(visibleList.body)
     const summary = visible.find((order) => order.id === sent.id)
     expect(summary?.status).toBe('pending_payment')
-    expect(summary?.totals).toEqual({
-      subtotalCents: sent.split.subtotalCents,
-      platformFeeCents: sent.split.platformFeeCents,
-      totalCents: sent.split.totalCents,
-    })
+    expect(summary?.totalCents).toBe(split.totalCents)
+    expect(split.totalCents).toBe(split.subtotalCents)
 
     const visibleDetail = await context()
       .request.get(`/api/orders/${sent.id}`)
@@ -456,7 +496,7 @@ describe('personas and users', () => {
     const patientOrder = expectPatientDetail(visibleDetail.body)
     expect(patientOrder.status).toBe('pending_payment')
     expect(patientOrder.payment).toBeNull()
-    expect(patientOrder.totals.totalCents).toBe(sent.split.totalCents)
+    expect(patientOrder.totalCents).toBe(split.totalCents)
     expect(patientOrder.createdAt).toMatch(ISO_TIMESTAMP)
   })
 

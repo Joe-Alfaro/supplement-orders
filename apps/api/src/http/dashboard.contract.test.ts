@@ -15,6 +15,8 @@ import type { TestContext } from '../testing/harness'
 
 // Tiles are all-time sums for the acting provider. Pending orders are absent
 // from paidOrders and do not move the tiles. The order just paid is newest.
+// Revision 2: the patient pays the subtotal, so GMV is that subtotal. Margin
+// on a paid row is subtotal - wholesale cost - fee.
 
 const ISO_TIMESTAMP =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
@@ -102,14 +104,40 @@ function expectDashboard(body: unknown): DashboardDto {
   return dashboard
 }
 
+function ceilUnitFeeCents(priceCents: number): number {
+  return Math.floor((priceCents * 75 + 9_999) / 10_000)
+}
+
+function minUnitPriceCents(unitCogsCents: number): number {
+  function covers(priceCents: number): boolean {
+    return priceCents - unitCogsCents >= ceilUnitFeeCents(priceCents)
+  }
+  function search(low: number, high: number): number {
+    if (low === high) {
+      return low
+    }
+    const mid = Math.floor((low + high) / 2)
+    if (covers(mid)) {
+      return search(low, mid)
+    }
+    return search(mid + 1, high)
+  }
+  if (unitCogsCents === 0) {
+    return 0
+  }
+  return search(unitCogsCents, unitCogsCents * 2)
+}
+
 function exampleLine(products: TestContext['seed']['products']): ExampleLine {
+  // $120.00 can be sent only when the minimum for that cost is at most $120.00.
   const product = products.find(
-    (item) => item.cogsCents >= 1 && item.cogsCents <= 12_000,
+    (item) =>
+      item.cogsCents >= 1 && minUnitPriceCents(item.cogsCents) <= 12_000,
   )
   expect(product).toBeDefined()
   if (!product) {
     throw new Error(
-      'seed must include a product with COGS between 1 and 12000 cents',
+      'seed must include a product whose minimum price is at most 12000 cents',
     )
   }
   return {
@@ -155,9 +183,26 @@ async function sendExample(): Promise<ProviderOrderDetailDto> {
   expect(sent.status).toBe(200)
   expectExactKeys(sent.body, PROVIDER_DETAIL_KEYS)
   const detail = providerOrderDetailDtoSchema.parse(sent.body)
+  const split = requireSplit(detail)
   expect(detail.status).toBe('pending_payment')
-  expect(detail.split.totalCents).toBe(12_090)
+  expect(split.subtotalCents).toBe(12_000)
+  expect(split.totalCents).toBe(12_000)
+  expect(split.platformFeeCents).toBe(90)
+  expect(split.cogsCents).toBe(line.unitCogsCents)
+  expect(split.providerMarginCents).toBe(12_000 - line.unitCogsCents - 90)
+  expect(
+    split.cogsCents + split.providerMarginCents + split.platformFeeCents,
+  ).toBe(split.totalCents)
   return detail
+}
+
+function requireSplit(
+  detail: ProviderOrderDetailDto,
+): NonNullable<ProviderOrderDetailDto['split']> {
+  if (detail.split === null) {
+    throw new Error('expected a server split')
+  }
+  return detail.split
 }
 
 function sumBy(
@@ -218,19 +263,24 @@ describe('GET /api/dashboard', () => {
       .set(USER_ID_HEADER, String(context().seed.providerUserId))
     expect(provider.status).toBe(200)
     const detail = providerOrderDetailDtoSchema.parse(provider.body)
+    const split = requireSplit(detail)
     expect(detail.paidAt).not.toBeNull()
     if (detail.paidAt === null) {
       throw new Error('paid order is missing paidAt')
     }
+    expect(split.totalCents).toBe(split.subtotalCents)
+    expect(split.providerMarginCents).toBe(
+      split.subtotalCents - split.cogsCents - split.platformFeeCents,
+    )
 
     const dashboard = await getDashboard()
     expectTilesMatchRows(dashboard)
-    expect(dashboard.gmvCents).toBe(before.gmvCents + detail.split.totalCents)
+    expect(dashboard.gmvCents).toBe(before.gmvCents + split.totalCents)
     expect(dashboard.providerMarginCents).toBe(
-      before.providerMarginCents + detail.split.providerMarginCents,
+      before.providerMarginCents + split.providerMarginCents,
     )
     expect(dashboard.platformFeeCents).toBe(
-      before.platformFeeCents + detail.split.platformFeeCents,
+      before.platformFeeCents + split.platformFeeCents,
     )
     expect(dashboard.paidOrders[0]?.orderId).toBe(detail.id)
     expect(dashboard.paidOrders[0]).toEqual({
@@ -238,10 +288,10 @@ describe('GET /api/dashboard', () => {
       patientId: detail.patientId,
       patientName: detail.patientName,
       paidAt: detail.paidAt,
-      totalCents: detail.split.totalCents,
-      cogsCents: detail.split.cogsCents,
-      providerMarginCents: detail.split.providerMarginCents,
-      platformFeeCents: detail.split.platformFeeCents,
+      totalCents: split.totalCents,
+      cogsCents: split.cogsCents,
+      providerMarginCents: split.providerMarginCents,
+      platformFeeCents: split.platformFeeCents,
     })
     expect(dashboard.paidOrders[0]?.paidAt).toMatch(ISO_TIMESTAMP)
   })
