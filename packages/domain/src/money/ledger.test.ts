@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { LedgerImbalanceError } from './errors'
-import { assertLedgerBalances, toLedgerEntries, type LedgerEntryDraft } from './ledger'
+import {
+  assertLedgerBalances,
+  toLedgerEntries,
+  type LedgerEntryDraft,
+} from './ledger'
 import type { OrderSplit } from './split'
 
 interface LedgerFailureCase {
@@ -50,7 +54,10 @@ function sumAmounts(entries: readonly LedgerEntryDraft[]): number {
 // arithmetic sum of the supplied amounts, even when the sums match and the throw
 // is structural (missing, duplicate, extra, negative, or non-integer). A missing
 // zero-amount type is not treated as zero. The entry has to be present.
-function expectImbalance(entries: readonly LedgerEntryDraft[], amountPaidCents: number): void {
+function expectImbalance(
+  entries: readonly LedgerEntryDraft[],
+  amountPaidCents: number,
+): void {
   const thrown = thrownBy(() => {
     assertLedgerBalances(entries, amountPaidCents)
   })
@@ -93,7 +100,9 @@ describe('toLedgerEntries', () => {
 describe('assertLedgerBalances', () => {
   it('accepts the three entries of a paid order', () => {
     const entries = toLedgerEntries(EXAMPLE_SPLIT)
-    expect(assertLedgerBalances(entries, EXAMPLE_SPLIT.totalCents)).toBeUndefined()
+    expect(
+      assertLedgerBalances(entries, EXAMPLE_SPLIT.totalCents),
+    ).toBeUndefined()
   })
 
   it('accepts three zero entries against a zero payment', () => {
@@ -112,7 +121,7 @@ describe('assertLedgerBalances', () => {
     expect(assertLedgerBalances(entries, 12090)).toBeUndefined()
   })
 
-  it.each([
+  it.each<LedgerFailureCase>([
     {
       label: 'payment is one cent above the entries',
       entries: [
@@ -135,7 +144,7 @@ describe('assertLedgerBalances', () => {
     expectImbalance(entries, amountPaidCents)
   })
 
-  it.each([
+  it.each<LedgerFailureCase>([
     {
       label: 'missing platform fee',
       entries: [

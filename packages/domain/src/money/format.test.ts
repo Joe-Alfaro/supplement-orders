@@ -125,14 +125,19 @@ function expectRejected(input: string): void {
 }
 
 describe('formatCents', () => {
-  it.each(FORMAT_CASES)('formats $cents as $formatted', ({ cents, formatted }) => {
-    expect(formatCents(cents)).toBe(formatted)
-  })
+  it.each(FORMAT_CASES)(
+    'formats $cents as $formatted',
+    ({ cents, formatted }) => {
+      expect(formatCents(cents)).toBe(formatted)
+    },
+  )
 
   it.each(FORMAT_REJECTED)('throws on non-integer %s', (cents) => {
-    expect(thrownBy(() => {
-      formatCents(cents)
-    })).toBeInstanceOf(Error)
+    expect(
+      thrownBy(() => {
+        formatCents(cents)
+      }),
+    ).toBeInstanceOf(Error)
   })
 
   it('round-trips non-negative formatted strings and rejects the negative format', () => {
@@ -145,9 +150,12 @@ describe('formatCents', () => {
 })
 
 describe('parseDollarsToCents', () => {
-  it.each(PARSE_ACCEPTED)('parses $input as $cents cents', ({ input, cents }) => {
-    expect(parseDollarsToCents(input)).toEqual({ ok: true, cents })
-  })
+  it.each(PARSE_ACCEPTED)(
+    'parses $input as $cents cents',
+    ({ input, cents }) => {
+      expect(parseDollarsToCents(input)).toEqual({ ok: true, cents })
+    },
+  )
 
   it.each(PARSE_REJECTED)('rejects %j', (input) => {
     expectRejected(input)

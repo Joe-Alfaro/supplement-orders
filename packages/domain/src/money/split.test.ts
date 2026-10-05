@@ -52,7 +52,10 @@ const FEE_LARGE: FeeCase[] = [
   { subtotalCents: 99_999_999, feeCents: 750_000 },
   { subtotalCents: 100_000_000, feeCents: 750_000 },
   { subtotalCents: 1_000_000_000_000, feeCents: 7_500_000_000 },
-  { subtotalCents: LARGEST_EXACT_FEE_SUBTOTAL, feeCents: LARGEST_EXACT_FEE_CENTS },
+  {
+    subtotalCents: LARGEST_EXACT_FEE_SUBTOTAL,
+    feeCents: LARGEST_EXACT_FEE_CENTS,
+  },
 ]
 
 const FEE_REJECTED: number[] = [
@@ -131,22 +134,33 @@ function nextLcg(seed: number): number {
   return (Math.imul(LCG_MULTIPLIER, seed) + LCG_INCREMENT) >>> 0
 }
 
+function seedAt(seeds: readonly number[], index: number): number {
+  const value = seeds[index]
+  if (value === undefined) {
+    throw new Error(`No seed at index ${index}`)
+  }
+  return value
+}
+
 function buildLcgSeeds(count: number, seed: number): number[] {
-  return Array.from({ length: count }).reduce<number[]>((seeds, _slot, index) => {
-    const previous = index === 0 ? seed : seeds[index - 1]
-    return [...seeds, nextLcg(previous)]
-  }, [])
+  return Array.from({ length: count }).reduce<number[]>(
+    (seeds, _slot, index) => {
+      const previous = index === 0 ? seed : seedAt(seeds, index - 1)
+      return [...seeds, nextLcg(previous)]
+    },
+    [],
+  )
 }
 
 function buildSweepOrders(seeds: readonly number[]): SplitLine[][] {
   return Array.from({ length: SWEEP_ORDER_COUNT }, (_order, orderIndex) => {
     const offset = orderIndex * SWEEP_SEEDS_PER_ORDER
-    const lineCount = (seeds[offset] % 3) + 1
+    const lineCount = (seedAt(seeds, offset) % 3) + 1
     return Array.from({ length: lineCount }, (_line, lineIndex) => {
       const base = offset + 1 + lineIndex * 3
-      const quantity = (seeds[base] % 5) + 1
-      const unitCogsCents = seeds[base + 1] % 50_000
-      const unitPriceCents = unitCogsCents + (seeds[base + 2] % 50_000)
+      const quantity = (seedAt(seeds, base) % 5) + 1
+      const unitCogsCents = seedAt(seeds, base + 1) % 50_000
+      const unitPriceCents = unitCogsCents + (seedAt(seeds, base + 2) % 50_000)
       return { quantity, unitPriceCents, unitCogsCents }
     })
   })
@@ -178,9 +192,12 @@ describe('computePlatformFee', () => {
     },
   )
 
-  it.each(FEE_REJECTED)('rejects non-integer or negative subtotal %s', (subtotalCents) => {
-    expectFeeRejected(subtotalCents)
-  })
+  it.each(FEE_REJECTED)(
+    'rejects non-integer or negative subtotal %s',
+    (subtotalCents) => {
+      expectFeeRejected(subtotalCents)
+    },
+  )
 })
 
 describe('computeSplit', () => {
@@ -261,7 +278,9 @@ describe('computeSplit', () => {
       { quantity: 1, unitPriceCents: 67, unitCogsCents: 0 },
     ]
     const perLineFeeSum = lines
-      .map((line) => Math.floor((line.quantity * line.unitPriceCents * 75 + 5000) / 10000))
+      .map((line) =>
+        Math.floor((line.quantity * line.unitPriceCents * 75 + 5000) / 10000),
+      )
       .reduce((sum, fee) => sum + fee, 0)
     expect(perLineFeeSum).toBe(2)
     expectOrder(lines, {
@@ -274,16 +293,27 @@ describe('computeSplit', () => {
   })
 
   it('does not depend on line order', () => {
-    const lines: readonly SplitLine[] = [
-      { quantity: 2, unitPriceCents: 67, unitCogsCents: 10 },
-      { quantity: 1, unitPriceCents: 12000, unitCogsCents: 7000 },
-      { quantity: 4, unitPriceCents: 250, unitCogsCents: 250 },
-    ]
+    const first: SplitLine = {
+      quantity: 2,
+      unitPriceCents: 67,
+      unitCogsCents: 10,
+    }
+    const second: SplitLine = {
+      quantity: 1,
+      unitPriceCents: 12000,
+      unitCogsCents: 7000,
+    }
+    const third: SplitLine = {
+      quantity: 4,
+      unitPriceCents: 250,
+      unitCogsCents: 250,
+    }
+    const lines: readonly SplitLine[] = [first, second, third]
     const orders = [
       lines,
       Array.from(lines).reverse(),
-      [lines[1], lines[2], lines[0]],
-      [lines[2], lines[0], lines[1]],
+      [second, third, first],
+      [third, first, second],
     ]
     const splits = orders.map((order) => computeSplit(order))
     splits.forEach((split) => {
@@ -293,7 +323,13 @@ describe('computeSplit', () => {
 
   it('accepts the largest subtotal the documented fee formula can compute exactly', () => {
     expectOrder(
-      [{ quantity: 1, unitPriceCents: LARGEST_EXACT_FEE_SUBTOTAL, unitCogsCents: 0 }],
+      [
+        {
+          quantity: 1,
+          unitPriceCents: LARGEST_EXACT_FEE_SUBTOTAL,
+          unitCogsCents: 0,
+        },
+      ],
       {
         subtotalCents: LARGEST_EXACT_FEE_SUBTOTAL,
         platformFeeCents: LARGEST_EXACT_FEE_CENTS,
@@ -305,13 +341,16 @@ describe('computeSplit', () => {
   })
 
   it('accepts one line whose own fee intermediate is still exact', () => {
-    expectOrder([{ quantity: 1, unitPriceCents: FEE_SAFE_LINE_CENTS, unitCogsCents: 0 }], {
-      subtotalCents: FEE_SAFE_LINE_CENTS,
-      platformFeeCents: FEE_SAFE_LINE_FEE_CENTS,
-      totalCents: FEE_SAFE_LINE_CENTS + FEE_SAFE_LINE_FEE_CENTS,
-      cogsCents: 0,
-      providerMarginCents: FEE_SAFE_LINE_CENTS,
-    })
+    expectOrder(
+      [{ quantity: 1, unitPriceCents: FEE_SAFE_LINE_CENTS, unitCogsCents: 0 }],
+      {
+        subtotalCents: FEE_SAFE_LINE_CENTS,
+        platformFeeCents: FEE_SAFE_LINE_FEE_CENTS,
+        totalCents: FEE_SAFE_LINE_CENTS + FEE_SAFE_LINE_FEE_CENTS,
+        cogsCents: 0,
+        providerMarginCents: FEE_SAFE_LINE_CENTS,
+      },
+    )
   })
 })
 
@@ -505,7 +544,8 @@ describe('computeSplit validation', () => {
       lineIndex: 0,
     },
     {
-      label: 'a later line reports invalid quantity before its own invalid amount',
+      label:
+        'a later line reports invalid quantity before its own invalid amount',
       lines: [
         { quantity: 1, unitPriceCents: 100, unitCogsCents: 40 },
         { quantity: -2, unitPriceCents: 1.5, unitCogsCents: 50 },
@@ -515,13 +555,25 @@ describe('computeSplit validation', () => {
     },
     {
       label: 'invalid quantity wins over an unsafe price on the same line',
-      lines: [{ quantity: 1.5, unitPriceCents: FIRST_UNSAFE_INTEGER, unitCogsCents: 0 }],
+      lines: [
+        {
+          quantity: 1.5,
+          unitPriceCents: FIRST_UNSAFE_INTEGER,
+          unitCogsCents: 0,
+        },
+      ],
       code: 'INVALID_QUANTITY',
       lineIndex: 0,
     },
     {
       label: 'invalid amount wins over an unsafe quantity',
-      lines: [{ quantity: FIRST_UNSAFE_INTEGER, unitPriceCents: -1, unitCogsCents: 0 }],
+      lines: [
+        {
+          quantity: FIRST_UNSAFE_INTEGER,
+          unitPriceCents: -1,
+          unitCogsCents: 0,
+        },
+      ],
       code: 'INVALID_AMOUNT',
       lineIndex: 0,
     },
@@ -539,13 +591,17 @@ describe('computeSplit validation', () => {
     },
     {
       label: 'unit price above the safe integer range',
-      lines: [{ quantity: 1, unitPriceCents: FIRST_UNSAFE_INTEGER, unitCogsCents: 0 }],
+      lines: [
+        { quantity: 1, unitPriceCents: FIRST_UNSAFE_INTEGER, unitCogsCents: 0 },
+      ],
       code: 'UNSAFE_AMOUNT',
       lineIndex: 0,
     },
     {
       label: 'quantity above the safe integer range',
-      lines: [{ quantity: FIRST_UNSAFE_INTEGER, unitPriceCents: 1, unitCogsCents: 0 }],
+      lines: [
+        { quantity: FIRST_UNSAFE_INTEGER, unitPriceCents: 1, unitCogsCents: 0 },
+      ],
       code: 'UNSAFE_AMOUNT',
       lineIndex: 0,
     },
@@ -620,7 +676,10 @@ describe('split sum invariants', () => {
     // Numerical Recipes LCG, modulus 2^32. Amounts stay small so the documented
     // fee formula is exact. The two sum identities alone would accept an all-zero
     // split, so the sweep also checks the field definitions.
-    const seeds = buildLcgSeeds(SWEEP_ORDER_COUNT * SWEEP_SEEDS_PER_ORDER, SWEEP_SEED)
+    const seeds = buildLcgSeeds(
+      SWEEP_ORDER_COUNT * SWEEP_SEEDS_PER_ORDER,
+      SWEEP_SEED,
+    )
     const orders = buildSweepOrders(seeds)
     expect(orders).toHaveLength(SWEEP_ORDER_COUNT)
     orders.forEach((lines) => {
@@ -629,7 +688,10 @@ describe('split sum invariants', () => {
         (sum, line) => sum + line.quantity * line.unitPriceCents,
         0,
       )
-      const cogsCents = lines.reduce((sum, line) => sum + line.quantity * line.unitCogsCents, 0)
+      const cogsCents = lines.reduce(
+        (sum, line) => sum + line.quantity * line.unitCogsCents,
+        0,
+      )
       const split = computeSplit(lines)
       const fields = [
         split.subtotalCents,
@@ -645,11 +707,15 @@ describe('split sum invariants', () => {
       expect(split.subtotalCents).toBe(subtotalCents)
       expect(split.cogsCents).toBe(cogsCents)
       expect(split.providerMarginCents).toBe(subtotalCents - cogsCents)
-      expect(split.platformFeeCents).toBe(Math.floor((subtotalCents * 75 + 5000) / 10000))
-      expect(split.subtotalCents + split.platformFeeCents).toBe(split.totalCents)
-      expect(split.cogsCents + split.providerMarginCents + split.platformFeeCents).toBe(
+      expect(split.platformFeeCents).toBe(
+        Math.floor((subtotalCents * 75 + 5000) / 10000),
+      )
+      expect(split.subtotalCents + split.platformFeeCents).toBe(
         split.totalCents,
       )
+      expect(
+        split.cogsCents + split.providerMarginCents + split.platformFeeCents,
+      ).toBe(split.totalCents)
     })
   })
 })
