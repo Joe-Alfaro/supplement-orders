@@ -425,3 +425,43 @@ describe('Add-product modal', () => {
     )
   })
 })
+
+describe('OrderBuilderView patient and stock', () => {
+  it('shows the patient name and DOB in the heading', async () => {
+    await renderBuilder()
+
+    expect(
+      screen.getByRole('heading', {
+        name: 'New order for Jordan Lee · DOB 03/14/1984',
+      }),
+    ).toBeTruthy()
+  })
+
+  it('caps Qty on a reloaded line by the live stock from the API', async () => {
+    vi.mocked(api.getOrder).mockResolvedValue(
+      draftDetail([
+        {
+          productId: 1,
+          productName: 'Vitamin D3',
+          sku: 'VITD',
+          quantity: 2,
+          unitPriceCents: 2000,
+          lineTotalCents: 4000,
+          unitCogsCents: 1200,
+          marginBps: 4000,
+          minUnitPriceCents: 1210,
+          stockQuantity: 3,
+        },
+      ]),
+    )
+    await renderBuilder('99')
+
+    expect(screen.getByText(/3 in stock/)).toBeTruthy()
+    expect(screen.queryByText(/stock checked on send/)).toBeNull()
+    expect(sendButton()).toHaveProperty('disabled', false)
+
+    await fireEvent.update(screen.getByLabelText('Quantity for line 1'), '4')
+    expect(screen.getByText('Only 3 in stock')).toBeTruthy()
+    expect(sendButton()).toHaveProperty('disabled', true)
+  })
+})

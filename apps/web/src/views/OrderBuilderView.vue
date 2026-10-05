@@ -18,6 +18,7 @@ import {
   MoneyText,
   SplitSummary,
 } from '../components'
+import { formatDateOfBirth } from '../format'
 import { formatCents, PLATFORM_FEE_BPS } from '../money'
 
 interface Props {
@@ -168,7 +169,10 @@ function fieldId(key: number, field: string) {
   <template v-else>
     <h1>
       {{ orderId === null ? 'New order' : `Draft order #${orderId}` }}
-      <template v-if="patient">for {{ patient.name }}</template>
+      <template v-if="patient"
+        >for {{ patient.name }} · DOB
+        {{ formatDateOfBirth(patient.dateOfBirth) }}</template
+      >
     </h1>
 
     <ErrorBanner v-if="banner" :message="banner" />
@@ -194,12 +198,10 @@ function fieldId(key: number, field: string) {
               }}</span>
               <br />
               <span class="small">
-                <code>{{ row.product.sku }}</code> ·
-                {{
-                  row.product.stockQuantity === null
-                    ? 'stock checked on send'
-                    : `${row.product.stockQuantity} in stock`
-                }}
+                <code>{{ row.product.sku }}</code>
+                <template v-if="row.product.stockQuantity !== null">
+                  · {{ row.product.stockQuantity }} in stock</template
+                >
               </span>
             </template>
             <span v-else class="muted">No product (remove this line)</span>

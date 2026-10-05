@@ -3,7 +3,7 @@ import type { ProviderOrderSummaryDto } from '@supplement-orders/domain'
 import { computed, onMounted } from 'vue'
 import { getPatient, listOrders } from '../api'
 import { ErrorBanner, MoneyText, StatusBadge } from '../components'
-import { formatDate } from '../format'
+import { formatDate, formatDateOfBirth } from '../format'
 import { useResource } from '../useResource'
 
 interface Props {
@@ -38,9 +38,12 @@ function orderLink(order: ProviderOrderSummaryDto) {
   <ErrorBanner v-else-if="error" :message="error" retryable @retry="load" />
   <template v-else-if="data">
     <h1>{{ data.patient.name }}</h1>
-    <p>
-      <strong>Address:</strong> <span>{{ data.patient.address }}</span>
-    </p>
+    <dl class="facts">
+      <dt>Date of birth</dt>
+      <dd>{{ formatDateOfBirth(data.patient.dateOfBirth) }}</dd>
+      <dt>Shipping address</dt>
+      <dd>{{ data.patient.address }}</dd>
+    </dl>
     <p>
       <RouterLink class="button" :to="`/patients/${patientId}/orders/new`"
         >New order</RouterLink

@@ -3,6 +3,7 @@ import { onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { searchPatients } from '../api'
 import { ErrorBanner, PaginationControls, StatusBadge } from '../components'
+import { formatDateOfBirth } from '../format'
 import { usePagedSearch } from '../search'
 
 const route = useRoute()
@@ -31,11 +32,11 @@ function onInput(event: Event) {
 <template>
   <h1>Patients</h1>
   <p class="search">
-    <label for="patient-search">Search patients</label><br />
+    <label for="patient-search">Search by name or date of birth</label><br />
     <input
       id="patient-search"
       type="search"
-      placeholder="Name or address"
+      placeholder="Name, MM/DD/YYYY, or YYYY-MM-DD"
       :value="query"
       @input="onInput"
     />
@@ -55,7 +56,7 @@ function onInput(event: Event) {
         <thead>
           <tr>
             <th scope="col">Name</th>
-            <th scope="col">Address</th>
+            <th scope="col">Date of birth</th>
             <th scope="col">Orders</th>
             <th scope="col">Latest order</th>
           </tr>
@@ -70,7 +71,7 @@ function onInput(event: Event) {
             @keydown.enter="openPatient(patient.id)"
           >
             <td>{{ patient.name }}</td>
-            <td class="small">{{ patient.address }}</td>
+            <td>{{ formatDateOfBirth(patient.dateOfBirth) }}</td>
             <td class="num">{{ patient.orderCount }}</td>
             <td>
               <StatusBadge

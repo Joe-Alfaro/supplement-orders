@@ -1,4 +1,9 @@
-import type { ListQuery, PatientDto, PatientPageDto } from '@supplement-orders/domain'
+import {
+  parseDateOfBirthQuery,
+  type ListQuery,
+  type PatientDto,
+  type PatientPageDto,
+} from '@supplement-orders/domain'
 import { fireEvent, screen } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
@@ -10,12 +15,17 @@ vi.mock('../api', async (importOriginal) => {
   return { ...actual, searchPatients: vi.fn() }
 })
 
-function patient(id: number, name: string): PatientDto {
+function patient(
+  id: number,
+  name: string,
+  dateOfBirth = `1980-01-${String((id % 28) + 1).padStart(2, '0')}`,
+): PatientDto {
   return {
     id,
     userId: id + 100,
     providerId: 1,
     name,
+    dateOfBirth,
     address: `${id} Main St`,
     orderCount: 0,
     latestOrderStatus: null,
@@ -27,6 +37,19 @@ function patientPage(query: ListQuery): PatientPageDto {
   const offset = query.offset ?? 0
   const limit = query.limit ?? 25
   if (query.q === 'nobody') return { items: [], total: 0, offset, limit }
+  const twins = [
+    patient(901, 'Avery Abbott', '1984-03-12'),
+    patient(902, 'Avery Abbott', '1991-11-30'),
+  ]
+  if (query.q === 'Avery Abbott') {
+    return { items: twins, total: 2, offset, limit }
+  }
+  // Like the API: a whole-query date matches the exact date of birth.
+  const dob = query.q ? parseDateOfBirthQuery(query.q) : null
+  if (dob) {
+    const items = twins.filter((p) => p.dateOfBirth === dob)
+    return { items, total: items.length, offset, limit }
+  }
   const items = Array.from({ length: limit }, (_, i) =>
     patient(offset + i + 1, `${query.q || 'Patient'} ${offset + i + 1}`),
   )
@@ -46,7 +69,7 @@ describe('PatientsView', () => {
     })
     expect(await screen.findByText('Showing 1–25 of 312')).toBeTruthy()
 
-    const search = screen.getByLabelText('Search patients')
+    const search = screen.getByLabelText('Search by name or date of birth')
     await fireEvent.update(search, 'l')
     await fireEvent.update(search, 'lee')
 
@@ -110,7 +133,7 @@ describe('PatientsView', () => {
     const { router } = await renderWithRouter(PatientsView, {
       path: '/patients',
     })
-    await fireEvent.click(await screen.findByText('3 Main St'))
+    await fireEvent.click(await screen.findByText('01/04/1980'))
     await vi.waitFor(() =>
       expect(router.currentRoute.value.path).toBe('/patients/3'),
     )
@@ -122,4 +145,40 @@ describe('PatientsView', () => {
       expect(router.currentRoute.value.path).toBe('/patients/5'),
     )
   })
+
+  it('shows DOB so same-name patients can be told apart', async () => {
+    await renderWithRouter(PatientsView, { path: '/patients?q=Avery Abbott' })
+
+    const rows = await screen.findAllByText('Avery Abbott')
+    expect(rows).toHaveLength(2)
+    expect(
+      screen.getByRole('columnheader', { name: 'Date of birth' }),
+    ).toBeTruthy()
+    expect(screen.getByText('03/12/1984')).toBeTruthy()
+    expect(screen.getByText('11/30/1991')).toBeTruthy()
+  })
+
+  it.each(['03/12/1984', '1984-03-12'])(
+    'finds the patient by DOB typed as %s',
+    async (dob) => {
+      await renderWithRouter(PatientsView, { path: '/patients' })
+      await screen.findByText('Showing 1–25 of 312')
+
+      await fireEvent.update(
+        screen.getByLabelText('Search by name or date of birth'),
+        dob,
+      )
+
+      await vi.waitFor(() =>
+        expect(api.searchPatients).toHaveBeenLastCalledWith({
+          q: dob,
+          offset: 0,
+          limit: 25,
+        }),
+      )
+      expect(await screen.findByText('Showing 1–1 of 1')).toBeTruthy()
+      expect(screen.getByText('Avery Abbott')).toBeTruthy()
+      expect(screen.getByText('03/12/1984')).toBeTruthy()
+    },
+  )
 })

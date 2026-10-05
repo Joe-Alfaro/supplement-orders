@@ -238,13 +238,12 @@ function lineProduct(line: ProviderOrderLineDto): LineProduct | null {
   ) {
     return null
   }
-  const stock: unknown = (line as { stockQuantity?: unknown }).stockQuantity
   return {
     id: line.productId,
     name: line.productName,
     sku: line.sku,
     cogsCents: line.unitCogsCents,
-    // Present once the API adds live stock to provider lines; unknown until then.
-    stockQuantity: typeof stock === 'number' ? stock : null,
+    // Live stock, so Qty on a reloaded line is capped like a freshly added one.
+    stockQuantity: line.stockQuantity,
   }
 }

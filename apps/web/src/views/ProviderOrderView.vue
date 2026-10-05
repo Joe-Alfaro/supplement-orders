@@ -9,7 +9,7 @@ import {
   SplitSummary,
   StatusBadge,
 } from '../components'
-import { formatDateTime } from '../format'
+import { formatDateOfBirth, formatDateTime } from '../format'
 import { useResource } from '../useResource'
 
 interface Props {
@@ -45,6 +45,8 @@ onMounted(load)
           order.patientName
         }}</RouterLink>
       </dd>
+      <dt>Date of birth</dt>
+      <dd>{{ formatDateOfBirth(order.patientDateOfBirth) }}</dd>
       <dt>Ship to</dt>
       <dd>{{ order.patientAddress }}</dd>
       <dt>Created</dt>
