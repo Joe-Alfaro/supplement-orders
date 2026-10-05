@@ -24,13 +24,15 @@ type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
 type ProviderUser = Extract<CurrentUser, { role: 'provider' }>
 type PatientUser = Extract<CurrentUser, { role: 'patient' }>
 
-const SPLIT_ERROR_FIELDS: Record<SplitValidationError['code'], string> = {
-  EMPTY_ORDER: '',
-  INVALID_QUANTITY: 'quantity',
-  INVALID_AMOUNT: 'unitPriceCents',
-  PRICE_BELOW_COGS: 'unitPriceCents',
-  UNSAFE_AMOUNT: 'unitPriceCents',
-}
+// EMPTY_ORDER is order-level: no field, so the UI shows it in the general banner.
+const SPLIT_ERROR_FIELDS: Record<SplitValidationError['code'], string | null> =
+  {
+    EMPTY_ORDER: null,
+    INVALID_QUANTITY: 'quantity',
+    INVALID_AMOUNT: 'unitPriceCents',
+    PRICE_BELOW_COGS: 'unitPriceCents',
+    UNSAFE_AMOUNT: 'unitPriceCents',
+  }
 
 /** computeSplit with its validation errors translated to 422 responses. */
 function computeSplitOrThrow(lines: readonly SplitLine[]) {
@@ -40,8 +42,8 @@ function computeSplitOrThrow(lines: readonly SplitLine[]) {
     if (!(err instanceof SplitValidationError)) throw err
     const leaf = SPLIT_ERROR_FIELDS[err.code]
     const field =
-      err.lineIndex === undefined || leaf === ''
-        ? 'lines'
+      err.lineIndex === undefined || leaf === null
+        ? undefined
         : `lines.${err.lineIndex}.${leaf}`
     throw new ApiError(422, err.code, err.message, field)
   }
@@ -333,13 +335,15 @@ export async function payOrder(
         gatewayReference: charge.reference,
       })
       .returning({ id: payments.id, amountCents: payments.amountCents })
+    if (!payment)
+      throw new Error(`Payment insert for order ${orderId} returned no row`)
 
     const entries = toLedgerEntries(split)
-    assertLedgerBalances(entries, payment!.amountCents)
+    assertLedgerBalances(entries, payment.amountCents)
     await tx.insert(ledgerEntries).values(
       entries.map((entry) => ({
         orderId,
-        paymentId: payment!.id,
+        paymentId: payment.id,
         type: entry.type,
         amountCents: entry.amountCents,
       })),
