@@ -45,8 +45,8 @@ export const userDtoSchema: z.ZodType<UserDto> = z.object({
 })
 
 /**
- * GET /api/products returns ProductDto[] (provider only: COGS is internal).
- * PATCH /api/products/:id/stock returns the updated ProductDto.
+ * GET /api/products returns ProductDto[] (provider only: wholesale cost is internal).
+ * Stock is read-only; it decreases only when an order is paid.
  */
 export interface ProductDto {
   id: number
@@ -86,36 +86,30 @@ export const patientDtoSchema: z.ZodType<PatientDto> = z.object({
   latestOrderStatus: z.enum(ORDER_STATUSES).nullable(),
 })
 
-/** What the patient sees: never COGS or margin. */
-export interface OrderTotalsDto {
+/**
+ * Provider view of the money (revision 2: the fee comes out of the provider's markup).
+ * totalCents === subtotalCents, and
+ * cogsCents + platformFeeCents + providerMarginCents === totalCents.
+ */
+export interface OrderSplitDto {
   subtotalCents: number
   platformFeeCents: number
-  /** subtotalCents + platformFeeCents: what the patient pays. */
+  /** What the patient pays: exactly the subtotal. */
   totalCents: number
-}
-
-/** Provider view of the money: totals plus where every cent goes. */
-export interface OrderSplitDto extends OrderTotalsDto {
   cogsCents: number
-  /** subtotalCents - cogsCents. cogsCents + providerMarginCents + platformFeeCents === totalCents. */
+  /** subtotalCents - cogsCents - platformFeeCents; never negative for a valid order. */
   providerMarginCents: number
 }
 
-const totalsShape = {
+export const orderSplitDtoSchema: z.ZodType<OrderSplitDto> = z.object({
   subtotalCents: cents,
   platformFeeCents: cents,
   totalCents: cents,
-}
-
-export const orderTotalsDtoSchema: z.ZodType<OrderTotalsDto> =
-  z.object(totalsShape)
-
-export const orderSplitDtoSchema: z.ZodType<OrderSplitDto> = z.object({
-  ...totalsShape,
   cogsCents: cents,
   providerMarginCents: cents,
 })
 
+/** A patient-visible line. Patients only see sent orders, so lines are complete. */
 export interface OrderLineDto {
   productId: number
   productName: string
@@ -126,29 +120,50 @@ export interface OrderLineDto {
   lineTotalCents: number
 }
 
-/** Line with the COGS snapshot taken when the line was saved and refreshed on send. */
-export interface ProviderOrderLineDto extends OrderLineDto {
-  unitCogsCents: number
-  /** unitPriceCents - unitCogsCents */
-  unitMarginCents: number
-}
-
-const lineShape = {
+export const orderLineDtoSchema: z.ZodType<OrderLineDto> = z.object({
   productId: id,
   productName: z.string(),
   sku: z.string(),
   quantity: z.int().min(1),
   unitPriceCents: cents,
   lineTotalCents: cents,
-}
+})
 
-export const orderLineDtoSchema: z.ZodType<OrderLineDto> = z.object(lineShape)
+/**
+ * A provider-visible line, in saved order. Draft lines may be incomplete: no
+ * product yet (product fields and unitCogsCents null) or no price yet
+ * (unitPriceCents and lineTotalCents null). Sent orders always have complete lines.
+ */
+export interface ProviderOrderLineDto {
+  productId: number | null
+  productName: string | null
+  sku: string | null
+  quantity: number
+  unitPriceCents: number | null
+  /** quantity * unitPriceCents, or null without a price. */
+  lineTotalCents: number | null
+  /** Wholesale cost snapshot, taken on save and refreshed on send. Null without a product. */
+  unitCogsCents: number | null
+  /**
+   * marginBpsFromPrice(unitCogsCents, unitPriceCents); null unless both are set.
+   * Negative when a draft is priced below cost.
+   */
+  marginBps: number | null
+  /** minUnitPriceCents(unitCogsCents); null without a product. */
+  minUnitPriceCents: number | null
+}
 
 export const providerOrderLineDtoSchema: z.ZodType<ProviderOrderLineDto> =
   z.object({
-    ...lineShape,
-    unitCogsCents: cents,
-    unitMarginCents: cents,
+    productId: id.nullable(),
+    productName: z.string().nullable(),
+    sku: z.string().nullable(),
+    quantity: z.int().min(1),
+    unitPriceCents: cents.nullable(),
+    lineTotalCents: cents.nullable(),
+    unitCogsCents: cents.nullable(),
+    marginBps: z.int().max(10000).nullable(),
+    minUnitPriceCents: cents.nullable(),
   })
 
 export interface PaymentDto {
@@ -195,16 +210,19 @@ interface OrderSummaryBase {
 /**
  * GET /api/orders returns ProviderOrderSummaryDto[] for a provider (own orders, optional
  * patientId filter) and PatientOrderSummaryDto[] for a patient (own non-draft orders).
- * Draft money values are computed live from the current lines; sent orders use the snapshot.
+ * Sent orders use the split snapshotted on send. Drafts are priced live from their
+ * lines, and `split` is null while the draft would not pass send validation
+ * (no lines, an incomplete line, or a price below its minimum).
  */
 export interface ProviderOrderSummaryDto extends OrderSummaryBase {
   view: 'provider'
-  split: OrderSplitDto
+  split: OrderSplitDto | null
 }
 
+/** The patient sees only what they pay: no fee, cost, or margin. */
 export interface PatientOrderSummaryDto extends OrderSummaryBase {
   view: 'patient'
-  totals: OrderTotalsDto
+  totalCents: number
 }
 
 export type OrderSummaryDto = ProviderOrderSummaryDto | PatientOrderSummaryDto
@@ -225,14 +243,14 @@ export const providerOrderSummaryDtoSchema: z.ZodType<ProviderOrderSummaryDto> =
   z.object({
     ...summaryShape,
     view: z.literal('provider'),
-    split: orderSplitDtoSchema,
+    split: orderSplitDtoSchema.nullable(),
   })
 
 export const patientOrderSummaryDtoSchema: z.ZodType<PatientOrderSummaryDto> =
   z.object({
     ...summaryShape,
     view: z.literal('patient'),
-    totals: orderTotalsDtoSchema,
+    totalCents: cents,
   })
 
 /**
@@ -249,7 +267,7 @@ export interface ProviderOrderDetailDto extends ProviderOrderSummaryDto {
 
 /**
  * Returned by GET /api/orders/:id and POST /api/orders/:id/pay when the caller is the
- * order's patient. Contains no COGS, margin, or ledger.
+ * order's patient. Contains no wholesale cost, platform fee, margin, or ledger.
  */
 export interface PatientOrderDetailDto extends PatientOrderSummaryDto {
   patientAddress: string
@@ -263,7 +281,7 @@ export const providerOrderDetailDtoSchema: z.ZodType<ProviderOrderDetailDto> =
   z.object({
     ...summaryShape,
     view: z.literal('provider'),
-    split: orderSplitDtoSchema,
+    split: orderSplitDtoSchema.nullable(),
     patientAddress: z.string(),
     lines: z.array(providerOrderLineDtoSchema),
     payment: paymentDtoSchema.nullable(),
@@ -274,7 +292,7 @@ export const patientOrderDetailDtoSchema: z.ZodType<PatientOrderDetailDto> =
   z.object({
     ...summaryShape,
     view: z.literal('patient'),
-    totals: orderTotalsDtoSchema,
+    totalCents: cents,
     patientAddress: z.string(),
     lines: z.array(orderLineDtoSchema),
     payment: paymentDtoSchema.nullable(),

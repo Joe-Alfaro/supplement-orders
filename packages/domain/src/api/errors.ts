@@ -9,7 +9,9 @@ import { z } from 'zod'
  * - 403 FORBIDDEN: wrong persona, or the resource belongs to someone else
  * - 404 NOT_FOUND: the resource does not exist
  * - 409 ORDER_NOT_DRAFT / ORDER_NOT_PAYABLE: the order is in the wrong status
- * - 422 split codes, DUPLICATE_PRODUCT, UNKNOWN_PRODUCT, INSUFFICIENT_STOCK: business rule failed
+ * - 422 split codes, INCOMPLETE_LINE, DUPLICATE_PRODUCT, UNKNOWN_PRODUCT, INSUFFICIENT_STOCK:
+ *   business rule failed. INCOMPLETE_LINE (send only) names the missing part,
+ *   e.g. `lines.1.productId` or `lines.0.unitPriceCents`. EMPTY_ORDER has no field.
  * - 402 PAYMENT_FAILED: the gateway declined; nothing was persisted
  * - 500 INTERNAL: unexpected failure; nothing was persisted
  */
@@ -23,7 +25,8 @@ export const API_ERROR_CODES = [
   'EMPTY_ORDER',
   'INVALID_QUANTITY',
   'INVALID_AMOUNT',
-  'PRICE_BELOW_COGS',
+  'PRICE_BELOW_MINIMUM',
+  'INCOMPLETE_LINE',
   'UNSAFE_AMOUNT',
   'DUPLICATE_PRODUCT',
   'UNKNOWN_PRODUCT',

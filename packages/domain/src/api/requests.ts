@@ -8,16 +8,6 @@ const id = z.int().positive()
 /** Route params such as `:id` and `:patientId` arrive as strings. */
 export const idParamSchema = z.coerce.number().pipe(id)
 
-/** PATCH /api/products/:id/stock */
-export interface UpdateStockRequest {
-  stockQuantity: number
-}
-
-export const updateStockRequestSchema: z.ZodType<UpdateStockRequest> =
-  z.strictObject({
-    stockQuantity: z.int().nonnegative(),
-  })
-
 /** GET /api/orders?patientId= */
 export interface ListOrdersQuery {
   patientId?: number
@@ -37,32 +27,52 @@ export const createOrderRequestSchema: z.ZodType<CreateOrderRequest> =
     patientId: id,
   })
 
+/**
+ * One line as sent by the client. Drafts may be incomplete: `productId` and
+ * `unitPriceCents` may be null or omitted, and `quantity` defaults to 1.
+ */
 export interface OrderLineInput {
-  productId: number
-  quantity: number
+  productId?: number | null
+  quantity?: number
   /** Patient-facing price per unit, set by the provider. */
-  unitPriceCents: number
+  unitPriceCents?: number | null
+}
+
+/** A line after parsing: every key present, incomplete parts as null. */
+export interface DraftLine {
+  productId: number | null
+  quantity: number
+  unitPriceCents: number | null
 }
 
 /**
- * PUT /api/orders/:id/lines replaces every line of a draft.
- * An empty list is allowed for a draft; sending requires at least one line.
+ * PUT /api/orders/:id/lines replaces every line of a draft, preserving order.
+ * Incomplete lines are stored and returned as-is. Saving still rejects
+ * duplicate or unknown products and negative or non-integer values; the minimum
+ * price and completeness are enforced only on send.
  * COGS is never accepted from the client: the server snapshots it from the product.
  */
 export interface ReplaceOrderLinesRequest {
   lines: OrderLineInput[]
 }
 
-export const orderLineInputSchema: z.ZodType<OrderLineInput> = z.strictObject({
-  productId: id,
-  quantity: z.int().min(1),
-  unitPriceCents: z.int().nonnegative(),
-})
+export interface ParsedReplaceOrderLinesRequest {
+  lines: DraftLine[]
+}
 
-export const replaceOrderLinesRequestSchema: z.ZodType<ReplaceOrderLinesRequest> =
+export const orderLineInputSchema: z.ZodType<DraftLine, OrderLineInput> =
   z.strictObject({
-    lines: z.array(orderLineInputSchema),
+    productId: id.nullable().default(null),
+    quantity: z.int().min(1).default(1),
+    unitPriceCents: z.int().nonnegative().nullable().default(null),
   })
+
+export const replaceOrderLinesRequestSchema: z.ZodType<
+  ParsedReplaceOrderLinesRequest,
+  ReplaceOrderLinesRequest
+> = z.strictObject({
+  lines: z.array(orderLineInputSchema),
+})
 
 /**
  * POST /api/orders/:id/pay. The body may be empty.

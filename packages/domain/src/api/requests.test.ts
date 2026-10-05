@@ -3,7 +3,6 @@ import {
   idParamSchema,
   payOrderRequestSchema,
   replaceOrderLinesRequestSchema,
-  updateStockRequestSchema,
 } from './requests'
 
 describe('API request schemas', () => {
@@ -16,6 +15,18 @@ describe('API request schemas', () => {
     expect(
       replaceOrderLinesRequestSchema.safeParse({ lines: [] }).success,
     ).toBe(true)
+  })
+
+  it('accepts incomplete draft lines and normalizes them', () => {
+    const result = replaceOrderLinesRequestSchema.parse({
+      lines: [{}, { productId: 3, unitPriceCents: null }, { productId: null }],
+    })
+
+    expect(result.lines).toEqual([
+      { productId: null, quantity: 1, unitPriceCents: null },
+      { productId: 3, quantity: 1, unitPriceCents: null },
+      { productId: null, quantity: 1, unitPriceCents: null },
+    ])
   })
 
   it('reports the offending line field as a path', () => {
@@ -44,9 +55,11 @@ describe('API request schemas', () => {
     expect(result.success).toBe(false)
   })
 
-  it('rejects negative stock and zero quantity', () => {
+  it('rejects negative prices and zero quantity', () => {
     expect(
-      updateStockRequestSchema.safeParse({ stockQuantity: -1 }).success,
+      replaceOrderLinesRequestSchema.safeParse({
+        lines: [{ productId: 1, unitPriceCents: -1 }],
+      }).success,
     ).toBe(false)
     expect(
       replaceOrderLinesRequestSchema.safeParse({
