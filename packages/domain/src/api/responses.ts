@@ -175,6 +175,8 @@ export interface ProviderOrderLineDto {
   marginBps: number | null
   /** minUnitPriceCents(unitCogsCents); null without a product. */
   minUnitPriceCents: number | null
+  /** The product's current stock (live, not a snapshot); null without a product. */
+  stockQuantity: number | null
 }
 
 export const providerOrderLineDtoSchema: z.ZodType<ProviderOrderLineDto> =
@@ -188,6 +190,7 @@ export const providerOrderLineDtoSchema: z.ZodType<ProviderOrderLineDto> =
     unitCogsCents: cents.nullable(),
     marginBps: z.int().max(10000).nullable(),
     minUnitPriceCents: cents.nullable(),
+    stockQuantity: z.int().nonnegative().nullable(),
   })
 
 export interface PaymentDto {

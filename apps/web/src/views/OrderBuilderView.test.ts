@@ -172,6 +172,7 @@ describe('OrderBuilderView', () => {
         unitCogsCents: 1200,
         marginBps: null,
         minUnitPriceCents: 1210,
+        stockQuantity: 10,
       },
       {
         productId: null,
@@ -183,6 +184,7 @@ describe('OrderBuilderView', () => {
         unitCogsCents: null,
         marginBps: null,
         minUnitPriceCents: null,
+        stockQuantity: null,
       },
     ])
     vi.mocked(api.replaceOrderLines).mockResolvedValue(saved)

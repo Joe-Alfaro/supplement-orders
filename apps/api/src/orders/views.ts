@@ -75,6 +75,7 @@ async function selectLines(db: Db, orderIds: number[]) {
       quantity: orderItems.quantity,
       unitPriceCents: orderItems.unitPriceCents,
       unitCogsCents: orderItems.unitCogsCents,
+      stockQuantity: products.stockQuantity,
     })
     .from(orderItems)
     .leftJoin(products, eq(products.id, orderItems.productId))
@@ -178,6 +179,7 @@ function providerLine(l: LineRow): ProviderOrderLineDto {
       l.unitCogsCents === null || l.unitPriceCents === null
         ? null
         : marginBpsFromPrice(l.unitCogsCents, l.unitPriceCents),
+    stockQuantity: l.stockQuantity,
     minUnitPriceCents: hasProduct
       ? minUnitPriceCents(l.unitCogsCents ?? 0)
       : null,

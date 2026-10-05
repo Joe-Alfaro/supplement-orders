@@ -88,6 +88,16 @@ describe('POST /api/orders/:id/pay', () => {
     )
     expect(detail.body.payment.amountCents).toBe(subtotal)
     expect(detail.body.split.subtotalCents).toBe(subtotal)
+    // Line stock is live, so it already reflects this order's decrement.
+    const lineStock = detail.body.lines.map(
+      (l: { stockQuantity: number }) => l.stockQuantity,
+    )
+    expect(lineStock).toEqual(
+      sampleLines(ctx).map((l) => {
+        const seeded = ctx.seed.products.find((p) => p.id === l.productId)
+        return seeded!.stockQuantity - l.quantity
+      }),
+    )
   })
 
   it('rolls back everything when the gateway declines', async () => {

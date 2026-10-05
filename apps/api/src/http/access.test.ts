@@ -183,6 +183,7 @@ describe('validation errors', () => {
       [b!.id, 2],
     ])
     expect(res.body.lines[0]).toMatchObject({
+      stockQuantity: a!.stockQuantity,
       unitCogsCents: a!.cogsCents,
       unitPriceCents: null,
       lineTotalCents: null,
@@ -190,6 +191,7 @@ describe('validation errors', () => {
     })
     expect(res.body.lines[0].minUnitPriceCents).toBeGreaterThan(a!.cogsCents)
     expect(res.body.lines[1]).toMatchObject({
+      stockQuantity: null,
       productName: null,
       unitCogsCents: null,
       minUnitPriceCents: null,
