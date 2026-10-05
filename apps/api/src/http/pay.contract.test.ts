@@ -18,8 +18,9 @@ import type {
 import { createTestContext } from '../testing/harness'
 import type { TestContext } from '../testing/harness'
 
-// Pay returns the patient detail (200). A repeated pay is that same payment,
-// not 409 ORDER_NOT_PAYABLE: the paid order is an idempotent no-op.
+// Pay returns the patient detail (200). The patient pays the subtotal, so
+// totalCents equals that subtotal and the patient DTO has no fee or margin.
+// A repeated pay is that same payment, not 409 ORDER_NOT_PAYABLE.
 // Ledger rows stay in domain order and are immutable, so their ids do not change.
 
 const ISO_TIMESTAMP =
@@ -54,7 +55,7 @@ const PATIENT_DETAIL_KEYS = [
   'sentAt',
   'paidAt',
   'view',
-  'totals',
+  'totalCents',
   'patientAddress',
   'lines',
   'payment',
@@ -68,8 +69,6 @@ const SPLIT_KEYS = [
   'providerMarginCents',
 ]
 
-const TOTALS_KEYS = ['subtotalCents', 'platformFeeCents', 'totalCents']
-
 const PROVIDER_LINE_KEYS = [
   'productId',
   'productName',
@@ -78,7 +77,8 @@ const PROVIDER_LINE_KEYS = [
   'unitPriceCents',
   'lineTotalCents',
   'unitCogsCents',
-  'unitMarginCents',
+  'marginBps',
+  'minUnitPriceCents',
 ]
 
 const PATIENT_LINE_KEYS = [
@@ -165,7 +165,11 @@ function expectError(
 function expectProviderDetail(body: unknown): ProviderOrderDetailDto {
   expectExactKeys(body, PROVIDER_DETAIL_KEYS)
   const record = asRecord(body)
-  expectExactKeys(record.split, SPLIT_KEYS)
+  if (record.split === null) {
+    expect(record.split).toBeNull()
+  } else {
+    expectExactKeys(record.split, SPLIT_KEYS)
+  }
   if (!Array.isArray(record.lines) || !Array.isArray(record.ledger)) {
     throw new Error('order lines and ledger must be arrays')
   }
@@ -193,7 +197,6 @@ function expectProviderDetail(body: unknown): ProviderOrderDetailDto {
 function expectPatientDetail(body: unknown): PatientOrderDetailDto {
   expectExactKeys(body, PATIENT_DETAIL_KEYS)
   const record = asRecord(body)
-  expectExactKeys(record.totals, TOTALS_KEYS)
   if (!Array.isArray(record.lines)) {
     throw new Error('order lines must be an array')
   }
@@ -208,14 +211,40 @@ function expectPatientDetail(body: unknown): PatientOrderDetailDto {
   return detail
 }
 
+function ceilUnitFeeCents(priceCents: number): number {
+  return Math.floor((priceCents * 75 + 9_999) / 10_000)
+}
+
+function minUnitPriceCents(unitCogsCents: number): number {
+  function covers(priceCents: number): boolean {
+    return priceCents - unitCogsCents >= ceilUnitFeeCents(priceCents)
+  }
+  function search(low: number, high: number): number {
+    if (low === high) {
+      return low
+    }
+    const mid = Math.floor((low + high) / 2)
+    if (covers(mid)) {
+      return search(low, mid)
+    }
+    return search(mid + 1, high)
+  }
+  if (unitCogsCents === 0) {
+    return 0
+  }
+  return search(unitCogsCents, unitCogsCents * 2)
+}
+
 function exampleLine(products: TestContext['seed']['products']): ExampleLine {
+  // $120.00 can be sent only when the minimum for that cost is at most $120.00.
   const product = products.find(
-    (item) => item.cogsCents >= 1 && item.cogsCents <= 12_000,
+    (item) =>
+      item.cogsCents >= 1 && minUnitPriceCents(item.cogsCents) <= 12_000,
   )
   expect(product).toBeDefined()
   if (!product) {
     throw new Error(
-      'seed must include a product with COGS between 1 and 12000 cents',
+      'seed must include a product whose minimum price is at most 12000 cents',
     )
   }
   return {
@@ -312,11 +341,23 @@ async function placePayableOrder(): Promise<{
     },
   ])
   const detail = await sendOrder(draft.id)
+  const split = requireSplit(detail)
   expect(detail.status).toBe('pending_payment')
-  expect(detail.split.subtotalCents).toBe(12_000)
-  expect(detail.split.platformFeeCents).toBe(90)
-  expect(detail.split.totalCents).toBe(12_090)
+  expect(split.subtotalCents).toBe(12_000)
+  expect(split.platformFeeCents).toBe(90)
+  expect(split.totalCents).toBe(12_000)
+  expect(split.cogsCents).toBe(line.unitCogsCents)
+  expect(split.providerMarginCents).toBe(12_000 - line.unitCogsCents - 90)
   return { detail, line }
+}
+
+function requireSplit(
+  detail: ProviderOrderDetailDto,
+): NonNullable<ProviderOrderDetailDto['split']> {
+  if (detail.split === null) {
+    throw new Error('expected a server split')
+  }
+  return detail.split
 }
 
 function pay(orderId: number, body: { simulateFailure?: boolean }) {
@@ -327,6 +368,7 @@ function pay(orderId: number, body: { simulateFailure?: boolean }) {
 }
 
 function expectPaidLedger(detail: ProviderOrderDetailDto): void {
+  const split = requireSplit(detail)
   expect(detail.status).toBe('paid')
   expect(detail.paidAt).not.toBeNull()
   if (detail.paidAt) {
@@ -336,17 +378,24 @@ function expectPaidLedger(detail: ProviderOrderDetailDto): void {
   if (!detail.payment) {
     throw new Error('paid order is missing a payment')
   }
+  expect(split.totalCents).toBe(split.subtotalCents)
+  expect(split.providerMarginCents).toBe(
+    split.subtotalCents - split.cogsCents - split.platformFeeCents,
+  )
+  expect(
+    split.cogsCents + split.providerMarginCents + split.platformFeeCents,
+  ).toBe(split.totalCents)
   expect(detail.payment.reference.length).toBeGreaterThan(0)
-  expect(detail.payment.amountCents).toBe(detail.split.totalCents)
+  expect(detail.payment.amountCents).toBe(split.totalCents)
   expect(detail.ledger.map((entry) => entry.type)).toEqual([
     'cogs',
     'provider_margin',
     'platform_fee',
   ])
   expect(detail.ledger.map((entry) => entry.amountCents)).toEqual([
-    detail.split.cogsCents,
-    detail.split.providerMarginCents,
-    detail.split.platformFeeCents,
+    split.cogsCents,
+    split.providerMarginCents,
+    split.platformFeeCents,
   ])
   const ledgerSum = detail.ledger.reduce(
     (sum, entry) => sum + entry.amountCents,
@@ -378,23 +427,19 @@ describe('POST /api/orders/:id/pay', () => {
     expect(response.status).toBe(200)
     const patientOrder = expectPatientDetail(response.body)
 
+    const split = requireSplit(placed.detail)
     expect(patientOrder.status).toBe('paid')
     expect(patientOrder.payment).not.toBeNull()
-    expect(patientOrder.totals).toEqual({
-      subtotalCents: placed.detail.split.subtotalCents,
-      platformFeeCents: placed.detail.split.platformFeeCents,
-      totalCents: placed.detail.split.totalCents,
-    })
-    expect(patientOrder.payment?.amountCents).toBe(
-      patientOrder.totals.totalCents,
-    )
+    expect(patientOrder.totalCents).toBe(split.totalCents)
+    expect(patientOrder.totalCents).toBe(split.subtotalCents)
+    expect(patientOrder.payment?.amountCents).toBe(patientOrder.totalCents)
 
     const providerOrder = await getProviderOrder(placed.detail.id)
     expectPaidLedger(providerOrder)
     expect(providerOrder.payment?.reference).toBe(
       patientOrder.payment?.reference,
     )
-    expect(providerOrder.split).toEqual(placed.detail.split)
+    expect(providerOrder.split).toEqual(split)
 
     const after = stockPairs(await listProducts())
     const beforeStock = before.find((item) => item.id === placed.line.productId)
