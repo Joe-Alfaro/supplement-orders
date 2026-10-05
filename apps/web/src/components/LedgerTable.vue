@@ -12,7 +12,7 @@ interface Props {
 const props = defineProps<Props>()
 
 const TYPE_LABELS: Record<LedgerEntryDto['type'], string> = {
-  cogs: 'COGS',
+  cogs: 'Wholesale cost',
   provider_margin: 'Provider margin',
   platform_fee: 'Platform fee',
 }

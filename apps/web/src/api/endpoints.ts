@@ -11,7 +11,6 @@ import type {
   ProductDto,
   ProviderOrderDetailDto,
   ReplaceOrderLinesRequest,
-  UpdateStockRequest,
   UserDto,
 } from '@supplement-orders/domain'
 import { request } from './client'
@@ -24,11 +23,6 @@ export function listUsers() {
 
 export function listProducts() {
   return request<ProductDto[]>('GET', '/products')
-}
-
-export function updateProductStock(productId: number, stockQuantity: number) {
-  const body: UpdateStockRequest = { stockQuantity }
-  return request<ProductDto>('PATCH', `/products/${productId}/stock`, body)
 }
 
 export function listPatients() {

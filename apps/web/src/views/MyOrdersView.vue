@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { PatientOrderSummaryDto } from '@supplement-orders/domain'
 import { onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { listOrders } from '../api'
 import { ErrorBanner, MoneyText, StatusBadge } from '../components'
 import { formatDate } from '../format'
@@ -18,6 +19,13 @@ const {
   )
 })
 onMounted(load)
+
+const router = useRouter()
+
+// Several orders can share a date, so the whole row is the link.
+function openOrder(orderId: number) {
+  router.push(`/my-orders/${orderId}`)
+}
 </script>
 
 <template>
@@ -36,12 +44,15 @@ onMounted(load)
         </tr>
       </thead>
       <tbody>
-        <tr v-for="order in orders" :key="order.id">
-          <td>
-            <RouterLink :to="`/my-orders/${order.id}`">{{
-              formatDate(order.createdAt)
-            }}</RouterLink>
-          </td>
+        <tr
+          v-for="order in orders"
+          :key="order.id"
+          class="row-link"
+          tabindex="0"
+          @click="openOrder(order.id)"
+          @keydown.enter="openOrder(order.id)"
+        >
+          <td>{{ formatDate(order.createdAt) }}</td>
           <td>{{ order.providerName }}</td>
           <td><MoneyText :cents="order.totals.totalCents" /></td>
           <td><StatusBadge :status="order.status" /></td>

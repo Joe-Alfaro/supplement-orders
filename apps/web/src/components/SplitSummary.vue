@@ -29,7 +29,7 @@ const feePercent = `${PLATFORM_FEE_BPS / 100}%`
         <td><MoneyText :cents="split.totalCents" /></td>
       </tr>
       <tr class="summary-divider">
-        <th scope="row">Our cost (COGS)</th>
+        <th scope="row">Wholesale cost</th>
         <td><MoneyText :cents="split.cogsCents" /></td>
       </tr>
       <tr>

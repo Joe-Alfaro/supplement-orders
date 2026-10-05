@@ -108,7 +108,7 @@ function evaluate(
 function splitProblem(err: SplitValidationError) {
   const lineNumber = (err.lineIndex ?? 0) + 1
   if (err.code === 'PRICE_BELOW_COGS') {
-    return `Line ${lineNumber} is priced below our cost. Raise its price to see the split.`
+    return `Line ${lineNumber} is priced below its wholesale cost. Raise its price to see the split.`
   }
   return err.message
 }

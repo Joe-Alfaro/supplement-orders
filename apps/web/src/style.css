@@ -212,3 +212,29 @@ a.button {
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+tr.row-link {
+  cursor: pointer;
+}
+
+tr.row-link:hover,
+tr.row-link:focus {
+  background: #f2f6fc;
+  outline: 2px solid #3b6fd6;
+  outline-offset: -2px;
+}
+
+.link-button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: #0645ad;
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+
+.login {
+  max-width: 28rem;
+  margin: 4rem auto;
+}

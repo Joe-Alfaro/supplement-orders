@@ -2,7 +2,7 @@
 import type { OrderLineDto, ProviderOrderLineDto } from '@supplement-orders/domain'
 import MoneyText from './MoneyText.vue'
 
-// Read-only lines. COGS and margin columns appear only for provider lines with
+// Read-only lines. Wholesale cost and margin columns appear only for provider lines with
 // `showCosts`; patient lines carry no cost data to show.
 interface Props {
   lines: (OrderLineDto | ProviderOrderLineDto)[]
@@ -23,7 +23,7 @@ function isProviderLine(
     <thead>
       <tr>
         <th scope="col">Product</th>
-        <th v-if="showCosts" scope="col">Our cost (COGS)</th>
+        <th v-if="showCosts" scope="col">Wholesale cost</th>
         <th scope="col">Qty</th>
         <th scope="col">Price each</th>
         <th v-if="showCosts" scope="col">Your margin (each)</th>

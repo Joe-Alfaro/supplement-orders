@@ -158,7 +158,7 @@ function fieldId(key: number, field: string) {
       <thead>
         <tr>
           <th scope="col">Product</th>
-          <th scope="col">Our cost (COGS)</th>
+          <th scope="col">Wholesale cost</th>
           <th scope="col">Qty</th>
           <th scope="col">Patient price (each)</th>
           <th scope="col">Your margin (each)</th>

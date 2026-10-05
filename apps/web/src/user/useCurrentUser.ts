@@ -18,7 +18,7 @@ async function loadUsers() {
     users.value = await listUsers()
     loadError.value = null
     // Forget a stored id that no longer matches a seeded user.
-    if (selectedUserId.value !== null && !currentUser.value) selectUser(null)
+    if (selectedUserId.value !== null && !currentUser.value) signOut()
   } catch (err) {
     loadError.value = errorMessage(err)
     pendingLoad = null
@@ -31,9 +31,14 @@ function ensureUsersLoaded() {
   return pendingLoad
 }
 
-function selectUser(id: number | null) {
+function signIn(id: number) {
   selectedUserId.value = id
   writeStoredUserId(id)
+}
+
+function signOut() {
+  selectedUserId.value = null
+  writeStoredUserId(null)
 }
 
 export function homePathFor(role: Role) {
@@ -50,6 +55,7 @@ export function useCurrentUser() {
     currentUser,
     loadError,
     ensureUsersLoaded,
-    selectUser,
+    signIn,
+    signOut,
   }
 }

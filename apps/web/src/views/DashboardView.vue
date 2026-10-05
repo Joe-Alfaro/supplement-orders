@@ -1,76 +1,23 @@
 <script setup lang="ts">
-import type { ProductDto } from '@supplement-orders/domain'
-import { onMounted, reactive } from 'vue'
-import {
-  errorMessage,
-  getDashboard,
-  listProducts,
-  updateProductStock,
-} from '../api'
+import { onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { getDashboard, listProducts } from '../api'
 import { ErrorBanner, MoneyText, StatTile } from '../components'
 import { formatDate } from '../format'
 import { useResource } from '../useResource'
 
+const router = useRouter()
 const sales = useResource(getDashboard)
-
-interface StockRow {
-  input: string
-  saving: boolean
-  status: string | null
-  error: string | null
-}
-
-const stockRows = reactive<Record<number, StockRow>>({})
-
-const inventory = useResource(async () => {
-  const products = await listProducts()
-  products.forEach((product) => {
-    stockRows[product.id] = {
-      input: String(product.stockQuantity),
-      saving: false,
-      status: null,
-      error: null,
-    }
-  })
-  return products
-})
+// Read-only: stock only changes when orders are paid.
+const inventory = useResource(listProducts)
 
 onMounted(() => {
   sales.load()
   inventory.load()
 })
 
-function rowFor(product: ProductDto): StockRow {
-  const row = stockRows[product.id]
-  if (!row) throw new Error(`No stock row for product ${product.id}`)
-  return row
-}
-
-function setStockInput(product: ProductDto, event: Event) {
-  const row = rowFor(product)
-  row.input = (event.target as HTMLInputElement).value
-  row.status = null
-}
-
-async function saveStock(product: ProductDto) {
-  const row = rowFor(product)
-  row.status = null
-  const input = row.input.trim()
-  if (!/^\d+$/.test(input) || !Number.isSafeInteger(Number(input))) {
-    row.error = 'Enter a whole number of 0 or more'
-    return
-  }
-  row.error = null
-  row.saving = true
-  try {
-    const updated = await updateProductStock(product.id, Number(input))
-    row.input = String(updated.stockQuantity)
-    row.status = 'Saved'
-  } catch (err) {
-    row.error = errorMessage(err)
-  } finally {
-    row.saving = false
-  }
+function openOrder(orderId: number) {
+  router.push(`/orders/${orderId}`)
 }
 </script>
 
@@ -105,23 +52,26 @@ async function saveStock(product: ProductDto) {
             <th scope="col">Paid</th>
             <th scope="col">Patient</th>
             <th scope="col">Patient total</th>
-            <th scope="col">COGS</th>
-            <th scope="col">Your margin</th>
+            <th scope="col">Wholesale cost</th>
             <th scope="col">Platform fee</th>
+            <th scope="col">Your margin</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="order in sales.data.value.paidOrders" :key="order.orderId">
-            <td>
-              <RouterLink :to="`/orders/${order.orderId}`">{{
-                formatDate(order.paidAt)
-              }}</RouterLink>
-            </td>
+          <tr
+            v-for="order in sales.data.value.paidOrders"
+            :key="order.orderId"
+            class="row-link"
+            tabindex="0"
+            @click="openOrder(order.orderId)"
+            @keydown.enter="openOrder(order.orderId)"
+          >
+            <td>{{ formatDate(order.paidAt) }}</td>
             <td>{{ order.patientName }}</td>
             <td><MoneyText :cents="order.totalCents" /></td>
             <td><MoneyText :cents="order.cogsCents" /></td>
-            <td><MoneyText :cents="order.providerMarginCents" /></td>
             <td><MoneyText :cents="order.platformFeeCents" /></td>
+            <td><MoneyText :cents="order.providerMarginCents" /></td>
           </tr>
         </tbody>
       </table>
@@ -130,6 +80,10 @@ async function saveStock(product: ProductDto) {
 
   <section aria-labelledby="inventory-heading">
     <h2 id="inventory-heading">Inventory</h2>
+    <p class="muted">
+      Stock decreases automatically when orders are paid. It is not edited by
+      hand.
+    </p>
     <p v-if="inventory.loading.value">Loading…</p>
     <ErrorBanner
       v-else-if="inventory.error.value"
@@ -144,9 +98,8 @@ async function saveStock(product: ProductDto) {
           <tr>
             <th scope="col">Name</th>
             <th scope="col">SKU</th>
-            <th scope="col">Our cost</th>
-            <th scope="col">Stock</th>
-            <th scope="col"><span class="visually-hidden">Actions</span></th>
+            <th scope="col">Wholesale cost</th>
+            <th scope="col">Stock on hand</th>
           </tr>
         </thead>
         <tbody>
@@ -156,39 +109,7 @@ async function saveStock(product: ProductDto) {
               <code>{{ product.sku }}</code>
             </td>
             <td><MoneyText :cents="product.cogsCents" /></td>
-            <td>
-              <label>
-                <span class="visually-hidden"
-                  >Stock for {{ product.name }}</span
-                >
-                <input
-                  :value="rowFor(product).input"
-                  type="number"
-                  min="0"
-                  step="1"
-                  inputmode="numeric"
-                  :aria-invalid="rowFor(product).error ? 'true' : undefined"
-                  @input="setStockInput(product, $event)"
-                />
-              </label>
-            </td>
-            <td>
-              <button
-                type="button"
-                :disabled="rowFor(product).saving"
-                @click="saveStock(product)"
-              >
-                Save
-              </button>
-              <span aria-live="polite">
-                <span v-if="rowFor(product).error" class="negative">{{
-                  rowFor(product).error
-                }}</span>
-                <span v-else-if="rowFor(product).status" class="ok">{{
-                  rowFor(product).status
-                }}</span>
-              </span>
-            </td>
+            <td class="num">{{ product.stockQuantity }}</td>
           </tr>
         </tbody>
       </table>

@@ -1,22 +1,32 @@
 <script setup lang="ts">
-import { RouterLink, RouterView } from 'vue-router'
-import { UserSwitcher } from './components'
-import { notice, useCurrentUser } from './user'
+import { RouterLink, RouterView, useRouter } from 'vue-router'
+import { notice, roleLabel, useCurrentUser } from './user'
 
-const { currentUser } = useCurrentUser()
+const router = useRouter()
+const { currentUser, signOut } = useCurrentUser()
+
+async function onSignOut() {
+  signOut()
+  await router.push('/login')
+}
 </script>
 
 <template>
-  <header class="app-header">
+  <header v-if="currentUser" class="app-header">
     <strong>Supplement Orders</strong>
-    <nav v-if="currentUser" aria-label="Main">
+    <nav aria-label="Main">
       <template v-if="currentUser.role === 'provider'">
         <RouterLink to="/patients">Patients</RouterLink>
         <RouterLink to="/dashboard">Dashboard</RouterLink>
       </template>
       <RouterLink v-else to="/my-orders">My Orders</RouterLink>
     </nav>
-    <UserSwitcher />
+    <span class="signed-in">
+      Signed in as {{ currentUser.name }} ({{ roleLabel(currentUser.role) }}) ·
+      <button type="button" class="link-button" @click="onSignOut">
+        Sign out
+      </button>
+    </span>
   </header>
   <div aria-live="polite">
     <p v-if="notice" class="banner">{{ notice.message }}</p>

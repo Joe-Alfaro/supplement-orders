@@ -2,7 +2,7 @@
 import type { OrderTotalsDto } from '@supplement-orders/domain'
 import MoneyText from './MoneyText.vue'
 
-// Patient-facing totals: never COGS or margin.
+// Patient-facing totals: never wholesale cost or margin.
 interface Props {
   totals: OrderTotalsDto
 }

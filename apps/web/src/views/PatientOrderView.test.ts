@@ -111,16 +111,20 @@ describe('PatientOrderView', () => {
   it.each([
     ['pending', pending],
     ['paid', paid],
-  ])('never renders COGS or margin (%s)', async (_label, order) => {
-    vi.mocked(api.getOrder).mockResolvedValue(order)
-    const { container } = await renderWithRouter(PatientOrderView, {
-      path: '/my-orders/42',
-      props: { orderId: '42' },
-    })
-    await screen.findByRole('heading', { name: /Order #42/ })
+  ])(
+    'never renders wholesale cost, COGS or margin (%s)',
+    async (_label, order) => {
+      vi.mocked(api.getOrder).mockResolvedValue(order)
+      const { container } = await renderWithRouter(PatientOrderView, {
+        path: '/my-orders/42',
+        props: { orderId: '42' },
+      })
+      await screen.findByRole('heading', { name: /Order #42/ })
 
-    const text = container.textContent ?? ''
-    expect(text).not.toMatch(/COGS/i)
-    expect(text).not.toMatch(/margin/i)
-  })
+      const text = container.textContent ?? ''
+      expect(text).not.toMatch(/Wholesale cost/i)
+      expect(text).not.toMatch(/COGS/i)
+      expect(text).not.toMatch(/margin/i)
+    },
+  )
 })

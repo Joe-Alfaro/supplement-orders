@@ -22,7 +22,7 @@ describe('SplitSummary', () => {
     expect(rowValue('Subtotal')).toBe('$120.00')
     expect(rowValue('Platform fee (0.75%)')).toBe('$0.90')
     expect(rowValue('Patient pays')).toBe('$120.90')
-    expect(rowValue('Our cost (COGS)')).toBe('$70.00')
+    expect(rowValue('Wholesale cost')).toBe('$70.00')
     expect(rowValue('Your margin')).toBe('$50.00')
     expect(rowValue('Platform fee')).toBe('$0.90')
   })
