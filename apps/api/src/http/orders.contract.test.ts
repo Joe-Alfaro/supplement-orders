@@ -20,7 +20,8 @@ import type { TestContext } from '../testing/harness'
 
 // Black-box HTTP contract. The harness module is owned by the API worker.
 // Money expectations use the documented half-up formula, not a domain import.
-// Only POST /api/orders is specified as 201. PUT, send, and pay are 200.
+// Only POST /api/orders is specified as 201. Successful PUT, send, and pay
+// are 200. Replacing a draft line priced below COGS is 422.
 
 const ISO_TIMESTAMP =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
@@ -383,10 +384,10 @@ describe('order draft and send', () => {
     expect(stockOf(await listProducts(), line.productId)).toBe(stockBefore)
   })
 
-  it('rejects a price below COGS on send', async () => {
-    // Field path matches the replace-lines body. Index 0 is the only line.
-    // PUT may store the line. unitMarginCents is documented as nonnegative, so
-    // that response is not parsed as a provider detail. Send must reject it.
+  it('rejects saving a draft line priced below COGS', async () => {
+    // Drafts are validated on every save. The field is the dotted path into
+    // the replace-lines body, and index 0 is the only line. The illegal line
+    // is not stored, so the order stays an empty draft.
     const line = exampleLine(context().seed.products)
     const draft = await createDraft()
     const saved = await context()
@@ -401,16 +402,19 @@ describe('order draft and send', () => {
           },
         ],
       })
-    expect(saved.status).toBe(200)
+    expectError(saved, 422, 'PRICE_BELOW_COGS', 'lines.0.unitPriceCents')
 
-    const sent = await sendOrder(draft.id)
-    expectError(sent, 422, 'PRICE_BELOW_COGS', 'lines.0.unitPriceCents')
-
-    const current = await context()
-      .request.get(`/api/orders/${draft.id}`)
-      .set(USER_ID_HEADER, String(context().seed.providerUserId))
-    expect(current.status).toBe(200)
-    expect(asRecord(current.body).status).toBe('draft')
+    const current = await getProviderOrder(draft.id)
+    expect(current.status).toBe('draft')
+    expect(current.lines).toEqual([])
+    expect(current.sentAt).toBeNull()
+    expect(current.split).toEqual({
+      subtotalCents: 0,
+      platformFeeCents: 0,
+      totalCents: 0,
+      cogsCents: 0,
+      providerMarginCents: 0,
+    })
   })
 
   it('rejects sending a draft with no lines', async () => {
