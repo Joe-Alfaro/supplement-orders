@@ -333,13 +333,15 @@ export async function payOrder(
         gatewayReference: charge.reference,
       })
       .returning({ id: payments.id, amountCents: payments.amountCents })
+    if (!payment)
+      throw new Error(`Payment insert for order ${orderId} returned no row`)
 
     const entries = toLedgerEntries(split)
-    assertLedgerBalances(entries, payment!.amountCents)
+    assertLedgerBalances(entries, payment.amountCents)
     await tx.insert(ledgerEntries).values(
       entries.map((entry) => ({
         orderId,
-        paymentId: payment!.id,
+        paymentId: payment.id,
         type: entry.type,
         amountCents: entry.amountCents,
       })),
