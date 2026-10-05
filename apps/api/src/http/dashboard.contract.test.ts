@@ -51,6 +51,7 @@ const PROVIDER_DETAIL_KEYS = [
   'paidAt',
   'view',
   'split',
+  'patientDateOfBirth',
   'patientAddress',
   'lines',
   'payment',
