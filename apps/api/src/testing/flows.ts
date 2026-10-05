@@ -1,4 +1,8 @@
-import { USER_ID_HEADER, type OrderLineInput } from '@supplement-orders/domain'
+import {
+  USER_ID_HEADER,
+  type DraftLine,
+  type OrderLineInput,
+} from '@supplement-orders/domain'
 import { eq } from 'drizzle-orm'
 import { expect } from 'vitest'
 import { ledgerEntries, orders, payments, products } from '../db/schema'
@@ -8,8 +12,13 @@ export function as(userId: number) {
   return { [USER_ID_HEADER]: String(userId) }
 }
 
-/** Two lines priced above COGS, from the first two seeded products. */
-export function sampleLines(ctx: TestContext): OrderLineInput[] {
+export interface CompleteLine extends DraftLine {
+  productId: number
+  unitPriceCents: number
+}
+
+/** Two complete lines priced well above their minimums, from the first two seeded products. */
+export function sampleLines(ctx: TestContext): CompleteLine[] {
   const [a, b] = ctx.seed.products
   return [
     { productId: a!.id, quantity: 2, unitPriceCents: a!.cogsCents + 1000 },
@@ -75,4 +84,16 @@ export async function moneyState(ctx: InternalTestContext, orderId: number) {
       .from(products)
       .orderBy(products.id),
   }
+}
+
+/** Stock is read-only over HTTP, so tests set it directly. */
+export async function setStock(
+  ctx: InternalTestContext,
+  productId: number,
+  stockQuantity: number,
+) {
+  await ctx.db
+    .update(products)
+    .set({ stockQuantity })
+    .where(eq(products.id, productId))
 }

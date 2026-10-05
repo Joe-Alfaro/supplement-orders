@@ -38,9 +38,9 @@ describe('responses match the shared DTO schemas', () => {
     const provider = as(ctx.seed.providerUserId)
     const patient = as(ctx.seed.patientUserId)
     const draftId = await createDraft(ctx)
+    const incompleteId = await createDraft(ctx, [{}])
     const paidId = await createSentOrder(ctx)
     const paid = await pay(ctx, paidId)
-    const product = ctx.seed.products[0]!
 
     expectShape(
       z.array(userDtoSchema),
@@ -49,15 +49,6 @@ describe('responses match the shared DTO schemas', () => {
     expectShape(
       z.array(productDtoSchema),
       (await ctx.request.get('/api/products').set(provider)).body,
-    )
-    expectShape(
-      productDtoSchema,
-      (
-        await ctx.request
-          .patch(`/api/products/${product.id}/stock`)
-          .set(provider)
-          .send({ stockQuantity: 50 })
-      ).body,
     )
     expectShape(
       z.array(patientDtoSchema),
@@ -86,6 +77,10 @@ describe('responses match the shared DTO schemas', () => {
     expectShape(
       providerOrderDetailDtoSchema,
       (await ctx.request.get(`/api/orders/${draftId}`).set(provider)).body,
+    )
+    expectShape(
+      providerOrderDetailDtoSchema,
+      (await ctx.request.get(`/api/orders/${incompleteId}`).set(provider)).body,
     )
     expectShape(
       providerOrderDetailDtoSchema,

@@ -9,6 +9,7 @@ import {
   moneyState,
   pay,
   sampleLines,
+  setStock,
 } from '../testing/flows'
 
 describe('POST /api/orders/:id/pay', () => {
@@ -35,7 +36,7 @@ describe('POST /api/orders/:id/pay', () => {
     const after = await moneyState(ctx, orderId)
     expect(after.payments).toHaveLength(1)
     const [payment] = after.payments
-    expect(payment!.amountCents).toBe(res.body.totals.totalCents)
+    expect(payment!.amountCents).toBe(res.body.totalCents)
     expect(payment!.idempotencyKey).toBe(`order-${orderId}-payment`)
     expect(after.ledger.map((e) => e.type).sort()).toEqual([
       'cogs',
@@ -80,6 +81,13 @@ describe('POST /api/orders/:id/pay', () => {
       platform_fee: detail.body.split.platformFeeCents,
     })
     expect(detail.body.payment.amountCents).toBe(detail.body.split.totalCents)
+    // Revision 2: the fee comes out of the margin; the patient pays the subtotal.
+    const subtotal = sampleLines(ctx).reduce(
+      (sum, l) => sum + l.quantity * l.unitPriceCents,
+      0,
+    )
+    expect(detail.body.payment.amountCents).toBe(subtotal)
+    expect(detail.body.split.subtotalCents).toBe(subtotal)
   })
 
   it('rolls back everything when the gateway declines', async () => {
@@ -153,10 +161,7 @@ describe('POST /api/orders/:id/pay', () => {
   it('refuses to charge when stock ran out after sending, and changes nothing', async () => {
     const [line] = sampleLines(ctx)
     const orderId = await createSentOrder(ctx)
-    await ctx.request
-      .patch(`/api/products/${line!.productId}/stock`)
-      .set(as(ctx.seed.providerUserId))
-      .send({ stockQuantity: line!.quantity - 1 })
+    await setStock(ctx, line!.productId, line!.quantity - 1)
     const before = await moneyState(ctx, orderId)
 
     const res = await pay(ctx, orderId)

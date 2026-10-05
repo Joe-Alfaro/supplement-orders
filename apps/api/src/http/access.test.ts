@@ -37,10 +37,6 @@ describe('auth, persona and ownership', () => {
         .post('/api/orders')
         .set(patient)
         .send({ patientId: ctx.seed.patientId }),
-      ctx.request
-        .patch(`/api/products/${ctx.seed.products[0]!.id}/stock`)
-        .set(patient)
-        .send({ stockQuantity: 1 }),
     ]
 
     const results = await Promise.all(calls)
@@ -99,7 +95,7 @@ describe('auth, persona and ownership', () => {
     expect(draft.status).toBe(404)
     expect(sent.status).toBe(200)
     expect(sent.body.view).toBe('patient')
-    expect(JSON.stringify(sent.body)).not.toMatch(/cogs|margin|ledger/i)
+    expect(JSON.stringify(sent.body)).not.toMatch(/cogs|margin|ledger|fee/i)
   })
 
   it('scopes the patient list and order list to the acting provider', async () => {
@@ -159,32 +155,116 @@ describe('validation errors', () => {
     })
   })
 
-  it('rejects a price below COGS on the offending line', async () => {
+  it('saves incomplete lines in order and returns them on reload', async () => {
     const orderId = await createDraft(ctx, [])
     const [a, b] = ctx.seed.products
 
     const res = await putLines(orderId, [
-      { productId: a!.id, quantity: 1, unitPriceCents: a!.cogsCents },
-      { productId: b!.id, quantity: 1, unitPriceCents: b!.cogsCents - 1 },
+      { productId: a!.id, unitPriceCents: null },
+      {},
+      { productId: b!.id, quantity: 2, unitPriceCents: b!.cogsCents },
+    ])
+    const reloaded = await ctx.request
+      .get(`/api/orders/${orderId}`)
+      .set(as(ctx.seed.providerUserId))
+
+    expect(res.status).toBe(200)
+    expect(reloaded.body.lines).toEqual(res.body.lines)
+    expect(
+      res.body.lines.map(
+        (l: { productId: number | null; quantity: number }) => [
+          l.productId,
+          l.quantity,
+        ],
+      ),
+    ).toEqual([
+      [a!.id, 1],
+      [null, 1],
+      [b!.id, 2],
+    ])
+    expect(res.body.lines[0]).toMatchObject({
+      unitCogsCents: a!.cogsCents,
+      unitPriceCents: null,
+      lineTotalCents: null,
+      marginBps: null,
+    })
+    expect(res.body.lines[0].minUnitPriceCents).toBeGreaterThan(a!.cogsCents)
+    expect(res.body.lines[1]).toMatchObject({
+      productName: null,
+      unitCogsCents: null,
+      minUnitPriceCents: null,
+      marginBps: null,
+    })
+    expect(res.body.lines[2].marginBps).toBe(0)
+    // An incomplete draft would fail send, so it has no split.
+    expect(res.body.split).toBeNull()
+  })
+
+  it('saves a draft priced below its minimum but refuses to send it', async () => {
+    const orderId = await createDraft(ctx, [])
+    const [a, b] = ctx.seed.products
+    const saved = await putLines(orderId, [
+      { productId: a!.id, quantity: 1, unitPriceCents: a!.cogsCents + 500 },
+      { productId: b!.id, quantity: 1, unitPriceCents: b!.cogsCents },
     ])
 
-    expect(res.status).toBe(422)
-    expect(res.body.error).toMatchObject({
-      code: 'PRICE_BELOW_COGS',
+    const sent = await ctx.request
+      .post(`/api/orders/${orderId}/send`)
+      .set(as(ctx.seed.providerUserId))
+
+    expect(saved.status).toBe(200)
+    expect(saved.body.split).toBeNull()
+    expect(sent.status).toBe(422)
+    expect(sent.body.error).toMatchObject({
+      code: 'PRICE_BELOW_MINIMUM',
       field: 'lines.1.unitPriceCents',
     })
   })
 
-  it('rejects duplicate products, unknown products and quantities above stock', async () => {
+  it('refuses to send incomplete lines, naming the missing part', async () => {
+    const [a] = ctx.seed.products
+    const provider = as(ctx.seed.providerUserId)
+    const noProduct = await createDraft(ctx, [
+      { productId: a!.id, unitPriceCents: a!.cogsCents + 500 },
+      { unitPriceCents: 1000 },
+    ])
+    const noPrice = await createDraft(ctx, [{ productId: a!.id }])
+
+    const first = await ctx.request
+      .post(`/api/orders/${noProduct}/send`)
+      .set(provider)
+    const second = await ctx.request
+      .post(`/api/orders/${noPrice}/send`)
+      .set(provider)
+
+    expect(first.status).toBe(422)
+    expect(first.body.error).toMatchObject({
+      code: 'INCOMPLETE_LINE',
+      field: 'lines.1.productId',
+    })
+    expect(second.body.error).toMatchObject({
+      code: 'INCOMPLETE_LINE',
+      field: 'lines.0.unitPriceCents',
+    })
+  })
+
+  it('rejects duplicate and unknown products on save, and quantities above stock on send', async () => {
     const orderId = await createDraft(ctx, [])
     const p = ctx.seed.products[0]!
-    const line = { productId: p.id, quantity: 1, unitPriceCents: p.cogsCents }
+    const line = {
+      productId: p.id,
+      quantity: 1,
+      unitPriceCents: p.cogsCents + 500,
+    }
 
-    const dup = await putLines(orderId, [line, line])
+    const dup = await putLines(orderId, [line, { productId: p.id }])
     const unknown = await putLines(orderId, [{ ...line, productId: 9999 }])
     const tooMany = await putLines(orderId, [
       { ...line, quantity: p.stockQuantity + 1 },
     ])
+    const sent = await ctx.request
+      .post(`/api/orders/${orderId}/send`)
+      .set(as(ctx.seed.providerUserId))
 
     expect(dup.body.error).toMatchObject({
       code: 'DUPLICATE_PRODUCT',
@@ -194,7 +274,8 @@ describe('validation errors', () => {
       code: 'UNKNOWN_PRODUCT',
       field: 'lines.0.productId',
     })
-    expect(tooMany.body.error).toMatchObject({
+    expect(tooMany.status).toBe(200)
+    expect(sent.body.error).toMatchObject({
       code: 'INSUFFICIENT_STOCK',
       field: 'lines.0.quantity',
     })
@@ -222,20 +303,17 @@ describe('validation errors', () => {
     expect(resend.body.error.code).toBe('ORDER_NOT_DRAFT')
   })
 
-  it('rejects negative stock and bad ids', async () => {
+  it('has no stock endpoint, and rejects bad ids', async () => {
     const provider = as(ctx.seed.providerUserId)
 
-    const negative = await ctx.request
+    const stock = await ctx.request
       .patch(`/api/products/${ctx.seed.products[0]!.id}/stock`)
       .set(provider)
-      .send({ stockQuantity: -1 })
+      .send({ stockQuantity: 1 })
     const badId = await ctx.request.get('/api/orders/abc').set(provider)
     const missing = await ctx.request.get('/api/orders/999999').set(provider)
 
-    expect(negative.body.error).toMatchObject({
-      code: 'VALIDATION_ERROR',
-      field: 'stockQuantity',
-    })
+    expect(stock.status).toBe(404)
     expect(badId.status).toBe(400)
     expect(missing.status).toBe(404)
   })

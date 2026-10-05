@@ -1,3 +1,4 @@
+import { computePlatformFee } from '@supplement-orders/domain'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
   createInternalTestContext,
@@ -50,13 +51,15 @@ describe('GET /api/dashboard', () => {
       .get('/api/dashboard')
       .set(as(ctx.seed.otherProviderUserId))
 
-    const totals = paid.map((r) => r.body.totals)
-    const gmv = totals.reduce((s, t) => s + t.totalCents, 0)
-    expect(res.body.gmvCents).toBe(gmv)
-    expect(res.body.platformFeeCents).toBe(
-      totals.reduce((s, t) => s + t.platformFeeCents, 0),
+    // Revision 2: patients pay the subtotal; the fee comes out of the margin.
+    const subtotals = [12000, 3 * (b!.cogsCents + 500)]
+    const fees = subtotals.map(computePlatformFee)
+    expect(paid.map((r) => r.body.totalCents)).toEqual(subtotals)
+    expect(res.body.gmvCents).toBe(subtotals[0]! + subtotals[1]!)
+    expect(res.body.platformFeeCents).toBe(fees[0]! + fees[1]!)
+    expect(res.body.providerMarginCents).toBe(
+      12000 - a!.cogsCents - fees[0]! + (3 * 500 - fees[1]!),
     )
-    expect(res.body.providerMarginCents).toBe(12000 - a!.cogsCents + 3 * 500)
     expect(res.body.paidOrders).toHaveLength(2)
     res.body.paidOrders.forEach(
       (o: {
