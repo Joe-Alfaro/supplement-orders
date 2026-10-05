@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm'
 import type { Db } from './client'
 import { patients, products, providers, users } from './schema'
+import { generatePatients, generateProducts } from './seed-bulk'
 
 interface SeedProvider {
   name: string
@@ -113,8 +114,41 @@ async function seedProvider(db: Db, seed: SeedProvider) {
   }
 }
 
-/** Inserts the seed data into empty tables. Sequential so ids are deterministic. */
-export async function seedDatabase(db: Db): Promise<SeedResult> {
+/** Generated rows on top of the named ones, for a demo-sized catalog and patient list. */
+const BULK_PRODUCT_COUNT = 295
+const BULK_PATIENT_COUNT = 246
+
+export interface SeedOptions {
+  /** Add ~300 products and ~250 patients. Off for tests, on for `db:seed`. */
+  bulk?: boolean
+}
+
+/** Bulk patients alternate between the seeded providers. */
+async function seedBulkPatients(db: Db, providerIds: number[]) {
+  const generated = generatePatients(BULK_PATIENT_COUNT)
+  const inserted = await db
+    .insert(users)
+    .values(generated.map((p) => ({ name: p.name, role: 'patient' as const })))
+    .returning({ id: users.id })
+  // Serial ids are assigned in VALUES order, so sorting by id restores it.
+  const userIds = inserted.map((u) => u.id).sort((a, b) => a - b)
+  await db.insert(patients).values(
+    generated.map((patient, i) => ({
+      userId: userIds[i]!,
+      providerId: providerIds[i % providerIds.length]!,
+      address: patient.address,
+    })),
+  )
+}
+
+/**
+ * Inserts the seed data into empty tables. Named rows go first and in order, so
+ * their ids are the same with or without the bulk rows.
+ */
+export async function seedDatabase(
+  db: Db,
+  options: SeedOptions = {},
+): Promise<SeedResult> {
   const seededProviders = await SEED_PROVIDERS.reduce<
     Promise<SeededProvider[]>
   >(
@@ -130,6 +164,14 @@ export async function seedDatabase(db: Db): Promise<SeedResult> {
       cogsCents: products.cogsCents,
       stockQuantity: products.stockQuantity,
     })
+
+  if (options.bulk) {
+    await db.insert(products).values(generateProducts(BULK_PRODUCT_COUNT))
+    await seedBulkPatients(
+      db,
+      seededProviders.map((p) => p.providerId),
+    )
+  }
 
   return { providers: seededProviders, products: seededProducts }
 }

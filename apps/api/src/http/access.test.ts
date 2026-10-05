@@ -108,10 +108,10 @@ describe('auth, persona and ownership', () => {
       .get('/api/orders')
       .set(as(ctx.seed.otherProviderUserId))
 
-    const ids = mine.body.map((p: { id: number }) => p.id)
+    const ids = mine.body.items.map((p: { id: number }) => p.id)
     expect(ids).toContain(ctx.seed.patientId)
     expect(
-      mine.body.find((p: { id: number }) => p.id === ctx.seed.patientId),
+      mine.body.items.find((p: { id: number }) => p.id === ctx.seed.patientId),
     ).toMatchObject({ orderCount: 1, latestOrderStatus: 'draft' })
     expect(theirs.body).toEqual([])
   })
