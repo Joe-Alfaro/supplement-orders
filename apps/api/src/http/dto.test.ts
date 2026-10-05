@@ -2,9 +2,10 @@ import {
   apiErrorResponseSchema,
   dashboardDtoSchema,
   patientDtoSchema,
+  patientPageDtoSchema,
   patientOrderDetailDtoSchema,
   patientOrderSummaryDtoSchema,
-  productDtoSchema,
+  productPageDtoSchema,
   providerOrderDetailDtoSchema,
   providerOrderSummaryDtoSchema,
   userDtoSchema,
@@ -47,11 +48,11 @@ describe('responses match the shared DTO schemas', () => {
       (await ctx.request.get('/api/users')).body,
     )
     expectShape(
-      z.array(productDtoSchema),
+      productPageDtoSchema,
       (await ctx.request.get('/api/products').set(provider)).body,
     )
     expectShape(
-      z.array(patientDtoSchema),
+      patientPageDtoSchema,
       (await ctx.request.get('/api/patients').set(provider)).body,
     )
     expectShape(
