@@ -14,9 +14,11 @@ export const SEARCH_MAX_LENGTH = 100
 
 /**
  * Client-side shape of a list query for GET /api/products and GET /api/patients.
- * Products: `q` matches name or SKU. Patients: `q` matches name or address,
- * within the signed-in provider's patients. Matching is a case-insensitive
- * substring; `%` and `_` are literal characters. Results are ordered by name,
+ * Products: `q` matches name or SKU. Patients: `q` matches the name, within
+ * the signed-in provider's patients, and additionally the exact date of birth
+ * when the whole `q` is a valid calendar date (see `parseDateOfBirthQuery`);
+ * address is not searched. Text matching is a case-insensitive substring;
+ * `%` and `_` are literal characters. Results are ordered by name,
  * then id.
  */
 export interface ListQuery {
