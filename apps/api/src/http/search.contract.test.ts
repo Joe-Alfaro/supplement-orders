@@ -19,9 +19,11 @@ import type {
 import { createTestContext } from '../testing/harness'
 import type { TestContext } from '../testing/harness'
 
-// Black-box HTTP contract for revision 3 list search and offset pages.
+// Black-box HTTP contract for list search and offset pages.
 // The harness seed is small, so the default page is the whole ordered list.
-// Match sets are derived from that list. `%` and `_` are literal characters.
+// Patient search is a case-insensitive name substring, plus an exact date of
+// birth when the whole query is a valid MM/DD/YYYY or YYYY-MM-DD date.
+// Address is not searched. `%` and `_` are literal characters.
 
 const PAGE_KEYS = ['items', 'total', 'offset', 'limit']
 
@@ -32,6 +34,7 @@ const PATIENT_KEYS = [
   'userId',
   'providerId',
   'name',
+  'dateOfBirth',
   'address',
   'orderCount',
   'latestOrderStatus',
@@ -241,8 +244,18 @@ function productMatches(product: ProductDto, q: string): boolean {
   return contains(product.name, q) || contains(product.sku, q)
 }
 
-function patientMatches(patient: PatientDto, q: string): boolean {
-  return contains(patient.name, q) || contains(patient.address, q)
+function patientNameMatches(patient: PatientDto, q: string): boolean {
+  return contains(patient.name, q)
+}
+
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/
+
+function usDate(iso: string): string {
+  const match = ISO_DATE.exec(iso)
+  if (!match) {
+    throw new Error(`dateOfBirth must be YYYY-MM-DD, got ${iso}`)
+  }
+  return `${match[2]}/${match[3]}/${match[1]}`
 }
 
 function productNameQuery(products: readonly ProductDto[]): string {
@@ -276,29 +289,36 @@ function productSkuQuery(products: readonly ProductDto[]): string {
 function patientNameQuery(patients: readonly PatientDto[]): string {
   const match = patients
     .map((patient) =>
-      tokenMissingFrom(patient.name, [
-        ...patients
+      tokenMissingFrom(
+        patient.name,
+        patients
           .filter((other) => other.id !== patient.id)
-          .flatMap((other) => [other.name, other.address]),
-        patient.address,
-      ]),
+          .map((other) => other.name),
+      ),
     )
     .find((token) => token !== undefined)
   return requireToken(match, 'seed patients have no name-only search token')
 }
 
-function patientAddressQuery(patients: readonly PatientDto[]): string {
+function addressTextOutsideNames(patients: readonly PatientDto[]): string {
+  const names = patients.map((patient) => patient.name)
   const match = patients
-    .map((patient) =>
-      tokenMissingFrom(patient.address, [
-        ...patients.map((other) => other.name),
-        ...patients
-          .filter((other) => other.id !== patient.id)
-          .map((other) => other.address),
-      ]),
-    )
+    .map((patient) => tokenMissingFrom(patient.address, names))
     .find((token) => token !== undefined)
-  return requireToken(match, 'seed patients have no address-only search token')
+  return requireToken(
+    match,
+    'seed patients have no address text outside their names',
+  )
+}
+
+function sharedLetter(values: readonly string[]): string | undefined {
+  const folded = values.map(fold)
+  const letters = folded.flatMap((value) =>
+    [...value].filter((char) => /[a-z]/.test(char)),
+  )
+  return letters.find(
+    (letter) => folded.filter((value) => value.includes(letter)).length >= 2,
+  )
 }
 
 async function completeProducts(): Promise<ProductDto[]> {
@@ -325,6 +345,9 @@ async function completePatients(
   expect(new Set(page.items.map((item) => item.id)).size).toBe(
     page.items.length,
   )
+  page.items.forEach((patient) => {
+    expect(patient.dateOfBirth).toMatch(ISO_DATE)
+  })
   expectNameThenId(page.items)
   return page.items
 }
@@ -536,44 +559,67 @@ describe('GET /api/patients', () => {
     await expectInvalidPages('/api/patients')
   })
 
-  it('matches name or address, ignoring case', async () => {
+  it('matches a name or an exact date of birth, not an address', async () => {
     const patients = await completePatients()
     const nameQuery = patientNameQuery(patients)
-    const addressQuery = patientAddressQuery(patients)
     const nameMatches = patients.filter((patient) =>
-      patientMatches(patient, nameQuery),
+      patientNameMatches(patient, nameQuery),
     )
-    const addressMatches = patients.filter((patient) =>
-      patientMatches(patient, addressQuery),
-    )
-
     expect(
       nameMatches.every((patient) => contains(patient.name, nameQuery)),
     ).toBe(true)
-    expect(
-      nameMatches.some((patient) => contains(patient.address, nameQuery)),
-    ).toBe(false)
-    expect(
-      addressMatches.every((patient) =>
-        contains(patient.address, addressQuery),
-      ),
-    ).toBe(true)
-    expect(
-      addressMatches.some((patient) => contains(patient.name, addressQuery)),
-    ).toBe(false)
-    await expectQueryMatches(getPatients, patients, nameQuery, patientMatches)
     await expectQueryMatches(
       getPatients,
       patients,
-      addressQuery,
-      patientMatches,
+      nameQuery,
+      patientNameMatches,
     )
+
+    const subject = patients[0]
+    if (!subject) {
+      throw new Error('provider has no patients')
+    }
+    const iso = subject.dateOfBirth
+    const us = usDate(iso)
+    expect(patients.some((patient) => contains(patient.name, iso))).toBe(false)
+    expect(patients.some((patient) => contains(patient.name, us))).toBe(false)
+    const bornThen = patients.filter((patient) => patient.dateOfBirth === iso)
+    expect(bornThen.some((patient) => patient.id === subject.id)).toBe(true)
+    const byIso = await getPatients({ q: iso, limit: '100' })
+    const byUs = await getPatients({ q: us, limit: '100' })
+    expect(byIso.items.map((patient) => patient.id)).toEqual(
+      bornThen.map((patient) => patient.id),
+    )
+    expect(byUs.items.map((patient) => patient.id)).toEqual(
+      bornThen.map((patient) => patient.id),
+    )
+    expect(byIso.total).toBe(bornThen.length)
+    expect(byUs.total).toBe(bornThen.length)
+
+    const impossible = '02/30/1990'
+    expect(patients.some((patient) => contains(patient.name, impossible))).toBe(
+      false,
+    )
+    const asName = await getPatients({ q: impossible, limit: '100' })
+    expect(asName.items).toEqual([])
+    expect(asName.total).toBe(0)
+
+    const addressQuery = addressTextOutsideNames(patients)
+    expect(
+      patients.some((patient) => contains(patient.address, addressQuery)),
+    ).toBe(true)
+    expect(
+      patients.some((patient) => contains(patient.name, addressQuery)),
+    ).toBe(false)
+    const byAddress = await getPatients({ q: addressQuery, limit: '100' })
+    expect(byAddress.items).toEqual([])
+    expect(byAddress.total).toBe(0)
   })
 
   it('treats % and _ as literal characters', async () => {
     const patients = await completePatients()
-    await expectLiteral(getPatients, patients, '%', patientMatches)
-    await expectLiteral(getPatients, patients, '_', patientMatches)
+    await expectLiteral(getPatients, patients, '%', patientNameMatches)
+    await expectLiteral(getPatients, patients, '_', patientNameMatches)
   })
 
   it('pages stably and counts every match, including past the last row', async () => {
@@ -582,11 +628,14 @@ describe('GET /api/patients', () => {
     const patients = await completePatients()
     await expectStablePages(getPatients, patients, 1)
 
-    const q = requireShared(
-      patients.map((patient) => `${patient.name} ${patient.address}`),
-      'patient',
+    const names = patients.map((patient) => patient.name)
+    const q = requireToken(
+      sharedPiece(names, 3) ?? sharedPiece(names, 2) ?? sharedLetter(names),
+      'patient seed has no shared name substring',
     )
-    const expected = patients.filter((patient) => patientMatches(patient, q))
+    const expected = patients.filter((patient) =>
+      patientNameMatches(patient, q),
+    )
     expect(expected.length).toBeGreaterThan(1)
     const page = await getPatients({ q, offset: '0', limit: '1' })
     expect(page.items).toEqual(expected.slice(0, 1))
@@ -644,10 +693,34 @@ describe('GET /api/patients', () => {
     )
     expect(searched.items.map((patient) => patient.id)).toEqual(
       own
-        .filter((patient) => patientMatches(patient, named.name))
+        .filter((patient) => patientNameMatches(patient, named.name))
         .map((patient) => patient.id),
     )
     expect(searched.total).toBe(searched.items.length)
+
+    const ownerHits = await getPatients(
+      { q: named.dateOfBirth, limit: '100' },
+      String(context().seed.otherProviderUserId),
+    )
+    expect(ownerHits.items.some((patient) => patient.id === named.id)).toBe(
+      true,
+    )
+    const byIso = await getPatients({ q: named.dateOfBirth, limit: '100' })
+    const byUs = await getPatients({
+      q: usDate(named.dateOfBirth),
+      limit: '100',
+    })
+    const ownWithDob = own.filter(
+      (patient) => patient.dateOfBirth === named.dateOfBirth,
+    )
+    expect(byIso.items.some((patient) => patient.id === named.id)).toBe(false)
+    expect(byUs.items.some((patient) => patient.id === named.id)).toBe(false)
+    expect(byIso.items.map((patient) => patient.id)).toEqual(
+      ownWithDob.map((patient) => patient.id),
+    )
+    expect(byUs.items.map((patient) => patient.id)).toEqual(
+      ownWithDob.map((patient) => patient.id),
+    )
   })
 })
 
