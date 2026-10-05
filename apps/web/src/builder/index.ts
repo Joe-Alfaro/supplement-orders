@@ -1,2 +1,8 @@
-export { centsToInput, useOrderDraft } from './useOrderDraft'
-export type { DraftLine, EvaluatedLine, LineField } from './useOrderDraft'
+export * from './pricing'
+export { useOrderDraft } from './useOrderDraft'
+export type {
+  DraftLine,
+  EvaluatedLine,
+  LineField,
+  NewLine,
+} from './useOrderDraft'

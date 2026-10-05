@@ -40,7 +40,12 @@ const products: ProductDto[] = [
 
 beforeEach(() => {
   vi.mocked(api.getDashboard).mockResolvedValue(dashboard)
-  vi.mocked(api.listProducts).mockResolvedValue(products)
+  vi.mocked(api.listProducts).mockResolvedValue({
+    items: products,
+    total: products.length,
+    offset: 0,
+    limit: 25,
+  })
 })
 
 describe('DashboardView', () => {
@@ -49,9 +54,12 @@ describe('DashboardView', () => {
     await screen.findByText('Vitamin D3')
 
     expect(screen.getByText('119')).toBeTruthy()
-    expect(container.querySelectorAll('input, select, textarea')).toHaveLength(
-      0,
+    // The only input is the search box; stock itself is never editable.
+    const inputs = Array.from(
+      container.querySelectorAll('input, select, textarea'),
     )
+    expect(inputs.map((input) => input.id)).toEqual(['inventory-search'])
+    expect(screen.queryByRole('spinbutton')).toBeNull()
     expect(screen.queryByRole('button', { name: /save/i })).toBeNull()
   })
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { PatientDto, ProductDto } from '@supplement-orders/domain'
-import { computed, onMounted, ref } from 'vue'
+import type { PatientDto } from '@supplement-orders/domain'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   ApiRequestError,
@@ -8,12 +8,16 @@ import {
   errorMessage,
   getOrder,
   getPatient,
-  listProducts,
   replaceOrderLines,
   sendOrder,
 } from '../api'
-import { useOrderDraft } from '../builder'
-import { ErrorBanner, MoneyText, SplitSummary } from '../components'
+import { useOrderDraft, type NewLine } from '../builder'
+import {
+  AddProductDialog,
+  ErrorBanner,
+  MoneyText,
+  SplitSummary,
+} from '../components'
 import { formatCents, PLATFORM_FEE_BPS } from '../money'
 
 interface Props {
@@ -28,7 +32,6 @@ const router = useRouter()
 const patientId = computed(() => Number(props.patientId))
 const orderId = ref<number | null>(props.orderId ? Number(props.orderId) : null)
 
-const products = ref<ProductDto[]>([])
 const patient = ref<PatientDto | null>(null)
 const loading = ref(true)
 const loadError = ref<string | null>(null)
@@ -37,7 +40,7 @@ const saving = ref(false)
 const status = ref<string | null>(null)
 const banner = ref<string | null>(null)
 
-const draft = useOrderDraft(products)
+const draft = useOrderDraft()
 const { lines, evaluated, split, canSend } = draft
 const feePercent = `${PLATFORM_FEE_BPS / 100}%`
 
@@ -45,12 +48,10 @@ async function load() {
   loading.value = true
   loadError.value = null
   try {
-    const [loadedProducts, loadedPatient, existing] = await Promise.all([
-      listProducts(),
+    const [loadedPatient, existing] = await Promise.all([
       getPatient(patientId.value),
       orderId.value === null ? null : getOrder(orderId.value),
     ])
-    products.value = loadedProducts
     patient.value = loadedPatient
     if (existing) {
       if (existing.status !== 'draft' || existing.view !== 'provider') {
@@ -125,9 +126,26 @@ function sendToPatient() {
   })
 }
 
-function selectProduct(key: number, event: Event) {
-  const { value } = event.target as HTMLSelectElement
-  draft.setProduct(key, value === '' ? null : Number(value))
+const dialogOpen = ref(false)
+const addLineButton = ref<HTMLButtonElement | null>(null)
+
+function openAddProduct() {
+  dialogOpen.value = true
+}
+
+/** Closing the modal any way returns focus to Add line. */
+async function closeAddProduct() {
+  dialogOpen.value = false
+  await nextTick()
+  addLineButton.value?.focus()
+}
+
+/** The new line appears in the table and its Qty input takes focus. */
+async function addFromDialog(line: NewLine) {
+  const key = draft.addLine(line)
+  dialogOpen.value = false
+  await nextTick()
+  document.getElementById(fieldId(key, 'qty'))?.focus()
 }
 
 function inputValue(event: Event) {
@@ -155,7 +173,7 @@ function fieldId(key: number, field: string) {
 
     <ErrorBanner v-if="banner" :message="banner" />
 
-    <table class="builder">
+    <table v-if="lines.length > 0" class="builder">
       <thead>
         <tr>
           <th scope="col">Product</th>
@@ -170,31 +188,21 @@ function fieldId(key: number, field: string) {
       <tbody>
         <tr v-for="(row, index) in evaluated" :key="row.line.key">
           <td>
-            <label
-              :for="fieldId(row.line.key, 'product')"
-              class="visually-hidden"
-              >Product for line {{ index + 1 }}</label
-            >
-            <select
-              :id="fieldId(row.line.key, 'product')"
-              :value="row.line.productId ?? ''"
-              :aria-invalid="row.errors.productId ? 'true' : undefined"
-              :aria-describedby="
-                row.errors.productId
-                  ? fieldId(row.line.key, 'product-error')
-                  : undefined
-              "
-              @change="selectProduct(row.line.key, $event)"
-            >
-              <option value="">Choose a product…</option>
-              <option
-                v-for="product in draft.optionsFor(row.line)"
-                :key="product.id"
-                :value="product.id"
-              >
-                {{ product.name }} ({{ product.stockQuantity }} in stock)
-              </option>
-            </select>
+            <template v-if="row.product">
+              <span :data-testid="`product-${index}`">{{
+                row.product.name
+              }}</span>
+              <br />
+              <span class="small">
+                <code>{{ row.product.sku }}</code> ·
+                {{
+                  row.product.stockQuantity === null
+                    ? 'stock checked on send'
+                    : `${row.product.stockQuantity} in stock`
+                }}
+              </span>
+            </template>
+            <span v-else class="muted">No product (remove this line)</span>
             <p
               v-if="row.errors.productId"
               :id="fieldId(row.line.key, 'product-error')"
@@ -217,7 +225,7 @@ function fieldId(key: number, field: string) {
               type="number"
               min="1"
               step="1"
-              :max="row.product?.stockQuantity"
+              :max="row.product?.stockQuantity ?? undefined"
               :value="row.line.quantityInput"
               :aria-invalid="row.errors.quantity ? 'true' : undefined"
               :aria-describedby="
@@ -319,10 +327,18 @@ function fieldId(key: number, field: string) {
         </tr>
       </tbody>
     </table>
-    <p v-if="lines.length === 0">No lines yet.</p>
+    <p v-if="lines.length === 0">No lines yet. Add a product to start.</p>
     <p>
-      <button type="button" @click="draft.addLine">Add line</button>
+      <button ref="addLineButton" type="button" @click="openAddProduct">
+        Add line
+      </button>
     </p>
+    <AddProductDialog
+      :open="dialogOpen"
+      :excluded-product-ids="draft.productIds.value"
+      @close="closeAddProduct"
+      @add="addFromDialog"
+    />
 
     <h2>Split summary</h2>
     <SplitSummary v-if="split" :split="split" />

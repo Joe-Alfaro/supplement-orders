@@ -1,0 +1,125 @@
+import type { ListQuery, PatientDto, PatientPageDto } from '@supplement-orders/domain'
+import { fireEvent, screen } from '@testing-library/vue'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import * as api from '../api'
+import { renderWithRouter } from '../test/renderWithRouter'
+import PatientsView from './PatientsView.vue'
+
+vi.mock('../api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../api')>()
+  return { ...actual, listPatients: vi.fn() }
+})
+
+function patient(id: number, name: string): PatientDto {
+  return {
+    id,
+    userId: id + 100,
+    providerId: 1,
+    name,
+    address: `${id} Main St`,
+    orderCount: 0,
+    latestOrderStatus: null,
+  }
+}
+
+/** A fake GET /api/patients with 312 patients in total. */
+function patientPage(query: ListQuery): PatientPageDto {
+  const offset = query.offset ?? 0
+  const limit = query.limit ?? 25
+  if (query.q === 'nobody') return { items: [], total: 0, offset, limit }
+  const items = Array.from({ length: limit }, (_, i) =>
+    patient(offset + i + 1, `${query.q || 'Patient'} ${offset + i + 1}`),
+  )
+  return { items, total: 312, offset, limit }
+}
+
+beforeEach(() => {
+  vi.mocked(api.listPatients)
+    .mockReset()
+    .mockImplementation(async (query = {}) => patientPage(query))
+})
+
+describe('PatientsView', () => {
+  it('searches on the server (debounced) and keeps q in the URL', async () => {
+    const { router } = await renderWithRouter(PatientsView, {
+      path: '/patients',
+    })
+    expect(await screen.findByText('Showing 1–25 of 312')).toBeTruthy()
+
+    const search = screen.getByLabelText('Search patients')
+    await fireEvent.update(search, 'l')
+    await fireEvent.update(search, 'lee')
+
+    await vi.waitFor(() =>
+      expect(api.listPatients).toHaveBeenLastCalledWith({
+        q: 'lee',
+        offset: 0,
+        limit: 25,
+      }),
+    )
+    expect(api.listPatients).not.toHaveBeenCalledWith(
+      expect.objectContaining({ q: 'l' }),
+    )
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.query.q).toBe('lee'),
+    )
+    expect(await screen.findByText('lee 1')).toBeTruthy()
+  })
+
+  it('starts from q in the URL and pages with Previous/Next', async () => {
+    await renderWithRouter(PatientsView, { path: '/patients?q=lee' })
+    expect(await screen.findByDisplayValue('lee')).toBeTruthy()
+    expect(api.listPatients).toHaveBeenCalledWith({
+      q: 'lee',
+      offset: 0,
+      limit: 25,
+    })
+
+    const previous = screen.getByRole('button', {
+      name: 'Previous page of patients',
+    })
+    expect(previous).toHaveProperty('disabled', true)
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Next page of patients' }),
+    )
+
+    expect(await screen.findByText('Showing 26–50 of 312')).toBeTruthy()
+    expect(api.listPatients).toHaveBeenLastCalledWith({
+      q: 'lee',
+      offset: 25,
+      limit: 25,
+    })
+    expect(previous).toHaveProperty('disabled', false)
+  })
+
+  it('shows a no-match message with Clear search', async () => {
+    await renderWithRouter(PatientsView, { path: '/patients?q=nobody' })
+
+    expect(await screen.findByText(/No patients match "nobody"/)).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear search' }))
+
+    expect(await screen.findByText('Showing 1–25 of 312')).toBeTruthy()
+    expect(api.listPatients).toHaveBeenLastCalledWith({
+      q: '',
+      offset: 0,
+      limit: 25,
+    })
+  })
+
+  it('opens a patient from anywhere on the row, or with Enter', async () => {
+    const { router } = await renderWithRouter(PatientsView, {
+      path: '/patients',
+    })
+    await fireEvent.click(await screen.findByText('3 Main St'))
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.path).toBe('/patients/3'),
+    )
+
+    const row = screen.getByText('Patient 5').closest('tr')
+    if (!row) throw new Error('row not found')
+    await fireEvent.keyDown(row, { key: 'Enter' })
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.path).toBe('/patients/5'),
+    )
+  })
+})

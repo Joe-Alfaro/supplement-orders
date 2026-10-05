@@ -253,3 +253,39 @@ input.margin {
   color: #b00020;
   font-weight: 600;
 }
+
+.pagination {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin: 0.5rem 0 1rem;
+}
+
+.search {
+  margin: 0.5rem 0;
+}
+
+.search input {
+  width: 20rem;
+}
+
+tr[aria-disabled='true'] {
+  color: #888;
+  cursor: not-allowed;
+}
+
+dialog.modal {
+  width: min(56rem, 95vw);
+  padding: 1.25rem 1.5rem;
+  border: 1px solid #ccc;
+  border-radius: 0.5rem;
+}
+
+dialog.modal::backdrop {
+  background: rgb(0 0 0 / 35%);
+}
+
+.small {
+  font-size: 0.85rem;
+  color: #555;
+}

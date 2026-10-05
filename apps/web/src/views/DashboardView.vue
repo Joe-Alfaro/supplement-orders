@@ -2,19 +2,29 @@
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { getDashboard, listProducts } from '../api'
-import { ErrorBanner, MoneyText, StatTile } from '../components'
+import {
+  ErrorBanner,
+  MoneyText,
+  PaginationControls,
+  StatTile,
+} from '../components'
 import { formatDate } from '../format'
+import { usePagedSearch } from '../search'
 import { useResource } from '../useResource'
 
 const router = useRouter()
 const sales = useResource(getDashboard)
 // Read-only: stock only changes when orders are paid.
-const inventory = useResource(listProducts)
+const inventory = usePagedSearch(listProducts)
 
 onMounted(() => {
   sales.load()
   inventory.load()
 })
+
+function onInventorySearch(event: Event) {
+  inventory.setQuery((event.target as HTMLInputElement).value)
+}
 
 function openOrder(orderId: number) {
   router.push(`/orders/${orderId}`)
@@ -84,15 +94,30 @@ function openOrder(orderId: number) {
       Stock decreases automatically when orders are paid. It is not edited by
       hand.
     </p>
-    <p v-if="inventory.loading.value">Loading…</p>
+    <p class="search">
+      <label for="inventory-search">Search products</label><br />
+      <input
+        id="inventory-search"
+        type="search"
+        placeholder="Name or SKU"
+        :value="inventory.query.value"
+        @input="onInventorySearch"
+      />
+    </p>
     <ErrorBanner
-      v-else-if="inventory.error.value"
+      v-if="inventory.error.value"
       :message="inventory.error.value"
       retryable
       @retry="inventory.load"
     />
-    <template v-else-if="inventory.data.value">
-      <p v-if="inventory.data.value.length === 0">No products.</p>
+    <p v-else-if="inventory.loading.value && !inventory.page.value">Loading…</p>
+    <template v-else-if="inventory.page.value">
+      <p v-if="inventory.items.value.length === 0" role="status">
+        <template v-if="inventory.activeQuery.value"
+          >No products match "{{ inventory.activeQuery.value }}".</template
+        >
+        <template v-else>No products.</template>
+      </p>
       <table v-else>
         <thead>
           <tr>
@@ -103,7 +128,7 @@ function openOrder(orderId: number) {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="product in inventory.data.value" :key="product.id">
+          <tr v-for="product in inventory.items.value" :key="product.id">
             <td>{{ product.name }}</td>
             <td>
               <code>{{ product.sku }}</code>
@@ -113,6 +138,16 @@ function openOrder(orderId: number) {
           </tr>
         </tbody>
       </table>
+      <PaginationControls
+        :offset="inventory.offset.value"
+        :count="inventory.items.value.length"
+        :total="inventory.total.value"
+        :can-previous="inventory.canPrevious.value"
+        :can-next="inventory.canNext.value"
+        label="products"
+        @previous="inventory.previous"
+        @next="inventory.next"
+      />
     </template>
   </section>
 </template>

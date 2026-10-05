@@ -44,7 +44,12 @@ async function renderApp(path: string) {
 
 beforeEach(() => {
   vi.mocked(api.listUsers).mockResolvedValue(users)
-  vi.mocked(api.listPatients).mockResolvedValue([])
+  vi.mocked(api.listPatients).mockResolvedValue({
+    items: [],
+    total: 0,
+    offset: 0,
+    limit: 25,
+  })
   vi.mocked(api.listOrders).mockResolvedValue([])
   useCurrentUser().signOut()
 })

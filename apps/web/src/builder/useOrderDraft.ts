@@ -1,61 +1,64 @@
 import type {
   OrderLineInput,
   OrderSplitDto,
-  ProductDto,
   ProviderOrderLineDto,
 } from '@supplement-orders/domain'
-import { computed, ref, type Ref } from 'vue'
+import { computed, ref } from 'vue'
+import { computeSplit } from '../money'
 import {
-  computeSplit,
-  formatBps,
-  formatCents,
-  marginBpsFromPrice,
-  minUnitPriceCents,
-  parseDollarsToCents,
-  parsePercentToBps,
-  priceFromMarginBps,
-} from '../money'
+  centsToInput,
+  evaluatePricing,
+  marginInputFromPrice,
+  normalizedMarginInput,
+  normalizedPriceInput,
+  priceInputFromMargin,
+  type LineProduct,
+  type PricingResult,
+} from './pricing'
+import { formatBps } from '../money'
 
 export type LineField = 'productId' | 'quantity' | 'unitPriceCents' | 'margin'
 
 /**
  * One editable row. Inputs stay as strings; the unit price in cents is derived.
  * Margin % and Patient price are two views of that one price: editing either
- * rewrites only the other, never the field being typed in.
+ * rewrites only the other, never the field being typed in. The product is
+ * fixed once chosen; to change it, remove the line and add another.
  */
 export interface DraftLine {
   key: number
-  productId: number | null
+  product: LineProduct | null
   quantityInput: string
   priceInput: string
   marginInput: string
-  /** Which of the two linked fields the provider typed in last. */
   source: 'price' | 'margin'
   /** Errors returned by the API for this line, keyed by field. */
   serverErrors: Partial<Record<LineField, string>>
 }
 
-export interface EvaluatedLine {
+export interface EvaluatedLine extends Omit<PricingResult, 'errors'> {
   line: DraftLine
-  product: ProductDto | null
-  quantity: number | null
-  priceCents: number | null
-  minPriceCents: number | null
-  belowMinimum: boolean
-  lineTotalCents: number | null
+  product: LineProduct | null
   errors: Partial<Record<LineField, string>>
   /** Has a product, a valid quantity, and a price at or above its minimum. */
   complete: boolean
-  /** Every typed value parses, so the line can be saved (possibly incomplete). */
-  saveable: boolean
+}
+
+/** What the Add-product modal hands over. */
+export interface NewLine {
+  product: LineProduct
+  quantityInput: string
+  priceInput: string
+  marginInput: string
+  source: 'price' | 'margin'
 }
 
 let nextKey = 1
 
-function blankLine(): DraftLine {
+function emptyLine(): DraftLine {
   return {
     key: nextKey++,
-    productId: null,
+    product: null,
     quantityInput: '1',
     priceInput: '',
     marginInput: '',
@@ -64,88 +67,30 @@ function blankLine(): DraftLine {
   }
 }
 
-/** Dollar string for an input, e.g. 123450 -> "1,234.50". */
-export function centsToInput(cents: number) {
-  return formatCents(cents).replace('$', '')
-}
-
-function parsePrice(input: string): { cents: number | null; error?: string } {
-  if (input.trim() === '') return { cents: null }
-  const parsed = parseDollarsToCents(input)
-  return parsed.ok
-    ? { cents: parsed.cents }
-    : { cents: null, error: parsed.error }
-}
-
-function parseQuantity(input: string, product: ProductDto | null) {
-  const trimmed = input.trim()
-  if (!/^\d+$/.test(trimmed) || Number(trimmed) < 1) {
-    return { error: 'Enter a whole number of 1 or more' }
-  }
-  const quantity = Number(trimmed)
-  if (product && quantity > product.stockQuantity) {
-    return { error: `Only ${product.stockQuantity} in stock` }
-  }
-  return { quantity }
-}
-
-function evaluate(
-  line: DraftLine,
-  products: readonly ProductDto[],
-): EvaluatedLine {
-  const product = products.find((p) => p.id === line.productId) ?? null
-  const errors: Partial<Record<LineField, string>> = {}
-
-  const parsedQuantity = parseQuantity(line.quantityInput, product)
-  if (parsedQuantity.error) errors.quantity = parsedQuantity.error
-  const quantity = parsedQuantity.quantity ?? null
-
-  const price = parsePrice(line.priceInput)
-  if (price.error) errors.unitPriceCents = price.error
-  const priceCents = price.cents
-
-  // A derived margin can be negative (price below cost); only typed input is validated.
-  const marginError =
-    line.source === 'margin' &&
-    line.marginInput.trim() !== '' &&
-    !parsePercentToBps(line.marginInput).ok
-  if (marginError) errors.margin = 'Enter a margin from 0 to 99.99'
-
-  const minPriceCents = product ? minUnitPriceCents(product.cogsCents) : null
-  const belowMinimum =
-    minPriceCents !== null && priceCents !== null && priceCents < minPriceCents
-  const lineTotalCents =
-    quantity !== null && priceCents !== null ? priceCents * quantity : null
-
+function evaluate(line: DraftLine): EvaluatedLine {
+  const pricing = evaluatePricing(line)
   return {
+    ...pricing,
     line,
-    product,
-    quantity,
-    priceCents,
-    minPriceCents,
-    belowMinimum,
-    lineTotalCents,
+    product: line.product,
     // Server messages win: they reflect what the API actually rejected.
-    errors: { ...errors, ...line.serverErrors },
+    errors: { ...pricing.errors, ...line.serverErrors },
     complete:
-      product !== null &&
-      quantity !== null &&
-      priceCents !== null &&
-      !belowMinimum &&
+      line.product !== null &&
+      pricing.quantity !== null &&
+      pricing.priceCents !== null &&
+      !pricing.belowMinimum &&
       Object.keys(line.serverErrors).length === 0,
-    saveable: !errors.quantity && !price.error && !marginError,
   }
 }
 
 const LINE_FIELD_PATTERN = /^lines\.(\d+)\.(productId|quantity|unitPriceCents)$/
 
 /** Local draft for the order builder. Money math comes from the shared domain package. */
-export function useOrderDraft(products: Ref<ProductDto[]>) {
-  const lines = ref<DraftLine[]>([blankLine()])
+export function useOrderDraft() {
+  const lines = ref<DraftLine[]>([])
 
-  const evaluated = computed(() =>
-    lines.value.map((line) => evaluate(line, products.value)),
-  )
+  const evaluated = computed(() => lines.value.map(evaluate))
 
   const allComplete = computed(
     () =>
@@ -173,63 +118,24 @@ export function useOrderDraft(products: Ref<ProductDto[]>) {
   const canSave = computed(() => evaluated.value.every((row) => row.saveable))
   const canSend = computed(() => split.value !== null)
 
+  /** Products already on the order; the modal disables them. */
+  const productIds = computed(() =>
+    lines.value.flatMap((line) => (line.product ? [line.product.id] : [])),
+  )
+
   function find(key: number) {
     return lines.value.find((candidate) => candidate.key === key)
   }
 
-  function cogsOf(line: DraftLine) {
-    return (
-      products.value.find((p) => p.id === line.productId)?.cogsCents ?? null
-    )
-  }
-
-  /** Rewrites the margin field from the current price (never the price field). */
-  function syncMarginFromPrice(line: DraftLine) {
-    const cogs = cogsOf(line)
-    const price = parsePrice(line.priceInput)
-    if (cogs === null || price.cents === null) return
-    line.marginInput = formatBps(marginBpsFromPrice(cogs, price.cents))
-  }
-
-  /** Rewrites the price field from the current margin (never the margin field). */
-  function syncPriceFromMargin(line: DraftLine) {
-    const cogs = cogsOf(line)
-    const margin = parsePercentToBps(line.marginInput)
-    if (cogs === null || !margin.ok) return
-    line.priceInput = centsToInput(priceFromMarginBps(cogs, margin.bps))
-  }
-
-  /** Products not already chosen on another line, plus this line's own product. */
-  function optionsFor(line: DraftLine) {
-    const taken = new Set(
-      lines.value
-        .filter((other) => other.key !== line.key)
-        .map((other) => other.productId),
-    )
-    return products.value.filter(
-      (product) => product.id === line.productId || !taken.has(product.id),
-    )
-  }
-
-  function addLine() {
-    lines.value.push(blankLine())
+  /** Appends a line from the modal and returns its key. */
+  function addLine(newLine: NewLine) {
+    const line: DraftLine = { ...emptyLine(), ...newLine }
+    lines.value.push(line)
+    return line.key
   }
 
   function removeLine(key: number) {
     lines.value = lines.value.filter((line) => line.key !== key)
-  }
-
-  function setProduct(key: number, productId: number | null) {
-    const line = find(key)
-    if (!line) return
-    line.productId = productId
-    line.serverErrors = {}
-    // Keep whichever value the provider already entered; derive the other.
-    if (parsePrice(line.priceInput).cents !== null) {
-      syncMarginFromPrice(line)
-      return
-    }
-    syncPriceFromMargin(line)
   }
 
   function setQuantity(key: number, input: string) {
@@ -245,7 +151,9 @@ export function useOrderDraft(products: Ref<ProductDto[]>) {
     line.priceInput = input
     line.source = 'price'
     line.serverErrors = {}
-    syncMarginFromPrice(line)
+    if (!line.product) return
+    line.marginInput =
+      marginInputFromPrice(line.product.cogsCents, input) ?? line.marginInput
   }
 
   function setMargin(key: number, input: string) {
@@ -254,27 +162,26 @@ export function useOrderDraft(products: Ref<ProductDto[]>) {
     line.marginInput = input
     line.source = 'margin'
     line.serverErrors = {}
-    syncPriceFromMargin(line)
+    if (!line.product) return
+    line.priceInput =
+      priceInputFromMargin(line.product.cogsCents, input) ?? line.priceInput
   }
 
   /** After the provider leaves a field, normalize it, e.g. "12.5" -> "12.50". */
   function normalizePrice(key: number) {
     const line = find(key)
-    const cents = line ? parsePrice(line.priceInput).cents : null
-    if (line && cents !== null) line.priceInput = centsToInput(cents)
+    if (line) line.priceInput = normalizedPriceInput(line.priceInput)
   }
 
   function normalizeMargin(key: number) {
     const line = find(key)
-    if (!line) return
-    const margin = parsePercentToBps(line.marginInput)
-    if (margin.ok) line.marginInput = formatBps(margin.bps)
+    if (line) line.marginInput = normalizedMarginInput(line.marginInput)
   }
 
   /** Request body for PUT /lines; incomplete parts are sent as null. */
   function toInputs(): OrderLineInput[] {
     return evaluated.value.map((row) => ({
-      productId: row.line.productId,
+      productId: row.line.product?.id ?? null,
       quantity: row.quantity ?? 1,
       unitPriceCents: row.priceCents,
     }))
@@ -283,8 +190,8 @@ export function useOrderDraft(products: Ref<ProductDto[]>) {
   /** Replace local lines with the server's saved version. */
   function loadFromServer(serverLines: readonly ProviderOrderLineDto[]) {
     lines.value = serverLines.map((line) => ({
-      ...blankLine(),
-      productId: line.productId,
+      ...emptyLine(),
+      product: lineProduct(line),
       quantityInput: String(line.quantity),
       priceInput:
         line.unitPriceCents === null ? '' : centsToInput(line.unitPriceCents),
@@ -308,10 +215,9 @@ export function useOrderDraft(products: Ref<ProductDto[]>) {
     split,
     canSave,
     canSend,
-    optionsFor,
+    productIds,
     addLine,
     removeLine,
-    setProduct,
     setQuantity,
     setPrice,
     setMargin,
@@ -320,5 +226,25 @@ export function useOrderDraft(products: Ref<ProductDto[]>) {
     toInputs,
     loadFromServer,
     applyFieldError,
+  }
+}
+
+function lineProduct(line: ProviderOrderLineDto): LineProduct | null {
+  if (
+    line.productId === null ||
+    line.productName === null ||
+    line.sku === null ||
+    line.unitCogsCents === null
+  ) {
+    return null
+  }
+  const stock: unknown = (line as { stockQuantity?: unknown }).stockQuantity
+  return {
+    id: line.productId,
+    name: line.productName,
+    sku: line.sku,
+    cogsCents: line.unitCogsCents,
+    // Present once the API adds live stock to provider lines; unknown until then.
+    stockQuantity: typeof stock === 'number' ? stock : null,
   }
 }

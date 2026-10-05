@@ -2,13 +2,15 @@ import type {
   CreateOrderRequest,
   DashboardDto,
   ListOrdersQuery,
+  ListQuery,
   OrderDetailDto,
   OrderLineInput,
   OrderSummaryDto,
   PatientDto,
+  PatientPageDto,
   PatientOrderDetailDto,
   PayOrderRequest,
-  ProductDto,
+  ProductPageDto,
   ProviderOrderDetailDto,
   ReplaceOrderLinesRequest,
   UserDto,
@@ -21,12 +23,23 @@ export function listUsers() {
   return request<UserDto[]>('GET', '/users')
 }
 
-export function listProducts() {
-  return request<ProductDto[]>('GET', '/products')
+/** Query string for a paged list; blank `q` and defaults are omitted. */
+function listQueryString(query: ListQuery) {
+  const params = new URLSearchParams()
+  const q = query.q?.trim()
+  if (q) params.set('q', q)
+  if (query.offset) params.set('offset', String(query.offset))
+  if (query.limit !== undefined) params.set('limit', String(query.limit))
+  const search = params.toString()
+  return search === '' ? '' : `?${search}`
 }
 
-export function listPatients() {
-  return request<PatientDto[]>('GET', '/patients')
+export function listProducts(query: ListQuery = {}) {
+  return request<ProductPageDto>('GET', `/products${listQueryString(query)}`)
+}
+
+export function listPatients(query: ListQuery = {}) {
+  return request<PatientPageDto>('GET', `/patients${listQueryString(query)}`)
 }
 
 export function getPatient(patientId: number) {
