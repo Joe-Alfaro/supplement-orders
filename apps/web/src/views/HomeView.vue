@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { DOMAIN_PACKAGE_NAME } from '@supplement-orders/domain'
+import { useCurrentUser } from '../user'
+
+const { loadError } = useCurrentUser()
 </script>
 
 <template>
   <h1>Supplement orders</h1>
-  <p>Scaffold placeholder. Shared logic from {{ DOMAIN_PACKAGE_NAME }}.</p>
+  <p v-if="loadError" role="alert">Could not load users: {{ loadError }}</p>
+  <p v-else>Choose a user from the switcher above to get started.</p>
 </template>
