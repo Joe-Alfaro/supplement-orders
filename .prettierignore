@@ -1,0 +1,6 @@
+notes/
+.claude/
+dist/
+node_modules/
+package-lock.json
+apps/api/drizzle/meta/

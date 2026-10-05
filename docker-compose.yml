@@ -1,0 +1,24 @@
+name: supplement-orders
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: supplement_orders
+      POSTGRES_PASSWORD: supplement_orders
+      POSTGRES_DB: supplement_orders
+    ports:
+      - '54329:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U supplement_orders -d supplement_orders']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    labels:
+      ao.session: ${AO_SESSION_ID:-local}
+      project: supplement-orders
+
+volumes:
+  pgdata:
