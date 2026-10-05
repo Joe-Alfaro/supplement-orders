@@ -48,6 +48,37 @@ export function computePlatformFee(subtotalCents: number): number {
   return Math.floor(numerator / BPS_DENOMINATOR)
 }
 
+// Minimum-price algebra. With p = c + k, the markup k must cover the per-unit fee
+// rounded up: k >= ceil(75p / 10000). For integer k that holds exactly when
+// 9925k >= 75c, i.e. when 9925p >= 10000c. Hence min = c + ceil(75c / 9925).
+const MIN_PRICE_MARKUP_DENOMINATOR = BPS_DENOMINATOR - PLATFORM_FEE_BPS
+
+/**
+ * The smallest unit price whose markup covers 75 bps of that price rounded up
+ * to the cent. Any order with every line at or above its minimum has a
+ * non-negative provider margin, because the order-level fee (half up on the
+ * subtotal) never exceeds the sum of the per-unit fees rounded up.
+ */
+export function minUnitPriceCents(unitCogsCents: number): number {
+  if (!isNonNegativeInteger(unitCogsCents)) {
+    throw new SplitValidationError('INVALID_AMOUNT')
+  }
+  const numerator =
+    unitCogsCents * PLATFORM_FEE_BPS + (MIN_PRICE_MARKUP_DENOMINATOR - 1)
+  if (!Number.isSafeInteger(numerator)) {
+    throw new SplitValidationError('UNSAFE_AMOUNT')
+  }
+  return unitCogsCents + Math.floor(numerator / MIN_PRICE_MARKUP_DENOMINATOR)
+}
+
+/** Exact for any integers: compared as BigInt so huge inputs cannot misround. */
+function isAtLeastMinimum(unitPriceCents: number, unitCogsCents: number) {
+  return (
+    BigInt(MIN_PRICE_MARKUP_DENOMINATOR) * BigInt(unitPriceCents) >=
+    BigInt(BPS_DENOMINATOR) * BigInt(unitCogsCents)
+  )
+}
+
 function addLine(
   totals: RunningTotals,
   line: SplitLine,
@@ -63,8 +94,8 @@ function addLine(
   ) {
     throw new SplitValidationError('INVALID_AMOUNT', lineIndex)
   }
-  if (unitPriceCents < unitCogsCents) {
-    throw new SplitValidationError('PRICE_BELOW_COGS', lineIndex)
+  if (!isAtLeastMinimum(unitPriceCents, unitCogsCents)) {
+    throw new SplitValidationError('PRICE_BELOW_MINIMUM', lineIndex)
   }
 
   const extensionCents = quantity * unitPriceCents
@@ -94,11 +125,17 @@ export function computeSplit(lines: readonly SplitLine[]): OrderSplit {
     cogsCents: 0,
   })
   const platformFeeCents = computePlatformFee(subtotalCents)
+  // Revision 2: the fee comes out of the provider's markup; the patient pays the subtotal.
+  const providerMarginCents = subtotalCents - cogsCents - platformFeeCents
+  // Unreachable while every line meets its minimum; kept as a guard on the invariant.
+  if (providerMarginCents < 0) {
+    throw new SplitValidationError('PRICE_BELOW_MINIMUM')
+  }
   return {
     subtotalCents,
     platformFeeCents,
-    totalCents: subtotalCents + platformFeeCents,
+    totalCents: subtotalCents,
     cogsCents,
-    providerMarginCents: subtotalCents - cogsCents,
+    providerMarginCents,
   }
 }

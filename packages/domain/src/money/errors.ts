@@ -2,7 +2,7 @@ export type SplitErrorCode =
   | 'EMPTY_ORDER'
   | 'INVALID_QUANTITY'
   | 'INVALID_AMOUNT'
-  | 'PRICE_BELOW_COGS'
+  | 'PRICE_BELOW_MINIMUM'
   | 'UNSAFE_AMOUNT'
 
 export class SplitValidationError extends Error {
