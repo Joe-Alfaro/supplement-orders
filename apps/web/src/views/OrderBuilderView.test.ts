@@ -124,4 +124,36 @@ describe('OrderBuilderView', () => {
     expect(await screen.findByText('Only 3 left')).toBeTruthy()
     expect(quantity.getAttribute('aria-invalid')).toBe('true')
   })
+
+  it('shows a field-less EMPTY_ORDER error in the general banner', async () => {
+    vi.mocked(api.createOrder).mockResolvedValue({
+      id: 99,
+    } as Awaited<ReturnType<typeof api.createOrder>>)
+    vi.mocked(api.replaceOrderLines).mockResolvedValue({
+      id: 99,
+      lines: [],
+    } as unknown as Awaited<ReturnType<typeof api.replaceOrderLines>>)
+    vi.mocked(api.sendOrder).mockRejectedValue(
+      new api.ApiRequestError(
+        422,
+        'EMPTY_ORDER',
+        'An order needs at least one line',
+      ),
+    )
+    const { container } = await renderBuilder()
+
+    await fireEvent.update(screen.getByLabelText('Product for line 1'), '1')
+    await fireEvent.update(
+      screen.getByLabelText('Patient price for line 1'),
+      '20',
+    )
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Send to patient' }),
+    )
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('An order needs at least one line')
+    expect(container.querySelector('.field-error')).toBeNull()
+    expect(container.querySelector('[aria-invalid="true"]')).toBeNull()
+  })
 })
