@@ -300,6 +300,16 @@ function patientNameQuery(patients: readonly PatientDto[]): string {
   return requireToken(match, 'seed patients have no name-only search token')
 }
 
+async function expectNameText(
+  patients: readonly PatientDto[],
+  q: string,
+): Promise<void> {
+  expect(patients.some((patient) => contains(patient.name, q))).toBe(false)
+  const page = await getPatients({ q, limit: '100' })
+  expect(page.items).toEqual([])
+  expect(page.total).toBe(0)
+}
+
 function addressTextOutsideNames(patients: readonly PatientDto[]): string {
   const names = patients.map((patient) => patient.name)
   const match = patients
@@ -596,13 +606,14 @@ describe('GET /api/patients', () => {
     expect(byIso.total).toBe(bornThen.length)
     expect(byUs.total).toBe(bornThen.length)
 
-    const impossible = '02/30/1990'
-    expect(patients.some((patient) => contains(patient.name, impossible))).toBe(
-      false,
-    )
-    const asName = await getPatients({ q: impossible, limit: '100' })
-    expect(asName.items).toEqual([])
-    expect(asName.total).toBe(0)
+    // Only an exact MM/DD/YYYY or YYYY-MM-DD real date is a date of birth.
+    // A one-digit month, an impossible day, and a bare year are name text.
+    expect(
+      patients.some((patient) => patient.dateOfBirth.includes('1984')),
+    ).toBe(true)
+    await expectNameText(patients, '02/30/1990')
+    await expectNameText(patients, '3/5/1990')
+    await expectNameText(patients, '1984')
 
     const addressQuery = addressTextOutsideNames(patients)
     expect(
