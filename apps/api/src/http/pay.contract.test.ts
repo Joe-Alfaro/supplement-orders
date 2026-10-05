@@ -38,6 +38,7 @@ const PROVIDER_DETAIL_KEYS = [
   'paidAt',
   'view',
   'split',
+  'patientDateOfBirth',
   'patientAddress',
   'lines',
   'payment',
@@ -79,6 +80,7 @@ const PROVIDER_LINE_KEYS = [
   'unitCogsCents',
   'marginBps',
   'minUnitPriceCents',
+  'stockQuantity',
 ]
 
 const PATIENT_LINE_KEYS = [
