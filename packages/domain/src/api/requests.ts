@@ -8,6 +8,68 @@ const id = z.int().positive()
 /** Route params such as `:id` and `:patientId` arrive as strings. */
 export const idParamSchema = z.coerce.number().pipe(id)
 
+export const PAGE_LIMIT_DEFAULT = 25
+export const PAGE_LIMIT_MAX = 100
+export const SEARCH_MAX_LENGTH = 100
+
+/**
+ * Client-side shape of a list query for GET /api/products and GET /api/patients.
+ * Products: `q` matches name or SKU. Patients: `q` matches name or address,
+ * within the signed-in provider's patients. Matching is a case-insensitive
+ * substring; `%` and `_` are literal characters. Results are ordered by name,
+ * then id.
+ */
+export interface ListQuery {
+  q?: string
+  offset?: number
+  limit?: number
+}
+
+/** A list query after parsing. `q` is null when absent or blank after trimming. */
+export interface ParsedListQuery {
+  q: string | null
+  offset: number
+  limit: number
+}
+
+/** Raw query-string values as Express delivers them. */
+export interface ListQueryParams {
+  q?: unknown
+  offset?: unknown
+  limit?: unknown
+}
+
+/** Digits only, so "", "1.5", "-1", "1e3" and repeated params are rejected. */
+function intParam(min: number, max: number, fallback: number) {
+  return z
+    .string()
+    .regex(/^\d+$/, 'Must be a whole number')
+    .transform(Number)
+    .pipe(z.int().min(min).max(max))
+    .optional()
+    .transform((v) => v ?? fallback)
+}
+
+/**
+ * Query schema shared by GET /api/products and GET /api/patients. Invalid values
+ * are a 400 VALIDATION_ERROR naming the param (`q`, `offset` or `limit`).
+ * Unknown params are ignored.
+ */
+export const listQuerySchema: z.ZodType<ParsedListQuery, ListQueryParams> =
+  z.object({
+    q: z
+      .string()
+      .trim()
+      .max(SEARCH_MAX_LENGTH)
+      .optional()
+      .transform((v) => (v ? v : null)),
+    offset: intParam(0, Number.MAX_SAFE_INTEGER, 0),
+    limit: intParam(1, PAGE_LIMIT_MAX, PAGE_LIMIT_DEFAULT),
+  })
+
+export const listProductsQuerySchema = listQuerySchema
+export const listPatientsQuerySchema = listQuerySchema
+
 /** GET /api/orders?patientId= */
 export interface ListOrdersQuery {
   patientId?: number

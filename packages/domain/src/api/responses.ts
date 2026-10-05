@@ -45,7 +45,7 @@ export const userDtoSchema: z.ZodType<UserDto> = z.object({
 })
 
 /**
- * GET /api/products returns ProductDto[] (provider only: wholesale cost is internal).
+ * GET /api/products returns Page<ProductDto> (provider only: wholesale cost is internal).
  * Stock is read-only; it decreases only when an order is paid.
  */
 export interface ProductDto {
@@ -64,7 +64,31 @@ export const productDtoSchema: z.ZodType<ProductDto> = z.object({
   stockQuantity: z.int().nonnegative(),
 })
 
-/** GET /api/patients returns PatientDto[]; GET /api/patients/:id returns PatientDto. Provider only. */
+/**
+ * One page of a list. `total` counts every match for the query, not just this
+ * page; `offset` and `limit` echo the parsed query. An offset past the end
+ * returns empty `items` with the real `total`.
+ */
+export interface Page<T> {
+  items: T[]
+  total: number
+  offset: number
+  limit: number
+}
+
+export function pageSchema<T>(item: z.ZodType<T>): z.ZodType<Page<T>> {
+  return z.object({
+    items: z.array(item),
+    total: z.int().nonnegative(),
+    offset: z.int().nonnegative(),
+    limit: z.int().min(1),
+  })
+}
+
+/**
+ * GET /api/patients returns Page<PatientDto> (provider only, own patients).
+ * GET /api/patients/:id returns PatientDto.
+ */
 export interface PatientDto {
   id: number
   userId: number
@@ -339,3 +363,9 @@ export const dashboardDtoSchema: z.ZodType<DashboardDto> = z.object({
     }),
   ),
 })
+
+export type ProductPageDto = Page<ProductDto>
+export type PatientPageDto = Page<PatientDto>
+
+export const productPageDtoSchema = pageSchema(productDtoSchema)
+export const patientPageDtoSchema = pageSchema(patientDtoSchema)
