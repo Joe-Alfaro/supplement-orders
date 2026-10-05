@@ -22,6 +22,13 @@
       "when": 1791232079677,
       "tag": "0002_rev3_list_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791232817996,
+      "tag": "0003_rev3b_patient_date_of_birth",
+      "breakpoints": true
     }
   ]
 }

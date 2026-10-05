@@ -169,6 +169,7 @@ describe('validation errors', () => {
       .set(as(ctx.seed.providerUserId))
 
     expect(res.status).toBe(200)
+    expect(res.body.patientDateOfBirth).toBe('1984-03-14')
     expect(reloaded.body.lines).toEqual(res.body.lines)
     expect(
       res.body.lines.map(

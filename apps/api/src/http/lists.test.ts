@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { products } from '../db/schema'
+import { eq } from 'drizzle-orm'
+import { patients, products, users } from '../db/schema'
 import { as } from '../testing/flows'
 import {
   createInternalTestContext,
@@ -114,7 +115,7 @@ describe('GET /api/products and GET /api/patients search and pagination', () => 
     expect(both.body.total).toBeGreaterThan(1)
   })
 
-  it("searches only the provider's own patients, by name or address", async () => {
+  it("searches only the provider's own patients, by name and not address", async () => {
     const mine = await listPatients()
     const byName = await listPatients('?q=LEE')
     const byAddress = await listPatients('?q=austin')
@@ -130,10 +131,12 @@ describe('GET /api/products and GET /api/patients search and pagination', () => 
       ctx.seed.patientId,
     ])
     expect(byName.body.items[0]).toMatchObject({
+      dateOfBirth: '1984-03-14',
       orderCount: 0,
       latestOrderStatus: null,
     })
-    expect(byAddress.body.items.map((p: Row) => p.name)).toEqual(['Sam Patel'])
+    // Revision 3b: address does not identify a patient, so it is not searched.
+    expect(byAddress.body.total).toBe(0)
     expect(otherProvidersPatient.body).toEqual({
       items: [],
       total: 0,
@@ -141,6 +144,63 @@ describe('GET /api/products and GET /api/patients search and pagination', () => 
       limit: 25,
     })
     expect(theirs.body.items.map((p: Row) => p.name)).toEqual(['Alex Kim'])
+  })
+
+  it('matches an exact date of birth in either format, within the provider', async () => {
+    const us = await listPatients(`?q=${encodeURIComponent('03/14/1984')}`)
+    const iso = await listPatients('?q=1984-03-14')
+    const padded = await listPatients(
+      `?q=${encodeURIComponent(' 11/02/1971 ')}`,
+    )
+    const otherProviders = await listPatients('?q=1993-07-21')
+    const theirs = await listPatients(
+      '?q=1993-07-21',
+      ctx.seed.otherProviderUserId,
+    )
+
+    expect(us.body.items.map((p: Row) => p.name)).toEqual(['Jordan Lee'])
+    expect(iso.body.items.map((p: Row) => p.name)).toEqual(['Jordan Lee'])
+    expect(padded.body.items.map((p: Row) => p.name)).toEqual(['Sam Patel'])
+    expect(otherProviders.body.total).toBe(0)
+    expect(theirs.body.items.map((p: Row) => p.name)).toEqual(['Alex Kim'])
+  })
+
+  it('treats partial or impossible dates as name text', async () => {
+    const queries = ['1984', '03/14', '02/30/1984', '3/14/1984', '1984-3-14']
+
+    const results = await Promise.all(
+      queries.map((q) => listPatients(`?q=${encodeURIComponent(q)}`)),
+    )
+
+    expect(results.map((r) => r.body.total)).toEqual([0, 0, 0, 0, 0])
+  })
+
+  it('tells same-name patients apart by date of birth', async () => {
+    const [first] = await ctx.db
+      .insert(users)
+      .values({ name: 'Jordan Lee', role: 'patient' })
+      .returning({ id: users.id })
+    const [provider] = await ctx.db
+      .select({ providerId: patients.providerId })
+      .from(patients)
+      .where(eq(patients.id, ctx.seed.patientId))
+    await ctx.db.insert(patients).values({
+      userId: first!.id,
+      providerId: provider!.providerId,
+      dateOfBirth: '2001-09-30',
+      address: '1 Test Way, Austin, TX 78701',
+    })
+
+    const byName = await listPatients('?q=jordan%20lee')
+    const byDob = await listPatients(`?q=${encodeURIComponent('09/30/2001')}`)
+
+    expect(
+      byName.body.items.map((p: { dateOfBirth: string }) => p.dateOfBirth),
+    ).toEqual(['1984-03-14', '2001-09-30'])
+    expect(byDob.body.items.map((p: Row) => p.id)).not.toContain(
+      ctx.seed.patientId,
+    )
+    expect(byDob.body.total).toBe(1)
   })
 
   it('pages patients with a limit of 1', async () => {
