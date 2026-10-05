@@ -10,6 +10,8 @@ export interface BulkProduct {
 
 export interface BulkPatient {
   name: string
+  /** YYYY-MM-DD */
+  dateOfBirth: string
   address: string
 }
 
@@ -161,10 +163,34 @@ export function generateProducts(total: number): BulkProduct[] {
   })
 }
 
+const DAY_MS = 86_400_000
+const EARLIEST_BIRTH_MS = Date.UTC(1936, 0, 1)
+// 1936-01-01 through early 2007: ages about 18 to 90 in 2026.
+const BIRTH_SPAN_DAYS = 26_000
+
+function birthDate(dayOffset: number) {
+  return new Date(EARLIEST_BIRTH_MS + dayOffset * DAY_MS)
+    .toISOString()
+    .slice(0, 10)
+}
+
+/**
+ * Bulk patients alternate between providers by index (even -> first provider).
+ * Index 2 repeats index 0's name and index 3 repeats index 1's, each with a
+ * different date of birth and the same provider, so the demo shows why the
+ * list carries DOB.
+ */
 export function generatePatients(total: number): BulkPatient[] {
   const next = lcg(19871231)
-  return Array.from({ length: total }, (_, i) => ({
-    name: `${pick(FIRST_NAMES, i)} ${pick(LAST_NAMES, Math.floor(i / FIRST_NAMES.length) + i)}`,
+  const nextDay = lcg(19560704)
+  const names = Array.from(
+    { length: total },
+    (_, i) =>
+      `${pick(FIRST_NAMES, i)} ${pick(LAST_NAMES, Math.floor(i / FIRST_NAMES.length) + i)}`,
+  )
+  return names.map((name, i) => ({
+    name: i === 2 || i === 3 ? (names[i - 2] ?? name) : name,
+    dateOfBirth: birthDate(nextDay(BIRTH_SPAN_DAYS)),
     address: `${100 + next(9800)} ${pick(STREETS, next(STREETS.length))}, ${pick(CITIES, next(CITIES.length))}`,
   }))
 }

@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm'
 import {
   bigint,
   check,
+  date,
   index,
   integer,
   pgEnum,
@@ -72,6 +73,8 @@ export const patients = pgTable(
     providerId: integer('provider_id')
       .notNull()
       .references(() => providers.id),
+    // With the name, how clinicians identify a patient. Read back as 'YYYY-MM-DD'.
+    dateOfBirth: date('date_of_birth', { mode: 'string' }).notNull(),
     address: text('address').notNull(),
   },
   (t) => [index('patients_provider_id_idx').on(t.providerId)],

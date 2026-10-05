@@ -50,6 +50,7 @@ const patient: PatientDto = {
   userId: 3,
   providerId: 1,
   name: 'Jordan Lee',
+  dateOfBirth: '1984-03-14',
   address: '214 Alder St',
   orderCount: 0,
   latestOrderStatus: null,
@@ -88,6 +89,7 @@ function draftDetail(
     sentAt: null,
     paidAt: null,
     split: null,
+    patientDateOfBirth: '1984-03-14',
     patientAddress: '214 Alder St',
     lines,
     payment: null,
@@ -203,6 +205,7 @@ describe('OrderBuilderView', () => {
         unitCogsCents: 1200,
         marginBps: null,
         minUnitPriceCents: 1210,
+        stockQuantity: 10,
       },
       {
         productId: null,
@@ -214,6 +217,7 @@ describe('OrderBuilderView', () => {
         unitCogsCents: null,
         marginBps: null,
         minUnitPriceCents: null,
+        stockQuantity: null,
       },
     ])
     vi.mocked(api.replaceOrderLines).mockResolvedValue(saved)

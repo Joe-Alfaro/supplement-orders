@@ -258,15 +258,17 @@ function exampleLine(products: TestContext['seed']['products']): ExampleLine {
 async function listProducts(): Promise<ProductDto[]> {
   const response = await context()
     .request.get('/api/products')
+    .query({ limit: 100 })
     .set(USER_ID_HEADER, String(context().seed.providerUserId))
   expect(response.status).toBe(200)
-  if (!Array.isArray(response.body)) {
+  const items = asRecord(response.body).items
+  if (!Array.isArray(items)) {
     throw new Error('product list must be an array')
   }
-  response.body.forEach((product) => {
+  items.forEach((product) => {
     expectExactKeys(product, PRODUCT_KEYS)
   })
-  return z.array(productDtoSchema).parse(response.body)
+  return z.array(productDtoSchema).parse(items)
 }
 
 function stockPairs(products: readonly ProductDto[]): StockPair[] {

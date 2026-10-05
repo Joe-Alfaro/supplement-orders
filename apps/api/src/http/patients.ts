@@ -1,10 +1,11 @@
 import {
   listPatientsQuerySchema,
+  parseDateOfBirthQuery,
   type OrderStatus,
   type PatientDto,
   type PatientPageDto,
 } from '@supplement-orders/domain'
-import { and, asc, count, desc, eq, inArray, type SQL } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, or, type SQL } from 'drizzle-orm'
 import { Router } from 'express'
 import type { Db } from '../db/client'
 import { orders, patients, users } from '../db/schema'
@@ -32,6 +33,7 @@ async function selectPatients(
       userId: patients.userId,
       providerId: patients.providerId,
       name: users.name,
+      dateOfBirth: patients.dateOfBirth,
       address: patients.address,
     })
     .from(patients)
@@ -64,6 +66,19 @@ async function selectPatients(
   })
 }
 
+/**
+ * Name substring, plus an exact date-of-birth match when the whole query is a
+ * valid date. Address is deliberately not searched (revision 3b).
+ */
+function patientSearch(q: string | null): SQL | undefined {
+  if (q === null) return undefined
+  const dateOfBirth = parseDateOfBirthQuery(q)
+  return or(
+    matchesSearch(q, [users.name]),
+    dateOfBirth === null ? undefined : eq(patients.dateOfBirth, dateOfBirth),
+  )
+}
+
 /** Provider only, scoped to the provider's own patients. */
 export function patientsRouter({ db, auth }: AppContext) {
   const router = Router()
@@ -76,7 +91,7 @@ export function patientsRouter({ db, auth }: AppContext) {
     )
     const where = and(
       eq(patients.providerId, user.providerId),
-      matchesSearch(q, [users.name, patients.address]),
+      patientSearch(q),
     )
 
     const [items, [counted]] = await Promise.all([

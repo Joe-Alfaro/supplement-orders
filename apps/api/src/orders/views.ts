@@ -44,6 +44,7 @@ async function selectOrders(db: Db, where: SQL | undefined) {
       patientId: orders.patientId,
       patientName: patientUsers.name,
       patientAddress: patients.address,
+      patientDateOfBirth: patients.dateOfBirth,
       providerId: orders.providerId,
       providerName: providerUsers.name,
       subtotalCents: orders.subtotalCents,
@@ -75,6 +76,7 @@ async function selectLines(db: Db, orderIds: number[]) {
       quantity: orderItems.quantity,
       unitPriceCents: orderItems.unitPriceCents,
       unitCogsCents: orderItems.unitCogsCents,
+      stockQuantity: products.stockQuantity,
     })
     .from(orderItems)
     .leftJoin(products, eq(products.id, orderItems.productId))
@@ -178,6 +180,7 @@ function providerLine(l: LineRow): ProviderOrderLineDto {
       l.unitCogsCents === null || l.unitPriceCents === null
         ? null
         : marginBpsFromPrice(l.unitCogsCents, l.unitPriceCents),
+    stockQuantity: l.stockQuantity,
     minUnitPriceCents: hasProduct
       ? minUnitPriceCents(l.unitCogsCents ?? 0)
       : null,
@@ -299,6 +302,7 @@ export async function loadProviderOrderDetail(
   }))
   return {
     ...providerSummary(order, lines),
+    patientDateOfBirth: order.patientDateOfBirth,
     patientAddress: order.patientAddress,
     lines: lines.map(providerLine),
     payment,

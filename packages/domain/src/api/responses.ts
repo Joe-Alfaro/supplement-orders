@@ -7,6 +7,7 @@ import { z } from 'zod'
 const id = z.int().positive()
 const cents = z.int().nonnegative()
 const timestamp = z.string()
+const isoDate = z.iso.date()
 
 export const ROLES = ['provider', 'patient'] as const
 export type Role = (typeof ROLES)[number]
@@ -94,6 +95,9 @@ export interface PatientDto {
   userId: number
   providerId: number
   name: string
+  /** Calendar date, `YYYY-MM-DD`. With the name, how clinicians identify a patient. */
+  dateOfBirth: string
+  /** Shipping address. Shown, but not searched. */
   address: string
   orderCount: number
   /** Status of the most recently created order, or null with no orders. */
@@ -105,6 +109,7 @@ export const patientDtoSchema: z.ZodType<PatientDto> = z.object({
   userId: id,
   providerId: id,
   name: z.string(),
+  dateOfBirth: isoDate,
   address: z.string(),
   orderCount: z.int().nonnegative(),
   latestOrderStatus: z.enum(ORDER_STATUSES).nullable(),
@@ -175,6 +180,8 @@ export interface ProviderOrderLineDto {
   marginBps: number | null
   /** minUnitPriceCents(unitCogsCents); null without a product. */
   minUnitPriceCents: number | null
+  /** The product's current stock (live, not a snapshot); null without a product. */
+  stockQuantity: number | null
 }
 
 export const providerOrderLineDtoSchema: z.ZodType<ProviderOrderLineDto> =
@@ -188,6 +195,7 @@ export const providerOrderLineDtoSchema: z.ZodType<ProviderOrderLineDto> =
     unitCogsCents: cents.nullable(),
     marginBps: z.int().max(10000).nullable(),
     minUnitPriceCents: cents.nullable(),
+    stockQuantity: z.int().nonnegative().nullable(),
   })
 
 export interface PaymentDto {
@@ -283,6 +291,8 @@ export const patientOrderSummaryDtoSchema: z.ZodType<PatientOrderSummaryDto> =
  * `payment` and `ledger` are populated once paid; ledger is empty before that.
  */
 export interface ProviderOrderDetailDto extends ProviderOrderSummaryDto {
+  /** `YYYY-MM-DD`, so the provider can confirm the right patient before sending. */
+  patientDateOfBirth: string
   patientAddress: string
   lines: ProviderOrderLineDto[]
   payment: PaymentDto | null
@@ -306,6 +316,7 @@ export const providerOrderDetailDtoSchema: z.ZodType<ProviderOrderDetailDto> =
     ...summaryShape,
     view: z.literal('provider'),
     split: orderSplitDtoSchema.nullable(),
+    patientDateOfBirth: isoDate,
     patientAddress: z.string(),
     lines: z.array(providerOrderLineDtoSchema),
     payment: paymentDtoSchema.nullable(),

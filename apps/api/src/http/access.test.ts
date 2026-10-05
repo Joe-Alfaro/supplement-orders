@@ -169,6 +169,7 @@ describe('validation errors', () => {
       .set(as(ctx.seed.providerUserId))
 
     expect(res.status).toBe(200)
+    expect(res.body.patientDateOfBirth).toBe('1984-03-14')
     expect(reloaded.body.lines).toEqual(res.body.lines)
     expect(
       res.body.lines.map(
@@ -183,6 +184,7 @@ describe('validation errors', () => {
       [b!.id, 2],
     ])
     expect(res.body.lines[0]).toMatchObject({
+      stockQuantity: a!.stockQuantity,
       unitCogsCents: a!.cogsCents,
       unitPriceCents: null,
       lineTotalCents: null,
@@ -190,6 +192,7 @@ describe('validation errors', () => {
     })
     expect(res.body.lines[0].minUnitPriceCents).toBeGreaterThan(a!.cogsCents)
     expect(res.body.lines[1]).toMatchObject({
+      stockQuantity: null,
       productName: null,
       unitCogsCents: null,
       minUnitPriceCents: null,
