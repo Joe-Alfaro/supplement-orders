@@ -182,8 +182,10 @@ function tokenMissingFrom(
   blocked: readonly string[],
 ): string | undefined {
   const blocks = blocked.map(fold)
-  return letterTokens(source).find((token) =>
-    blocks.every((block) => !block.includes(token)),
+  // A digit-only token cannot show that matching ignores case.
+  return letterTokens(source).find(
+    (token) =>
+      /[a-z]/.test(token) && blocks.every((block) => !block.includes(token)),
   )
 }
 
