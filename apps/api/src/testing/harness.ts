@@ -89,7 +89,14 @@ function toSeedIds(result: SeedResult): SeedIds {
   }
 }
 
-export async function createInternalTestContext(): Promise<InternalTestContext> {
+export interface InternalTestOptions {
+  /** NODE_ENV the app sees; defaults to 'test'. */
+  nodeEnv?: string
+}
+
+export async function createInternalTestContext(
+  options: InternalTestOptions = {},
+): Promise<InternalTestContext> {
   const url = testDatabaseUrl()
   await ensureTestDatabase(url)
   const { db, pool, ping } = createDb(url)
@@ -103,7 +110,7 @@ export async function createInternalTestContext(): Promise<InternalTestContext> 
     gateway,
     notifier,
     pingDb: ping,
-    nodeEnv: 'test',
+    nodeEnv: options.nodeEnv ?? 'test',
     payHooks,
   })
 

@@ -1,13 +1,17 @@
 import express from 'express'
 import type { Db } from './db/client'
+import { dashboardRouter } from './http/dashboard'
 import { errorHandler } from './http/errors'
+import { ordersRouter } from './http/orders'
+import { patientsRouter } from './http/patients'
+import { productsRouter } from './http/products'
 import { usersRouter } from './http/users'
 import type { Auth, Notifier, PaymentGateway } from './seams'
 import { HeaderAuth } from './seams'
 
 /** Test-only fault injection points inside the pay transaction. */
 export interface PayHooks {
-  /** Runs after the ledger rows are inserted, before stock and status change. */
+  /** Runs after the ledger rows are inserted, before the order is marked paid. */
   afterLedgerInsert?: () => Promise<void>
 }
 
@@ -56,6 +60,10 @@ export function createApp(deps: AppDeps) {
   })
 
   app.use('/api/users', usersRouter(ctx))
+  app.use('/api/products', productsRouter(ctx))
+  app.use('/api/patients', patientsRouter(ctx))
+  app.use('/api/orders', ordersRouter(ctx))
+  app.use('/api/dashboard', dashboardRouter(ctx))
 
   app.use('/api', (_req, res) => {
     res
