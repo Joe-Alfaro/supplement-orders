@@ -5,7 +5,7 @@ import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
 import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, useId } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   ApiRequestError,
@@ -157,6 +157,18 @@ function fieldId(key: number, field: string) {
   return `line-${key}-${field}`
 }
 
+// In-row inputs are named by visible text only (§9): the column header plus the
+// row's product name, e.g. "Qty Magnesium Glycinate 400 mg (90 caps)".
+const tableId = useId()
+
+function headerId(column: string) {
+  return `${tableId}-${column}-header`
+}
+
+function inputLabelledBy(key: number, column: string) {
+  return `${headerId(column)} ${fieldId(key, 'name')}`
+}
+
 function rowIndex(row: EvaluatedLine) {
   return evaluated.value.indexOf(row)
 }
@@ -191,9 +203,11 @@ function rowIndex(row: EvaluatedLine) {
       <Column header="Product">
         <template #body="{ data: row }">
           <template v-if="row.product">
-            <span :data-testid="`product-${rowIndex(row)}`">{{
-              row.product.name
-            }}</span>
+            <span
+              :id="fieldId(row.line.key, 'name')"
+              :data-testid="`product-${rowIndex(row)}`"
+              >{{ row.product.name }}</span
+            >
             <br />
             <span class="small">
               <code>{{ row.product.sku }}</code>
@@ -202,7 +216,9 @@ function rowIndex(row: EvaluatedLine) {
               >
             </span>
           </template>
-          <span v-else class="muted">No product (remove this line)</span>
+          <span v-else :id="fieldId(row.line.key, 'name')" class="muted"
+            >No product (remove this line)</span
+          >
           <Message
             v-if="row.errors.productId"
             :id="fieldId(row.line.key, 'product-error')"
@@ -219,13 +235,12 @@ function rowIndex(row: EvaluatedLine) {
           <span v-else>—</span>
         </template>
       </Column>
-      <Column header="Qty">
+      <Column>
+        <template #header><span :id="headerId('qty')">Qty</span></template>
         <template #body="{ data: row }">
-          <label :for="fieldId(row.line.key, 'qty')" class="visually-hidden"
-            >Quantity for line {{ rowIndex(row) + 1 }}</label
-          >
           <InputText
             :id="fieldId(row.line.key, 'qty')"
+            :aria-labelledby="inputLabelledBy(row.line.key, 'qty')"
             class="qty"
             inputmode="numeric"
             :model-value="row.line.quantityInput"
@@ -247,13 +262,14 @@ function rowIndex(row: EvaluatedLine) {
           >
         </template>
       </Column>
-      <Column header="Markup %">
+      <Column>
+        <template #header
+          ><span :id="headerId('markup')">Markup %</span></template
+        >
         <template #body="{ data: row }">
-          <label :for="fieldId(row.line.key, 'markup')" class="visually-hidden"
-            >Markup % for line {{ rowIndex(row) + 1 }}</label
-          >
           <InputText
             :id="fieldId(row.line.key, 'markup')"
+            :aria-labelledby="inputLabelledBy(row.line.key, 'markup')"
             class="markup"
             inputmode="decimal"
             :placeholder="row.product?.cogsCents === 0 ? '—' : '0.00'"
@@ -289,13 +305,14 @@ function rowIndex(row: EvaluatedLine) {
           </span>
         </template>
       </Column>
-      <Column header="Patient price (each)">
+      <Column>
+        <template #header
+          ><span :id="headerId('price')">Patient price (each)</span></template
+        >
         <template #body="{ data: row }">
-          <label :for="fieldId(row.line.key, 'price')" class="visually-hidden"
-            >Patient price for line {{ rowIndex(row) + 1 }}</label
-          >
           <InputText
             :id="fieldId(row.line.key, 'price')"
+            :aria-labelledby="inputLabelledBy(row.line.key, 'price')"
             class="price"
             inputmode="decimal"
             placeholder="0.00"
