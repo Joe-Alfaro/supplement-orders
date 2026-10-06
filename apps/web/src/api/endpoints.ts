@@ -114,7 +114,8 @@ export function getOrder(orderId: number) {
   return request<OrderDetailDto>('GET', `/orders/${orderId}`)
 }
 
-export function payOrder(orderId: number, options: PayOrderRequest = {}) {
+/** Pays with the quote the patient saw (revision 9): its revision and total. */
+export function payOrder(orderId: number, options: PayOrderRequest) {
   return request<PatientOrderDetailDto>(
     'POST',
     `/orders/${orderId}/pay`,

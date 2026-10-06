@@ -30,6 +30,7 @@ const paid: ProviderOrderDetailDto = {
   sentAt: '2026-10-05T12:05:00.000Z',
   paidAt: '2026-10-05T12:10:00.000Z',
   cancelledAt: null,
+  revision: 1,
   split: {
     subtotalCents: 12000,
     platformFeeCents: 90,

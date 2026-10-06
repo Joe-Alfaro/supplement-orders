@@ -23,6 +23,7 @@ const pending: PatientOrderDetailDto = {
   sentAt: '2026-10-05T12:05:00.000Z',
   paidAt: null,
   cancelledAt: null,
+  revision: 1,
   patientAddress: '214 Alder St, Portland, OR 97205',
   totalCents: 12000,
   lines: [
@@ -90,7 +91,11 @@ describe('PatientOrderView', () => {
     await user.click(button)
 
     expect(api.payOrder).toHaveBeenCalledTimes(1)
-    expect(api.payOrder).toHaveBeenCalledWith(42, {})
+    // Revision 9: pay carries the quote on screen, so a changed order is refused.
+    expect(api.payOrder).toHaveBeenCalledWith(42, {
+      expectedRevision: 1,
+      expectedTotalCents: 12000,
+    })
     expect(button).toBeDisabled()
 
     payment.resolve(paid)
@@ -118,11 +123,46 @@ describe('PatientOrderView', () => {
     await user.click(button)
 
     expect(await screen.findByText(/Card declined/)).toBeInTheDocument()
-    expect(api.payOrder).toHaveBeenCalledWith(42, { simulateFailure: true })
+    expect(api.payOrder).toHaveBeenCalledWith(42, {
+      expectedRevision: 1,
+      expectedTotalCents: 12000,
+      simulateFailure: true,
+    })
     expect(screen.getByRole('button', { name: 'Pay $120.00' })).toBeEnabled()
     expect(
       screen.queryByRole('heading', { name: 'Receipt' }),
     ).not.toBeInTheDocument()
+  })
+
+  it('reloads the order when the provider changed it, so the new total is shown before paying', async () => {
+    const user = userEvent.setup()
+    const repriced: PatientOrderDetailDto = {
+      ...pending,
+      revision: 2,
+      totalCents: 15000,
+      lines: [
+        { ...pending.lines[0]!, unitPriceCents: 5000, lineTotalCents: 15000 },
+      ],
+    }
+    vi.mocked(api.payOrder).mockRejectedValue(
+      new api.ApiRequestError(
+        409,
+        'ORDER_CHANGED',
+        'This order changed since you opened it. Review the new total before paying.',
+      ),
+    )
+    const button = await openPayScreen()
+    vi.mocked(api.getOrder).mockResolvedValue(repriced)
+
+    await user.click(button)
+
+    expect(
+      await screen.findByText(/This order changed since you opened it/),
+    ).toBeInTheDocument()
+    expect(
+      await screen.findByRole('button', { name: 'Pay $150.00' }),
+    ).toBeEnabled()
+    expect(api.getOrder).toHaveBeenCalledTimes(2)
   })
 
   it('shows a cancelled order with its lines and total but no Pay button', async () => {

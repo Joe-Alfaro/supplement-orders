@@ -47,13 +47,19 @@ async function pay() {
   paying.value = true
   payError.value = null
   try {
-    order.value = await payOrder(
-      order.value.id,
-      isDev && simulateFailure.value ? { simulateFailure: true } : {},
-    )
+    order.value = await payOrder(order.value.id, {
+      expectedRevision: order.value.revision,
+      expectedTotalCents: order.value.totalCents,
+      ...(isDev && simulateFailure.value ? { simulateFailure: true } : {}),
+    })
   } catch (err) {
     // Nothing was persisted; the order stays payable.
     payError.value = handleApiError(err)
+    // The provider changed the order since it was loaded: show the new total
+    // before the patient can consent to it.
+    if (err instanceof ApiRequestError && err.code === 'ORDER_CHANGED') {
+      await load()
+    }
   } finally {
     paying.value = false
   }
