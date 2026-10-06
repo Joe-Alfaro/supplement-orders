@@ -11,7 +11,8 @@
   },
   "scripts": {
     "dev": "concurrently -n api,web -c blue,green \"npm run dev -w apps/api\" \"npm run dev -w apps/web\"",
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build -w apps/web",
+    "start": "npm run start -w apps/api",
     "test": "npm run test --workspaces --if-present",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
@@ -20,6 +21,7 @@
     "db:down": "docker compose down",
     "db:migrate": "npm run db:migrate -w apps/api",
     "db:seed": "npm run db:seed -w apps/api",
+    "db:seed:if-empty": "npm run db:seed:if-empty -w apps/api",
     "e2e:db": "npm run e2e:db -w apps/api",
     "e2e:api": "npm run e2e:api -w apps/api",
     "e2e:web": "npm run e2e:web -w apps/web",
