@@ -5,18 +5,13 @@ import Select from 'primevue/select'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ErrorBanner } from '../components'
-import { homePathFor, roleLabel, useCurrentUser } from '../user'
+import { homePathFor, useCurrentUser, userOptions } from '../user'
 
 const router = useRouter()
 const { users, loadError, ensureUsersLoaded, signIn } = useCurrentUser()
 const selectedId = ref<number | null>(null)
 
-const options = computed(() =>
-  users.value.map((user) => ({
-    id: user.id,
-    label: `${user.name} (${roleLabel(user.role)})`,
-  })),
-)
+const options = computed(() => userOptions(users.value))
 
 async function submit() {
   const user = users.value.find(

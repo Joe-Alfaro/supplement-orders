@@ -49,6 +49,23 @@ export function roleLabel(role: Role) {
   return role === 'provider' ? 'Provider' : 'Patient'
 }
 
+/**
+ * Login picker options. Seeded users can share a name, so the user id is added
+ * to tell them apart.
+ */
+export function userOptions(users: readonly UserDto[]) {
+  return users.map((user) => {
+    const label = `${user.name} (${roleLabel(user.role)})`
+    const shared = users.some(
+      (other) => other.id !== user.id && other.name === user.name,
+    )
+    return {
+      id: user.id,
+      label: shared ? `${label} · user #${user.id}` : label,
+    }
+  })
+}
+
 export function useCurrentUser() {
   return {
     users,
