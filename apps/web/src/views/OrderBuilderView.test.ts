@@ -138,7 +138,8 @@ async function addProduct(
   if (fields.margin) {
     await fireEvent.update(screen.getByLabelText('Margin %'), fields.margin)
   }
-  if (fields.price) {
+  // Step 2 prefills the minimum price; pass price: '' to leave the line incomplete.
+  if (fields.price !== undefined) {
     await fireEvent.update(
       screen.getByLabelText('Patient price (each)'),
       fields.price,
@@ -236,7 +237,7 @@ describe('OrderBuilderView', () => {
     const first = await renderBuilder()
 
     // Added with a quantity but no price yet: incomplete, but saveable.
-    await addProduct('Vitamin D3', { qty: '2' })
+    await addProduct('Vitamin D3', { qty: '2', price: '' })
     expect(sendButton()).toHaveProperty('disabled', true)
 
     const save = screen.getByRole('button', { name: 'Save draft' })
@@ -266,7 +267,7 @@ describe('OrderBuilderView', () => {
     await addProduct('Vitamin D3', { price: '20' })
     expect(sendButton()).toHaveProperty('disabled', false)
 
-    await addProduct('Magnesium')
+    await addProduct('Magnesium', { price: '' })
     expect(sendButton()).toHaveProperty('disabled', true)
 
     await fireEvent.update(
@@ -514,5 +515,43 @@ describe('OrderBuilderView patient and stock', () => {
         { productId: 1, quantity: 1, unitPriceCents: 1250 },
       ]),
     )
+  })
+
+  it('prefills Patient price with the minimum and derives Margin %', async () => {
+    await renderBuilder()
+    await openAddProduct()
+    await chooseProduct('Vitamin D3')
+
+    // Minimum for a $12.00 cost is $12.10; (1210 - 1200) / 1210 = 0.83%.
+    expect(inputValue('Patient price (each)')).toBe('12.10')
+    expect(inputValue('Margin %')).toBe('0.83')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Add to order' }))
+    expect(inputValue('Patient price for line 1')).toBe('12.10')
+    expect(sendButton()).toHaveProperty('disabled', false)
+  })
+
+  it('shows the line processing fee read-only, in step 2 and in the table', async () => {
+    const { container } = await renderBuilder()
+    await openAddProduct()
+    await chooseProduct('Vitamin D3')
+
+    await fireEvent.update(screen.getByLabelText('Qty'), '3')
+    await fireEvent.update(screen.getByLabelText('Patient price (each)'), '20')
+
+    // 75 bps of the $60.00 line, half up: 45 cents.
+    const fee = screen.getByLabelText('Processing fee (0.75%)')
+    expect(inputValue('Processing fee (0.75%)')).toBe('$0.45')
+    expect(fee.hasAttribute('readonly')).toBe(true)
+    await fireEvent.update(screen.getByLabelText('Patient price (each)'), '')
+    expect(inputValue('Processing fee (0.75%)')).toBe('')
+    await fireEvent.update(screen.getByLabelText('Patient price (each)'), '20')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Add to order' }))
+    expect(screen.getByTestId('fee-0').textContent?.trim()).toBe('$0.45')
+    expect(
+      screen.getByRole('columnheader', { name: 'Processing fee (0.75%)' }),
+    ).toBeTruthy()
+    expect(container.textContent).not.toMatch(/Platform fee/i)
   })
 })

@@ -16,12 +16,13 @@ import { searchProducts } from '../api'
 import {
   evaluatePricing,
   marginInputFromPrice,
+  minimumPriceInput,
   normalizedMarginInput,
   normalizedPriceInput,
   priceInputFromMargin,
   type NewLine,
 } from '../builder'
-import { formatCents } from '../money'
+import { formatCents, PLATFORM_FEE_BPS } from '../money'
 import { usePagedSearch } from '../search'
 import ErrorBanner from './ErrorBanner.vue'
 import MoneyText from './MoneyText.vue'
@@ -112,6 +113,8 @@ function onPage(event: DataTablePageEvent) {
   search.goTo(event.first)
 }
 
+const feeLabel = `Processing fee (${PLATFORM_FEE_BPS / 100}%)`
+
 function rowClass(product: ProductDto) {
   return unavailableReason(product) ? 'row-unavailable' : ''
 }
@@ -120,8 +123,10 @@ async function choose(product: ProductDto) {
   if (unavailableReason(product)) return
   chosen.value = product
   quantityInput.value = '1'
-  priceInput.value = ''
-  marginInput.value = ''
+  // Start at the minimum price so a new line is complete and sendable as-is.
+  priceInput.value = minimumPriceInput(product.cogsCents)
+  marginInput.value =
+    marginInputFromPrice(product.cogsCents, priceInput.value) ?? ''
   source.value = 'price'
   attempted.value = false
   step.value = 2
@@ -321,6 +326,19 @@ function addToOrder() {
             variant="simple"
             >{{ pricing.errors.margin }}</Message
           >
+        </div>
+        <div class="field">
+          <label for="add-product-fee">{{ feeLabel }}</label>
+          <InputText
+            id="add-product-fee"
+            class="price"
+            readonly
+            :model-value="
+              pricing.lineFeeCents === null
+                ? ''
+                : formatCents(pricing.lineFeeCents)
+            "
+          />
         </div>
         <div class="field">
           <label for="add-product-price">Patient price (each)</label>

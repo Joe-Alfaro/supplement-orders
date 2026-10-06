@@ -55,7 +55,7 @@ function onInventoryPage(event: DataTablePageEvent) {
           :cents="sales.data.value.providerMarginCents"
         />
         <StatTile
-          label="Platform fees collected"
+          label="Processing fees"
           :cents="sales.data.value.platformFeeCents"
         />
       </div>
@@ -83,7 +83,7 @@ function onInventoryPage(event: DataTablePageEvent) {
             ><MoneyText :cents="data.cogsCents"
           /></template>
         </Column>
-        <Column header="Platform fee">
+        <Column header="Processing fee">
           <template #body="{ data }"
             ><MoneyText :cents="data.platformFeeCents"
           /></template>

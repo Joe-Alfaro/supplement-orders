@@ -25,7 +25,10 @@ const feePercent = `${PLATFORM_FEE_BPS / 100}%`
         <td><MoneyText :cents="split.cogsCents" /></td>
       </tr>
       <tr>
-        <th scope="row">Platform fee ({{ feePercent }})</th>
+        <th scope="row">
+          Processing fee ({{ feePercent }})
+          <span class="small">calculated on the order total</span>
+        </th>
         <td><MoneyText :cents="split.platformFeeCents" /></td>
       </tr>
       <tr class="summary-total">

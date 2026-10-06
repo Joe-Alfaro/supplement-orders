@@ -278,6 +278,16 @@ function rowIndex(row: EvaluatedLine) {
           >
         </template>
       </Column>
+      <Column :header="`Processing fee (${feePercent})`">
+        <template #body="{ data: row }">
+          <span :data-testid="`fee-${rowIndex(row)}`">
+            <MoneyText
+              v-if="row.lineFeeCents !== null"
+              :cents="row.lineFeeCents"
+            />
+          </span>
+        </template>
+      </Column>
       <Column header="Patient price (each)">
         <template #body="{ data: row }">
           <label :for="fieldId(row.line.key, 'price')" class="visually-hidden"
@@ -356,7 +366,7 @@ function rowIndex(row: EvaluatedLine) {
     <SplitSummary v-if="split" :split="split" />
     <p v-else class="muted">
       Complete every line (product, quantity, and a price at or above its
-      minimum) to see the split. The platform fee is {{ feePercent }} of the
+      minimum) to see the split. The processing fee is {{ feePercent }} of the
       order and comes out of your margin.
     </p>
 

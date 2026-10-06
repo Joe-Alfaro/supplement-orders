@@ -69,6 +69,11 @@ describe('DashboardView', () => {
 
     expect(screen.getAllByText('Wholesale cost').length).toBeGreaterThan(0)
     expect(container.textContent).not.toMatch(/COGS|our cost/i)
+    expect(container.textContent).not.toMatch(/Platform fee/i)
+    expect(screen.getByText('Processing fees')).toBeTruthy()
+    expect(
+      screen.getByRole('columnheader', { name: 'Processing fee' }),
+    ).toBeTruthy()
   })
 
   it('opens the order when a paid-order row is clicked', async () => {

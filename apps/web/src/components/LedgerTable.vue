@@ -16,7 +16,7 @@ const props = defineProps<Props>()
 const TYPE_LABELS: Record<LedgerEntryDto['type'], string> = {
   cogs: 'Wholesale cost',
   provider_margin: 'Provider margin',
-  platform_fee: 'Platform fee',
+  platform_fee: 'Processing fee',
 }
 
 function typeLabel(entry: LedgerEntryDto) {

@@ -1,4 +1,5 @@
 import {
+  computePlatformFee,
   formatBps,
   formatCents,
   marginBpsFromPrice,
@@ -37,6 +38,11 @@ export interface PricingResult {
   minPriceCents: number | null
   belowMinimum: boolean
   lineTotalCents: number | null
+  /**
+   * The processing fee on this line alone, shown for transparency. The order's
+   * fee is computed once on the subtotal and may differ by a cent.
+   */
+  lineFeeCents: number | null
   errors: Partial<Record<PricingField, string>>
   /** Every typed value parses, so it can be saved (possibly incomplete). */
   saveable: boolean
@@ -93,6 +99,21 @@ export function normalizedMarginInput(input: string) {
   return margin.ok ? formatBps(margin.bps) : input
 }
 
+function lineFee(lineTotalCents: number | null) {
+  if (lineTotalCents === null) return null
+  try {
+    return computePlatformFee(lineTotalCents)
+  } catch {
+    // Only for absurd amounts; the price field already flags them.
+    return null
+  }
+}
+
+/** Price text for a product's minimum price: what a newly chosen product starts at. */
+export function minimumPriceInput(cogsCents: number) {
+  return centsToInput(minUnitPriceCents(cogsCents))
+}
+
 export function evaluatePricing(inputs: PricingInputs): PricingResult {
   const { product } = inputs
   const errors: Partial<Record<PricingField, string>> = {}
@@ -122,6 +143,7 @@ export function evaluatePricing(inputs: PricingInputs): PricingResult {
     quantity !== null && priceCents !== null ? priceCents * quantity : null
 
   return {
+    lineFeeCents: lineFee(lineTotalCents),
     quantity,
     priceCents,
     minPriceCents,
