@@ -49,7 +49,7 @@ test('a draft can be deleted, and a cancelled order can be reopened and paid', a
     await expect(page.getByText('No draft orders.')).toBeVisible()
   })
 
-  await test.step('Orders defaults to Awaiting payment and lists the sent order', async () => {
+  await test.step('Orders defaults to every status and lists the sent order', async () => {
     await openPatient(page, PATIENT)
     await page.getByRole('link', { name: 'New order' }).click()
     await addProduct(page, DRAFT_SKU, { quantity: 1 })
@@ -59,17 +59,28 @@ test('a draft can be deleted, and a cancelled order can be reopened and paid', a
     )
 
     await openOrders(page)
-    // One selected status uses that status's date column. "Sent" is Awaiting
-    // payment; the closed combobox keeps its value in a sibling, not its input.
+    // Every status checked uses the shared Date column, not one status's header.
     await expect(
-      ordersTable(page).getByRole('columnheader', { name: 'Sent' }),
+      ordersTable(page).getByRole('columnheader', { name: 'Date' }),
     ).toBeVisible()
     const awaiting = ordersTable(page).getByRole('row', { name: PATIENT })
     await expect(awaiting).toHaveCount(1)
     await expect(awaiting).toContainText('Awaiting payment')
+    // Cancel may already have left this patient another order. The default
+    // list includes every status, so more than one row is fine.
     await expect(
       ordersTable(page).getByRole('row', { name: OTHER }),
-    ).toHaveCount(1)
+    ).not.toHaveCount(0)
+    await openStatusList(page)
+    await expectEveryStatusChecked(page)
+    // The all-checked default omits ?status=. Checked only after the list has
+    // settled, because /orders is also the address for a moment before a
+    // narrower default would rewrite it.
+    await expect(page).toHaveURL(/\/orders$/)
+    await page.keyboard.press('Escape')
+    await expect(
+      page.getByRole('combobox', { name: 'Status' }),
+    ).toHaveAttribute('aria-expanded', 'false')
   })
 
   await test.step('cancel, then the Cancelled filter lists it', async () => {
@@ -119,7 +130,12 @@ test('a draft can be deleted, and a cancelled order can be reopened and paid', a
     await signIn(page, PROVIDER)
     await openOrders(page)
     await openStatusList(page)
-    await page.getByRole('checkbox', { name: 'Select all' }).click()
+    // Select all is the default, and clicking it again would clear every
+    // status. Confirm it is checked, then uncheck Paid.
+    await expect(
+      page.getByRole('checkbox', { name: 'Select all' }),
+    ).toBeChecked()
+    await expect(page).toHaveURL(/\/orders$/)
     const paid = ordersTable(page).getByRole('row', { name: PATIENT })
     await expect(paid).toHaveCount(1)
     await expect(paid).toContainText('Paid')
@@ -161,10 +177,35 @@ async function openOrders(page: Page) {
   ).toBeVisible()
 }
 
-/** The closed Status control shows the default; open it and keep only one status. */
+/**
+ * Leaves exactly one status checked, whatever the visit started with.
+ * Select all is only a toggle, so check it first and then clear it.
+ */
 async function showOnly(page: Page, status: string) {
+  await openStatusList(page)
+  const selectAll = page.getByRole('checkbox', { name: 'Select all' })
+  if (!(await selectAll.isChecked())) {
+    await selectAll.click()
+  }
+  await expect(selectAll).toBeChecked()
+  await selectAll.click()
+  await expect(selectAll).not.toBeChecked()
   await toggleStatus(page, status)
-  await toggleStatus(page, 'Awaiting payment')
+}
+
+async function expectEveryStatusChecked(page: Page) {
+  await expect(page.getByRole('checkbox', { name: 'Select all' })).toBeChecked()
+  await expectStatusSelected(page, 'Draft')
+  await expectStatusSelected(page, 'Awaiting payment')
+  await expectStatusSelected(page, 'Paid')
+  await expectStatusSelected(page, 'Cancelled')
+}
+
+async function expectStatusSelected(page: Page, name: string) {
+  await expect(page.getByRole('option', { name, exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
 }
 
 /**
