@@ -147,12 +147,12 @@ Each stub sits behind an interface in `apps/api/src/seams/` and is injected thro
 
 ## Testing
 
-| Suite                                         | Count | Notes                                                                                                                                                                                                |
-| --------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/domain` (Vitest)                    | 308   | Fee, minimum price, split, ledger, markup conversions, money parsing and formatting, request schemas                                                                                                 |
-| `apps/api` (Vitest + Supertest)               | 195   | Against a real Postgres: HTTP contract tests, pay rollback and idempotency, concurrent pay/cancel, delete and reopen, order list filters, search, SPA serving                                        |
-| `apps/web` (Vitest + Testing Library + jsdom) | 141   | Views and components, 16 axe-core accessibility scans, 23 loading/error/empty/persona state tests                                                                                                    |
-| `e2e/` (Playwright)                           | 5     | Happy path (order, pay, ledger, exact dashboard and stock deltas), simulated gateway failure, cancel, order lifecycle (delete draft, cancel, reopen, status filters), URL-state navigation (4 cases) |
+| Suite                                         | Count            | Notes                                                                                                                                                                                                |
+| --------------------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/domain` (Vitest)                    | 308              | Fee, minimum price, split, ledger, markup conversions, money parsing and formatting, request schemas                                                                                                 |
+| `apps/api` (Vitest + Supertest)               | 195              | Against a real Postgres: HTTP contract tests, pay rollback and idempotency, concurrent pay/cancel, delete and reopen, order list filters, search, SPA serving                                        |
+| `apps/web` (Vitest + Testing Library + jsdom) | 144              | Views and components, 16 axe-core accessibility scans, 23 loading/error/empty/persona state tests                                                                                                    |
+| `e2e/` (Playwright)                           | 5 files, 8 tests | Happy path (order, pay, ledger, exact dashboard and stock deltas), simulated gateway failure, cancel, order lifecycle (delete draft, cancel, reopen, status filters), URL-state navigation (4 cases) |
 
 Counts are from `npm test` and `npm run test:e2e` at the time of writing.
 
