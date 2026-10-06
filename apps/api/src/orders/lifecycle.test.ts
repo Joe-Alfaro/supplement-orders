@@ -231,9 +231,13 @@ describe('revision 8: delete draft and reopen cancelled', () => {
       expect(state.ledger.reduce((sum, e) => sum + e.amountCents, 0)).toBe(8000)
     })
 
-    it('also reopens a draft that was cancelled before sending', async () => {
+    it('also reopens a draft cancelled before sending (a revision 6 row)', async () => {
+      // The API no longer cancels drafts, but rows cancelled that way may exist.
       const orderId = await createDraft(ctx)
-      await cancel(orderId)
+      await ctx.db
+        .update(orders)
+        .set({ status: 'cancelled', cancelledAt: new Date() })
+        .where(eq(orders.id, orderId))
 
       const res = await reopen(orderId)
 

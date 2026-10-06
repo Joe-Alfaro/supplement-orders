@@ -123,7 +123,8 @@ export const orders = pgTable(
       .defaultNow(),
     sentAt: timestamp('sent_at', { withTimezone: true }),
     paidAt: timestamp('paid_at', { withTimezone: true }),
-    // Revision 6: a provider may cancel a draft or pending order. No ledger or stock effect.
+    // Set when a provider cancels a pending order. No ledger or stock effect.
+    // Revision 6 also allowed cancelling drafts; such rows may still exist.
     cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
   },
   (t) => [
