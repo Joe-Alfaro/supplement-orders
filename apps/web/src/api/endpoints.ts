@@ -1,5 +1,4 @@
 import type {
-  AwaitingPaymentPageDto,
   CreateOrderRequest,
   DashboardDto,
   ListOrdersQuery,
@@ -16,6 +15,7 @@ import type {
   PayOrderRequest,
   ProductPageDto,
   ProviderOrderDetailDto,
+  ProviderOrderListPageDto,
   ReplaceOrderLinesRequest,
   UserDto,
 } from '@supplement-orders/domain'
@@ -84,7 +84,7 @@ export function listAwaitingPayment(
 ) {
   const search = listQueryString(query)
   const params = search ? `&${search.slice(1)}` : ''
-  return request<AwaitingPaymentPageDto>(
+  return request<ProviderOrderListPageDto>(
     'GET',
     `/orders?status=pending_payment${params}`,
   )
@@ -111,6 +111,16 @@ export function sendOrder(orderId: number) {
 /** Draft or pending_payment only; 409 ORDER_NOT_CANCELLABLE otherwise. */
 export function cancelOrder(orderId: number) {
   return request<ProviderOrderDetailDto>('POST', `/orders/${orderId}/cancel`)
+}
+
+/** Draft only, permanently (revision 8); 409 for any other status. */
+export function deleteOrder(orderId: number) {
+  return request<void>('DELETE', `/orders/${orderId}`)
+}
+
+/** Cancelled only: back to draft with its lines kept (revision 8); 409 otherwise. */
+export function reopenOrder(orderId: number) {
+  return request<ProviderOrderDetailDto>('POST', `/orders/${orderId}/reopen`)
 }
 
 export function getOrder(orderId: number) {

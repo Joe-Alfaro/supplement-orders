@@ -1,8 +1,8 @@
 import type {
-  AwaitingPaymentOrderDto,
-  AwaitingPaymentPageDto,
   DashboardDto,
   ProductDto,
+  ProviderOrderListItemDto,
+  ProviderOrderListPageDto,
 } from '@supplement-orders/domain'
 import { screen, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
@@ -53,7 +53,7 @@ function awaiting(
   id: number,
   patientName: string,
   sentAt: string,
-): AwaitingPaymentOrderDto {
+): ProviderOrderListItemDto {
   return {
     id,
     patientId: id,
@@ -69,10 +69,10 @@ function awaiting(
 }
 
 function awaitingPage(
-  items: AwaitingPaymentOrderDto[],
+  items: ProviderOrderListItemDto[],
   total = items.length,
   offset = 0,
-): AwaitingPaymentPageDto {
+): ProviderOrderListPageDto {
   return { items, total, offset, limit: 25 }
 }
 
@@ -105,6 +105,10 @@ describe('DashboardView', () => {
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
     expect(
       screen.queryByRole('button', { name: /save/i }),
+    ).not.toBeInTheDocument()
+    // Revision 8 removed the explanatory note under the table.
+    expect(
+      screen.queryByText(/Stock decreases automatically/),
     ).not.toBeInTheDocument()
   })
 

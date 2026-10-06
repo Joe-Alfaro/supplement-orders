@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type {
-  AwaitingPaymentOrderDto,
   DashboardPaidOrderDto,
+  ProviderOrderListItemDto,
 } from '@supplement-orders/domain'
 import Column from 'primevue/column'
 import DataTable, {
@@ -39,7 +39,7 @@ function openOrder(event: DataTableRowClickEvent<DashboardPaidOrderDto>) {
 }
 
 function openAwaitingOrder(
-  event: DataTableRowClickEvent<AwaitingPaymentOrderDto>,
+  event: DataTableRowClickEvent<ProviderOrderListItemDto>,
 ) {
   router.push(`/orders/${event.data.id}`)
 }
@@ -97,7 +97,11 @@ function onInventoryPage(event: DataTablePageEvent) {
           />
         </template>
         <Column header="Sent">
-          <template #body="{ data }">{{ formatDate(data.sentAt) }}</template>
+          <!-- Sent orders always have sentAt and totalCents; the list DTO
+               types them nullable because drafts share it. -->
+          <template #body="{ data }">{{
+            data.sentAt ? formatDate(data.sentAt) : '—'
+          }}</template>
         </Column>
         <Column header="Patient">
           <template #body="{ data }"
@@ -107,11 +111,16 @@ function onInventoryPage(event: DataTablePageEvent) {
         </Column>
         <Column header="Patient total">
           <template #body="{ data }"
-            ><MoneyText :cents="data.totalCents"
-          /></template>
+            ><MoneyText
+              v-if="data.totalCents !== null"
+              :cents="data.totalCents"
+            /><span v-else>—</span></template
+          >
         </Column>
         <Column header="Days waiting">
-          <template #body="{ data }">{{ daysWaiting(data.sentAt) }}</template>
+          <template #body="{ data }">{{
+            data.sentAt ? daysWaiting(data.sentAt) : '—'
+          }}</template>
         </Column>
       </DataTable>
     </template>
@@ -178,10 +187,6 @@ function onInventoryPage(event: DataTablePageEvent) {
 
   <section aria-labelledby="inventory-heading">
     <h2 id="inventory-heading">Inventory</h2>
-    <p class="muted">
-      Stock decreases automatically when orders are paid. It is not edited by
-      hand.
-    </p>
     <div class="search">
       <label for="inventory-search">Search products</label>
       <IconField>

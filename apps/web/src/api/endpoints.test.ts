@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { request } from './client'
-import { cancelOrder, listAwaitingPayment, searchPatients } from './endpoints'
+import {
+  cancelOrder,
+  deleteOrder,
+  listAwaitingPayment,
+  reopenOrder,
+  searchPatients,
+} from './endpoints'
 
 vi.mock('./client', () => ({ request: vi.fn() }))
 
@@ -47,5 +53,21 @@ describe('cancelOrder', () => {
     await cancelOrder(12)
 
     expect(request).toHaveBeenCalledWith('POST', '/orders/12/cancel')
+  })
+})
+
+describe('deleteOrder', () => {
+  it('sends DELETE to the order', async () => {
+    await deleteOrder(12)
+
+    expect(request).toHaveBeenCalledWith('DELETE', '/orders/12')
+  })
+})
+
+describe('reopenOrder', () => {
+  it('posts to the order reopen endpoint', async () => {
+    await reopenOrder(12)
+
+    expect(request).toHaveBeenCalledWith('POST', '/orders/12/reopen')
   })
 })
