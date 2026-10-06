@@ -10,7 +10,7 @@ import {
 } from '../money'
 
 // Pure pricing helpers shared by the lines table and the Add-product modal, so
-// both link Margin % and Patient price the same way.
+// both link Markup % and Patient price the same way.
 
 /** The product facts a line needs. Stock is unknown for a reloaded draft line. */
 export interface LineProduct {
@@ -21,15 +21,15 @@ export interface LineProduct {
   stockQuantity: number | null
 }
 
-export type PricingField = 'quantity' | 'unitPriceCents' | 'margin'
+export type PricingField = 'quantity' | 'unitPriceCents' | 'markup'
 
 export interface PricingInputs {
   product: LineProduct | null
   quantityInput: string
   priceInput: string
-  marginInput: string
+  markupInput: string
   /** Which of the two linked fields the provider typed in last. */
-  source: 'price' | 'margin'
+  source: 'price' | 'markup'
 }
 
 export interface PricingResult {
@@ -75,20 +75,24 @@ function parseQuantity(input: string, stock: number | null) {
   return { quantity }
 }
 
-/** New margin text for a typed price, or null when it can't be derived. */
-export function marginInputFromPrice(cogsCents: number, priceInput: string) {
+/**
+ * New Markup % text for a typed price (net of the processing fee, on wholesale
+ * cost), or null when it can't be derived, including a $0 cost.
+ */
+export function markupInputFromPrice(cogsCents: number, priceInput: string) {
   const price = parsePrice(priceInput)
   if (price.cents === null) return null
-  // Revision 5 compile fix: the linked field now carries markup; null at zero cost.
   const bps = markupBpsFromPrice(cogsCents, price.cents)
   return bps === null ? null : formatBps(bps)
 }
 
-/** New price text for a typed margin, or null when it can't be derived. */
-export function priceInputFromMargin(cogsCents: number, marginInput: string) {
-  const margin = parsePercentToBps(marginInput)
-  if (!margin.ok) return null
-  return centsToInput(priceFromMarkupBps(cogsCents, margin.bps))
+/** New price text for a typed Markup %, or null when it can't be derived. */
+export function priceInputFromMarkup(cogsCents: number, markupInput: string) {
+  // Markup on a $0 cost is undefined; the field is disabled and only price is entered.
+  if (cogsCents === 0) return null
+  const markup = parsePercentToBps(markupInput)
+  if (!markup.ok) return null
+  return centsToInput(priceFromMarkupBps(cogsCents, markup.bps))
 }
 
 export function normalizedPriceInput(input: string) {
@@ -96,9 +100,9 @@ export function normalizedPriceInput(input: string) {
   return cents === null ? input : centsToInput(cents)
 }
 
-export function normalizedMarginInput(input: string) {
-  const margin = parsePercentToBps(input)
-  return margin.ok ? formatBps(margin.bps) : input
+export function normalizedMarkupInput(input: string) {
+  const markup = parsePercentToBps(input)
+  return markup.ok ? formatBps(markup.bps) : input
 }
 
 function lineFee(lineTotalCents: number | null) {
@@ -131,12 +135,13 @@ export function evaluatePricing(inputs: PricingInputs): PricingResult {
   if (price.error) errors.unitPriceCents = price.error
   const priceCents = price.cents
 
-  // A derived margin can be negative (price below cost); only typed input is validated.
-  const marginError =
-    inputs.source === 'margin' &&
-    inputs.marginInput.trim() !== '' &&
-    !parsePercentToBps(inputs.marginInput).ok
-  if (marginError) errors.margin = 'Enter a margin from 0 to 99.99'
+  // A derived markup can be negative (price below cost plus fee); only typed input is validated.
+  const parsedMarkup =
+    inputs.source === 'markup' && inputs.markupInput.trim() !== ''
+      ? parsePercentToBps(inputs.markupInput)
+      : null
+  const markupError = parsedMarkup !== null && !parsedMarkup.ok
+  if (parsedMarkup && !parsedMarkup.ok) errors.markup = parsedMarkup.error
 
   const minPriceCents = product ? minUnitPriceCents(product.cogsCents) : null
   const belowMinimum =
@@ -152,6 +157,6 @@ export function evaluatePricing(inputs: PricingInputs): PricingResult {
     belowMinimum,
     lineTotalCents,
     errors,
-    saveable: !errors.quantity && !price.error && !marginError,
+    saveable: !errors.quantity && !price.error && !markupError,
   }
 }

@@ -8,20 +8,20 @@ import { computeSplit } from '../money'
 import {
   centsToInput,
   evaluatePricing,
-  marginInputFromPrice,
-  normalizedMarginInput,
+  markupInputFromPrice,
+  normalizedMarkupInput,
   normalizedPriceInput,
-  priceInputFromMargin,
+  priceInputFromMarkup,
   type LineProduct,
   type PricingResult,
 } from './pricing'
 import { formatBps } from '../money'
 
-export type LineField = 'productId' | 'quantity' | 'unitPriceCents' | 'margin'
+export type LineField = 'productId' | 'quantity' | 'unitPriceCents' | 'markup'
 
 /**
  * One editable row. Inputs stay as strings; the unit price in cents is derived.
- * Margin % and Patient price are two views of that one price: editing either
+ * Markup % and Patient price are two views of that one price: editing either
  * rewrites only the other, never the field being typed in. The product is
  * fixed once chosen; to change it, remove the line and add another.
  */
@@ -30,8 +30,8 @@ export interface DraftLine {
   product: LineProduct | null
   quantityInput: string
   priceInput: string
-  marginInput: string
-  source: 'price' | 'margin'
+  markupInput: string
+  source: 'price' | 'markup'
   /** Errors returned by the API for this line, keyed by field. */
   serverErrors: Partial<Record<LineField, string>>
 }
@@ -49,8 +49,8 @@ export interface NewLine {
   product: LineProduct
   quantityInput: string
   priceInput: string
-  marginInput: string
-  source: 'price' | 'margin'
+  markupInput: string
+  source: 'price' | 'markup'
 }
 
 let nextKey = 1
@@ -61,7 +61,7 @@ function emptyLine(): DraftLine {
     product: null,
     quantityInput: '1',
     priceInput: '',
-    marginInput: '',
+    markupInput: '',
     source: 'price',
     serverErrors: {},
   }
@@ -152,19 +152,19 @@ export function useOrderDraft() {
     line.source = 'price'
     line.serverErrors = {}
     if (!line.product) return
-    line.marginInput =
-      marginInputFromPrice(line.product.cogsCents, input) ?? line.marginInput
+    line.markupInput =
+      markupInputFromPrice(line.product.cogsCents, input) ?? line.markupInput
   }
 
-  function setMargin(key: number, input: string) {
+  function setMarkup(key: number, input: string) {
     const line = find(key)
     if (!line) return
-    line.marginInput = input
-    line.source = 'margin'
+    line.markupInput = input
+    line.source = 'markup'
     line.serverErrors = {}
     if (!line.product) return
     line.priceInput =
-      priceInputFromMargin(line.product.cogsCents, input) ?? line.priceInput
+      priceInputFromMarkup(line.product.cogsCents, input) ?? line.priceInput
   }
 
   /** After the provider leaves a field, normalize it, e.g. "12.5" -> "12.50". */
@@ -173,9 +173,9 @@ export function useOrderDraft() {
     if (line) line.priceInput = normalizedPriceInput(line.priceInput)
   }
 
-  function normalizeMargin(key: number) {
+  function normalizeMarkup(key: number) {
     const line = find(key)
-    if (line) line.marginInput = normalizedMarginInput(line.marginInput)
+    if (line) line.markupInput = normalizedMarkupInput(line.markupInput)
   }
 
   /** Request body for PUT /lines; incomplete parts are sent as null. */
@@ -195,7 +195,7 @@ export function useOrderDraft() {
       quantityInput: String(line.quantity),
       priceInput:
         line.unitPriceCents === null ? '' : centsToInput(line.unitPriceCents),
-      marginInput: line.markupBps === null ? '' : formatBps(line.markupBps),
+      markupInput: line.markupBps === null ? '' : formatBps(line.markupBps),
     }))
   }
 
@@ -220,9 +220,9 @@ export function useOrderDraft() {
     removeLine,
     setQuantity,
     setPrice,
-    setMargin,
+    setMarkup,
     normalizePrice,
-    normalizeMargin,
+    normalizeMarkup,
     toInputs,
     loadFromServer,
     applyFieldError,

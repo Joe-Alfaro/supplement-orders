@@ -15,11 +15,11 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { searchProducts } from '../api'
 import {
   evaluatePricing,
-  marginInputFromPrice,
+  markupInputFromPrice,
   minimumPriceInput,
-  normalizedMarginInput,
+  normalizedMarkupInput,
   normalizedPriceInput,
-  priceInputFromMargin,
+  priceInputFromMarkup,
   type NewLine,
 } from '../builder'
 import { formatCents, PLATFORM_FEE_BPS } from '../money'
@@ -43,8 +43,8 @@ const step = ref<1 | 2>(1)
 const chosen = ref<ProductDto | null>(null)
 const quantityInput = ref('1')
 const priceInput = ref('')
-const marginInput = ref('')
-const source = ref<'price' | 'margin'>('price')
+const markupInput = ref('')
+const source = ref<'price' | 'markup'>('price')
 const attempted = ref(false)
 
 function unavailableReason(product: ProductDto) {
@@ -58,7 +58,7 @@ const pricing = computed(() =>
     product: chosen.value,
     quantityInput: quantityInput.value,
     priceInput: priceInput.value,
-    marginInput: marginInput.value,
+    markupInput: markupInput.value,
     source: source.value,
   }),
 )
@@ -113,6 +113,9 @@ function onPage(event: DataTablePageEvent) {
   search.goTo(event.first)
 }
 
+/** Markup on a $0 wholesale cost is undefined: the field shows "—" and is disabled. */
+const zeroCost = computed(() => chosen.value?.cogsCents === 0)
+
 const feeLabel = `Processing fee (${PLATFORM_FEE_BPS / 100}%)`
 
 function rowClass(product: ProductDto) {
@@ -125,8 +128,8 @@ async function choose(product: ProductDto) {
   quantityInput.value = '1'
   // Start at the minimum price so a new line is complete and sendable as-is.
   priceInput.value = minimumPriceInput(product.cogsCents)
-  marginInput.value =
-    marginInputFromPrice(product.cogsCents, priceInput.value) ?? ''
+  markupInput.value =
+    markupInputFromPrice(product.cogsCents, priceInput.value) ?? ''
   source.value = 'price'
   attempted.value = false
   step.value = 2
@@ -142,16 +145,16 @@ function onPrice(value: string) {
   priceInput.value = value
   source.value = 'price'
   if (!chosen.value) return
-  marginInput.value =
-    marginInputFromPrice(chosen.value.cogsCents, value) ?? marginInput.value
+  markupInput.value =
+    markupInputFromPrice(chosen.value.cogsCents, value) ?? markupInput.value
 }
 
-function onMargin(value: string) {
-  marginInput.value = value
-  source.value = 'margin'
+function onMarkup(value: string) {
+  markupInput.value = value
+  source.value = 'markup'
   if (!chosen.value) return
   priceInput.value =
-    priceInputFromMargin(chosen.value.cogsCents, value) ?? priceInput.value
+    priceInputFromMarkup(chosen.value.cogsCents, value) ?? priceInput.value
 }
 
 function addToOrder() {
@@ -163,7 +166,7 @@ function addToOrder() {
     product: { ...product },
     quantityInput: quantityInput.value,
     priceInput: priceInput.value,
-    marginInput: marginInput.value,
+    markupInput: markupInput.value,
     source: source.value,
   })
 }
@@ -304,27 +307,36 @@ function addToOrder() {
           >
         </div>
         <div class="field">
-          <label for="add-product-margin">Margin %</label>
+          <label for="add-product-markup">Markup %</label>
           <InputText
-            id="add-product-margin"
-            class="margin"
+            id="add-product-markup"
+            class="markup"
             inputmode="decimal"
-            placeholder="0.00"
-            :model-value="marginInput"
-            :invalid="Boolean(pricing.errors.margin)"
+            :placeholder="zeroCost ? '—' : '0.00'"
+            :disabled="zeroCost"
+            :model-value="markupInput"
+            :invalid="Boolean(pricing.errors.markup)"
             :aria-describedby="
-              pricing.errors.margin ? 'add-product-margin-error' : undefined
+              [
+                zeroCost ? 'add-product-markup-na' : '',
+                pricing.errors.markup ? 'add-product-markup-error' : '',
+              ]
+                .join(' ')
+                .trim() || undefined
             "
-            @update:model-value="onMargin($event ?? '')"
-            @blur="marginInput = normalizedMarginInput(marginInput)"
+            @update:model-value="onMarkup($event ?? '')"
+            @blur="markupInput = normalizedMarkupInput(markupInput)"
           />
+          <small v-if="zeroCost" id="add-product-markup-na" class="hint"
+            >No markup on a $0 cost; enter the price.</small
+          >
           <Message
-            v-if="pricing.errors.margin"
-            id="add-product-margin-error"
+            v-if="pricing.errors.markup"
+            id="add-product-markup-error"
             severity="error"
             size="small"
             variant="simple"
-            >{{ pricing.errors.margin }}</Message
+            >{{ pricing.errors.markup }}</Message
           >
         </div>
         <div class="field">
