@@ -1,0 +1,479 @@
+import type {
+  DashboardDto,
+  ListQuery,
+  PatientDto,
+  PatientOrderDetailDto,
+  PatientOrderSummaryDto,
+  PatientPageDto,
+  ProductDto,
+  ProductPageDto,
+  ProviderOrderDetailDto,
+  ProviderOrderSummaryDto,
+  UserDto,
+} from '@supplement-orders/domain'
+import { fireEvent, screen } from '@testing-library/vue'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import * as api from '../api'
+import { renderWithRouter } from '../test/renderWithRouter'
+import { useCurrentUser } from '../user'
+import DashboardView from '../views/DashboardView.vue'
+import LoginView from '../views/LoginView.vue'
+import MyOrdersView from '../views/MyOrdersView.vue'
+import OrderBuilderView from '../views/OrderBuilderView.vue'
+import PatientDetailView from '../views/PatientDetailView.vue'
+import PatientOrderView from '../views/PatientOrderView.vue'
+import PatientsView from '../views/PatientsView.vue'
+import ProviderOrderView from '../views/ProviderOrderView.vue'
+import { expectNoAxeViolations } from './expectNoAxeViolations'
+
+vi.mock('../api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../api')>()
+  return {
+    ...actual,
+    listUsers: vi.fn(),
+    searchPatients: vi.fn(),
+    getPatient: vi.fn(),
+    listOrders: vi.fn(),
+    searchProducts: vi.fn(),
+    getOrder: vi.fn(),
+    createOrder: vi.fn(),
+    replaceOrderLines: vi.fn(),
+    sendOrder: vi.fn(),
+    payOrder: vi.fn(),
+    getDashboard: vi.fn(),
+  }
+})
+
+const users: UserDto[] = [
+  {
+    id: 1,
+    name: 'Dr. Maya Rivera',
+    role: 'provider',
+    providerId: 1,
+    patientId: null,
+  },
+  {
+    id: 2,
+    name: 'Jordan Lee',
+    role: 'patient',
+    providerId: null,
+    patientId: 7,
+  },
+]
+
+const patient: PatientDto = {
+  id: 7,
+  userId: 2,
+  providerId: 1,
+  name: 'Jordan Lee',
+  dateOfBirth: '1984-03-14',
+  address: '214 Alder St, Portland, OR 97205',
+  orderCount: 1,
+  latestOrderStatus: 'paid',
+}
+
+const products: ProductDto[] = [
+  {
+    id: 1,
+    sku: 'VITD',
+    name: 'Vitamin D3',
+    cogsCents: 1200,
+    stockQuantity: 10,
+  },
+  { id: 2, sku: 'MAG', name: 'Magnesium', cogsCents: 1500, stockQuantity: 5 },
+  { id: 3, sku: 'ZINC', name: 'Zinc', cogsCents: 500, stockQuantity: 0 },
+]
+
+const paidSplit = {
+  subtotalCents: 2000,
+  platformFeeCents: 15,
+  totalCents: 2000,
+  cogsCents: 1200,
+  providerMarginCents: 785,
+}
+
+const providerSummary: ProviderOrderSummaryDto = {
+  id: 7,
+  view: 'provider',
+  status: 'paid',
+  patientId: 7,
+  patientName: 'Jordan Lee',
+  providerId: 1,
+  providerName: 'Dr. Maya Rivera',
+  createdAt: '2026-10-05T12:00:00.000Z',
+  sentAt: '2026-10-05T12:05:00.000Z',
+  paidAt: '2026-10-05T12:10:00.000Z',
+  split: paidSplit,
+}
+
+const paidProviderOrder: ProviderOrderDetailDto = {
+  ...providerSummary,
+  patientDateOfBirth: '1984-03-14',
+  patientAddress: '214 Alder St, Portland, OR 97205',
+  lines: [
+    {
+      productId: 1,
+      productName: 'Vitamin D3',
+      sku: 'VITD',
+      quantity: 1,
+      unitPriceCents: 2000,
+      lineTotalCents: 2000,
+      unitCogsCents: 1200,
+      marginBps: 4000,
+      minUnitPriceCents: 1210,
+      stockQuantity: 9,
+    },
+  ],
+  payment: {
+    id: 5,
+    amountCents: 2000,
+    reference: 'fake_ch_123',
+    createdAt: '2026-10-05T12:10:00.000Z',
+  },
+  ledger: [
+    {
+      id: 1,
+      type: 'cogs',
+      amountCents: 1200,
+      createdAt: '2026-10-05T12:10:00.000Z',
+    },
+    {
+      id: 2,
+      type: 'provider_margin',
+      amountCents: 785,
+      createdAt: '2026-10-05T12:10:00.000Z',
+    },
+    {
+      id: 3,
+      type: 'platform_fee',
+      amountCents: 15,
+      createdAt: '2026-10-05T12:10:00.000Z',
+    },
+  ],
+}
+
+const emptyDraft: ProviderOrderDetailDto = {
+  ...paidProviderOrder,
+  status: 'draft',
+  sentAt: null,
+  paidAt: null,
+  split: null,
+  lines: [],
+  payment: null,
+  ledger: [],
+}
+
+const pendingPatientOrder: PatientOrderDetailDto = {
+  id: 42,
+  view: 'patient',
+  status: 'pending_payment',
+  patientId: 7,
+  patientName: 'Jordan Lee',
+  providerId: 1,
+  providerName: 'Dr. Maya Rivera',
+  createdAt: '2026-10-05T12:00:00.000Z',
+  sentAt: '2026-10-05T12:05:00.000Z',
+  paidAt: null,
+  patientAddress: '214 Alder St, Portland, OR 97205',
+  totalCents: 12000,
+  lines: [
+    {
+      productId: 1,
+      productName: 'Vitamin D3',
+      sku: 'VITD',
+      quantity: 3,
+      unitPriceCents: 4000,
+      lineTotalCents: 12000,
+    },
+  ],
+  payment: null,
+}
+
+const paidPatientOrder: PatientOrderDetailDto = {
+  ...pendingPatientOrder,
+  status: 'paid',
+  paidAt: '2026-10-05T12:10:00.000Z',
+  payment: {
+    id: 5,
+    amountCents: 12000,
+    reference: 'fake_ch_123',
+    createdAt: '2026-10-05T12:10:00.000Z',
+  },
+}
+
+const myOrders: PatientOrderSummaryDto[] = [
+  {
+    id: 11,
+    view: 'patient',
+    status: 'pending_payment',
+    patientId: 7,
+    patientName: 'Jordan Lee',
+    providerId: 1,
+    providerName: 'Dr. Maya Rivera',
+    createdAt: '2026-10-05T12:00:00.000Z',
+    sentAt: '2026-10-05T12:00:00.000Z',
+    paidAt: null,
+    totalCents: 12000,
+  },
+]
+
+const dashboard: DashboardDto = {
+  gmvCents: 6951,
+  providerMarginCents: 3499,
+  platformFeeCents: 52,
+  paidOrders: [
+    {
+      orderId: 7,
+      patientId: 7,
+      patientName: 'Jordan Lee',
+      paidAt: '2026-10-05T12:00:00.000Z',
+      totalCents: 6951,
+      cogsCents: 3400,
+      providerMarginCents: 3499,
+      platformFeeCents: 52,
+    },
+  ],
+}
+
+function productPage(query: ListQuery): ProductPageDto {
+  const q = query.q?.toLowerCase() ?? ''
+  const items = products.filter(
+    (product) =>
+      product.name.toLowerCase().includes(q) ||
+      product.sku.toLowerCase().includes(q),
+  )
+  return { items, total: items.length, offset: 0, limit: query.limit ?? 25 }
+}
+
+function patientPage(query: ListQuery): PatientPageDto {
+  const offset = query.offset ?? 0
+  const limit = query.limit ?? 25
+  if (query.q === 'nobody') return { items: [], total: 0, offset, limit }
+  return { items: [patient], total: 1, offset, limit }
+}
+
+beforeEach(async () => {
+  vi.mocked(api.listUsers).mockResolvedValue(users)
+  vi.mocked(api.searchPatients).mockImplementation(async (query = {}) =>
+    patientPage(query),
+  )
+  vi.mocked(api.getPatient).mockResolvedValue(patient)
+  vi.mocked(api.listOrders).mockResolvedValue([providerSummary])
+  vi.mocked(api.searchProducts).mockImplementation(async (query = {}) =>
+    productPage(query),
+  )
+  vi.mocked(api.getOrder).mockResolvedValue(paidProviderOrder)
+  vi.mocked(api.createOrder).mockResolvedValue(emptyDraft)
+  vi.mocked(api.replaceOrderLines).mockResolvedValue(emptyDraft)
+  vi.mocked(api.sendOrder).mockResolvedValue(paidProviderOrder)
+  vi.mocked(api.payOrder).mockResolvedValue(paidPatientOrder)
+  vi.mocked(api.getDashboard).mockResolvedValue(dashboard)
+  useCurrentUser().signOut()
+  await useCurrentUser().ensureUsersLoaded()
+})
+
+async function renderBuilder() {
+  const view = await renderWithRouter(OrderBuilderView, {
+    path: '/patients/7/orders/new',
+    props: { patientId: '7' },
+  })
+  await screen.findByRole('heading', { name: /New order/ })
+  return view
+}
+
+async function chooseProduct(name: string) {
+  await fireEvent.click(screen.getByRole('button', { name: 'Add line' }))
+  await screen.findByRole('heading', { name: 'Add product: choose a product' })
+  await fireEvent.click(await screen.findByText(name))
+  await screen.findByRole('heading', { name: `Add ${name}` })
+}
+
+async function addProduct(name: string, price?: string) {
+  await chooseProduct(name)
+  if (price !== undefined) {
+    await fireEvent.update(screen.getByLabelText('Patient price (each)'), price)
+  }
+  await fireEvent.click(screen.getByRole('button', { name: 'Add to order' }))
+  await screen.findByLabelText('Patient price for line 1')
+}
+
+describe('accessibility', () => {
+  it('login', async () => {
+    const { container } = await renderWithRouter(LoginView, { path: '/login' })
+    await screen.findByRole('heading', { name: 'Sign in' })
+    await screen.findByRole('option', { name: /Dr. Maya Rivera/ })
+    await expectNoAxeViolations(container)
+  })
+
+  it('patient list results', async () => {
+    const { container } = await renderWithRouter(PatientsView, {
+      path: '/patients',
+    })
+    await screen.findByText('Jordan Lee')
+    await expectNoAxeViolations(container)
+  })
+
+  it('patient list no matches', async () => {
+    const { container } = await renderWithRouter(PatientsView, {
+      path: '/patients',
+    })
+    await screen.findByText('Jordan Lee')
+    await fireEvent.update(
+      screen.getByLabelText('Search by name or date of birth'),
+      'nobody',
+    )
+    await screen.findByText(/No patients match "nobody"/)
+    await expectNoAxeViolations(container)
+  })
+
+  it('patient detail', async () => {
+    const { container } = await renderWithRouter(PatientDetailView, {
+      path: '/patients/7',
+      props: { patientId: '7' },
+    })
+    await screen.findByRole('heading', { name: 'Jordan Lee' })
+    await screen.findByRole('heading', { name: 'Orders' })
+    await expectNoAxeViolations(container)
+  })
+
+  it('order builder empty', async () => {
+    const { container } = await renderBuilder()
+    await screen.findByText('No lines yet. Add a product to start.')
+    await expectNoAxeViolations(container)
+  })
+
+  it('order builder with complete lines', async () => {
+    const { container } = await renderBuilder()
+    await addProduct('Vitamin D3', '20.00')
+    await screen.findByText('Patient pays')
+    await expectNoAxeViolations(container)
+  })
+
+  it('order builder below-minimum price', async () => {
+    const { container } = await renderBuilder()
+    await addProduct('Vitamin D3')
+    const price = screen.getByLabelText('Patient price for line 1')
+    await fireEvent.update(price, '12.05')
+    await vi.waitFor(() => {
+      expect(price.getAttribute('aria-invalid')).toBe('true')
+    })
+    await expectNoAxeViolations(container)
+  })
+
+  it('order builder general error banner', async () => {
+    const { container } = await renderBuilder()
+    await addProduct('Vitamin D3', '20.00')
+    await screen.findByText('Patient pays')
+    vi.mocked(api.createOrder).mockRejectedValue(
+      new api.ApiRequestError(500, 'INTERNAL', 'Could not save the draft'),
+    )
+    await fireEvent.click(screen.getByRole('button', { name: 'Save draft' }))
+    await screen.findByRole('alert')
+    await screen.findByText('Could not save the draft')
+    await expectNoAxeViolations(container)
+  })
+
+  it('add-product modal step 1 with disabled rows', async () => {
+    const { container } = await renderBuilder()
+    await addProduct('Vitamin D3')
+    await fireEvent.click(screen.getByRole('button', { name: 'Add line' }))
+    await screen.findByRole('heading', {
+      name: 'Add product: choose a product',
+    })
+    await screen.findByText('Already added')
+    await screen.findByText('Out of stock')
+    await expectNoAxeViolations(container)
+  })
+
+  it('add-product modal step 2 validation error', async () => {
+    const { container } = await renderBuilder()
+    await chooseProduct('Magnesium')
+    await fireEvent.update(
+      screen.getByLabelText('Patient price (each)'),
+      '1.00',
+    )
+    await fireEvent.click(screen.getByRole('button', { name: 'Add to order' }))
+    await screen.findByText(/Price must be at least/)
+    expect(screen.queryByLabelText('Patient price for line 1')).toBeNull()
+    await expectNoAxeViolations(container)
+  })
+
+  it('provider order detail paid with ledger', async () => {
+    const { container } = await renderWithRouter(ProviderOrderView, {
+      path: '/orders/7',
+      props: { orderId: '7' },
+    })
+    await screen.findByRole('heading', { name: /Order #7/ })
+    await screen.findByRole('heading', { name: 'Ledger' })
+    await screen.findByText('fake_ch_123')
+    await expectNoAxeViolations(container)
+  })
+
+  it('dashboard stat tiles, paid orders, and inventory search', async () => {
+    const { container } = await renderWithRouter(DashboardView, {
+      path: '/dashboard',
+    })
+    await screen.findByText('GMV')
+    await screen.findByText('Jordan Lee')
+    await screen.findByText('Vitamin D3')
+    await fireEvent.update(screen.getByLabelText('Search products'), 'Vitamin')
+    await vi.waitFor(() => {
+      expect(api.searchProducts).toHaveBeenLastCalledWith({
+        q: 'Vitamin',
+        offset: 0,
+        limit: 25,
+      })
+    })
+    await screen.findByText('Vitamin D3')
+    await expectNoAxeViolations(container)
+  })
+
+  it('patient my orders', async () => {
+    vi.mocked(api.listOrders).mockResolvedValue(myOrders)
+    const { container } = await renderWithRouter(MyOrdersView, {
+      path: '/my-orders',
+    })
+    await screen.findByRole('heading', { name: 'My orders' })
+    await screen.findByText('Dr. Maya Rivera')
+    await expectNoAxeViolations(container)
+  })
+
+  it('patient pay pending', async () => {
+    vi.mocked(api.getOrder).mockResolvedValue(pendingPatientOrder)
+    const { container } = await renderWithRouter(PatientOrderView, {
+      path: '/my-orders/42',
+      props: { orderId: '42' },
+    })
+    await screen.findByRole('button', { name: 'Pay $120.00' })
+    await expectNoAxeViolations(container)
+  })
+
+  it('patient pay failed payment message', async () => {
+    vi.mocked(api.getOrder).mockResolvedValue(pendingPatientOrder)
+    vi.mocked(api.payOrder).mockRejectedValue(
+      new api.ApiRequestError(402, 'PAYMENT_FAILED', 'Card declined'),
+    )
+    const { container } = await renderWithRouter(PatientOrderView, {
+      path: '/my-orders/42',
+      props: { orderId: '42' },
+    })
+    await screen.findByRole('button', { name: 'Pay $120.00' })
+    await fireEvent.click(
+      screen.getByLabelText('Simulate gateway failure (dev only)'),
+    )
+    await fireEvent.click(screen.getByRole('button', { name: 'Pay $120.00' }))
+    await screen.findByText(/Card declined/)
+    await expectNoAxeViolations(container)
+  })
+
+  it('patient pay paid receipt', async () => {
+    vi.mocked(api.getOrder).mockResolvedValue(paidPatientOrder)
+    const { container } = await renderWithRouter(PatientOrderView, {
+      path: '/my-orders/42',
+      props: { orderId: '42' },
+    })
+    await screen.findByRole('heading', { name: 'Receipt' })
+    await screen.findByText('fake_ch_123')
+    await expectNoAxeViolations(container)
+  })
+})
