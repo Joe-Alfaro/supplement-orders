@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import pg from 'pg'
 import { LOCAL_DATABASE_URL } from '../config'
 
@@ -34,4 +35,49 @@ export async function ensureDatabase(url: string) {
 /** The end-to-end database: E2E_DATABASE_URL, else `supplement_orders_e2e` beside DATABASE_URL. */
 export function e2eDatabaseUrl(env = process.env) {
   return env.E2E_DATABASE_URL ?? siblingDatabaseUrl('supplement_orders_e2e', env)
+}
+
+const TEST_PREFIX = 'supplement_orders_test_'
+const MAX_IDENTIFIER = 63
+const PLAIN_IDENTIFIER = /^[a-z_][a-z0-9_]{0,62}$/
+
+function shortHash(value: string) {
+  return createHash('sha256').update(value).digest('hex').slice(0, 8)
+}
+
+/**
+ * The API test database name, unique per checkout so concurrent runs in
+ * different worktrees never truncate each other's data:
+ * TEST_DATABASE_NAME, else `supplement_orders_test_<AO_SESSION_ID>`, else
+ * `supplement_orders_test_<hash of the repo root>`.
+ */
+export function testDatabaseName(env: NodeJS.ProcessEnv, repoRoot: string) {
+  const explicit = env.TEST_DATABASE_NAME
+  if (explicit) {
+    if (!PLAIN_IDENTIFIER.test(explicit)) {
+      throw new Error(
+        `TEST_DATABASE_NAME must match ${PLAIN_IDENTIFIER.source}, got "${explicit}"`,
+      )
+    }
+    return explicit
+  }
+
+  const session = env.AO_SESSION_ID
+  if (!session) return `${TEST_PREFIX}${shortHash(repoRoot)}`
+
+  const suffix = session.toLowerCase().replaceAll(/[^a-z0-9_]/g, '_')
+  const name = `${TEST_PREFIX}${suffix}`
+  if (name.length <= MAX_IDENTIFIER) return name
+  // Too long to be a Postgres identifier: keep a readable prefix and make it
+  // unique with a hash of the full session id.
+  const hash = shortHash(session)
+  return `${name.slice(0, MAX_IDENTIFIER - hash.length - 1)}_${hash}`
+}
+
+/** TEST_DATABASE_URL, else testDatabaseName() beside DATABASE_URL. */
+export function testDatabaseUrl(env: NodeJS.ProcessEnv, repoRoot: string) {
+  return (
+    env.TEST_DATABASE_URL ??
+    siblingDatabaseUrl(testDatabaseName(env, repoRoot), env)
+  )
 }

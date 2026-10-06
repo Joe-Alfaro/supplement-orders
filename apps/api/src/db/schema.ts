@@ -38,9 +38,11 @@ export const ledgerEntryTypeEnum = pgEnum('ledger_entry_type', [
   'platform_fee',
 ])
 
-// List endpoints order by (name, id) and search with ILIKE '%q%'. The (name, id)
-// index serves the ordering and pagination; lower(name) serves case-insensitive
-// lookups. Substring search cannot use a btree; pg_trgm GIN is the next step.
+// List endpoints order by (name, id) and search with `column ILIKE '%q%'`. The
+// (name, id) btree serves ordering and pagination. A btree can't serve a
+// substring match, so each searched column also has a pg_trgm GIN index on the
+// bare column (migration 0005 creates the extension). The queries must keep
+// ILIKE on the bare column, not lower(column), or these indexes stop matching.
 export const users = pgTable(
   'users',
   {
@@ -51,6 +53,7 @@ export const users = pgTable(
   (t) => [
     index('users_name_id_idx').on(t.name, t.id),
     index('users_lower_name_idx').on(sql`lower(${t.name})`),
+    index('users_name_trgm_idx').using('gin', t.name.op('gin_trgm_ops')),
   ],
 )
 
@@ -94,6 +97,8 @@ export const products = pgTable(
     check('products_stock_nonnegative', sql`${t.stockQuantity} >= 0`),
     index('products_name_id_idx').on(t.name, t.id),
     index('products_lower_name_idx').on(sql`lower(${t.name})`),
+    index('products_name_trgm_idx').using('gin', t.name.op('gin_trgm_ops')),
+    index('products_sku_trgm_idx').using('gin', t.sku.op('gin_trgm_ops')),
   ],
 )
 

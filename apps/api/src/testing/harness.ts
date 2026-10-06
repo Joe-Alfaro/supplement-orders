@@ -1,6 +1,7 @@
+import { fileURLToPath } from 'node:url'
 import supertest from 'supertest'
 import { createDb, type Db } from '../db/client'
-import { ensureDatabase, siblingDatabaseUrl } from '../db/databases'
+import { ensureDatabase, testDatabaseUrl } from '../db/databases'
 import { runMigrations } from '../db/migrate'
 import { seedDatabase, truncateAll, type SeedResult } from '../db/seed'
 import { FakePaymentGateway, RecordingNotifier } from '../seams'
@@ -41,9 +42,8 @@ export interface InternalTestContext extends TestContext {
   payHooks: PayHooks
 }
 
-function testDatabaseUrl() {
-  return process.env.TEST_DATABASE_URL ?? siblingDatabaseUrl('supplement_orders_test')
-}
+/** This checkout's root; its path keys the test database when no session id is set. */
+const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url))
 
 function toSeedIds(result: SeedResult): SeedIds {
   const [provider, otherProvider] = result.providers
@@ -70,7 +70,7 @@ export interface InternalTestOptions {
 export async function createInternalTestContext(
   options: InternalTestOptions = {},
 ): Promise<InternalTestContext> {
-  const url = testDatabaseUrl()
+  const url = testDatabaseUrl(process.env, REPO_ROOT)
   await ensureDatabase(url)
   const { db, pool, ping } = createDb(url)
   await runMigrations(db)
