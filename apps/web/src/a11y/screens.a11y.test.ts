@@ -11,7 +11,9 @@ import type {
   ProviderOrderSummaryDto,
   UserDto,
 } from '@supplement-orders/domain'
-import { fireEvent, screen } from '@testing-library/vue'
+import { screen } from '@testing-library/vue'
+import userEvent from '@testing-library/user-event'
+import type { UserEvent } from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
@@ -281,22 +283,37 @@ async function renderBuilder() {
   return view
 }
 
-async function chooseProduct(name: string) {
-  await fireEvent.click(screen.getByRole('button', { name: 'Add line' }))
+async function replaceInput(
+  user: UserEvent,
+  field: HTMLElement,
+  value: string,
+) {
+  await user.clear(field)
+  await user.type(field, value)
+}
+
+async function chooseProduct(user: UserEvent, name: string) {
+  await user.click(screen.getByRole('button', { name: 'Add line' }))
   await screen.findByRole('heading', { name: 'Add product: choose a product' })
-  await fireEvent.click(await screen.findByText(name))
+  await user.click(await screen.findByText(name))
   await screen.findByRole('heading', { name: `Add ${name}` })
 }
 
-async function addProduct(name: string, price?: string) {
-  await chooseProduct(name)
+async function addProduct(user: UserEvent, name: string, price?: string) {
+  await chooseProduct(user, name)
   if (price !== undefined) {
-    await fireEvent.update(screen.getByLabelText('Patient price (each)'), price)
+    await replaceInput(
+      user,
+      screen.getByLabelText('Patient price (each)'),
+      price,
+    )
   }
-  await fireEvent.click(screen.getByRole('button', { name: 'Add to order' }))
+  await user.click(screen.getByRole('button', { name: 'Add to order' }))
   await screen.findByLabelText('Patient price for line 1')
 }
 
+// axe scans the render container. These tests reach each state through screen
+// queries and user-event, and do not query through the container.
 describe('accessibility', () => {
   it('login', async () => {
     const { container } = await renderWithRouter(LoginView, { path: '/login' })
@@ -318,7 +335,8 @@ describe('accessibility', () => {
       path: '/patients',
     })
     await screen.findByText('Jordan Lee')
-    await fireEvent.update(
+    const user = userEvent.setup()
+    await user.type(
       screen.getByLabelText('Search by name or date of birth'),
       'nobody',
     )
@@ -344,30 +362,33 @@ describe('accessibility', () => {
 
   it('order builder with complete lines', async () => {
     const { container } = await renderBuilder()
-    await addProduct('Vitamin D3', '20.00')
+    const user = userEvent.setup()
+    await addProduct(user, 'Vitamin D3', '20.00')
     await screen.findByText('Patient pays')
     await expectNoAxeViolations(container)
   })
 
   it('order builder below-minimum price', async () => {
     const { container } = await renderBuilder()
-    await addProduct('Vitamin D3')
+    const user = userEvent.setup()
+    await addProduct(user, 'Vitamin D3')
     const price = screen.getByLabelText('Patient price for line 1')
-    await fireEvent.update(price, '12.05')
+    await replaceInput(user, price, '12.05')
     await vi.waitFor(() => {
-      expect(price.getAttribute('aria-invalid')).toBe('true')
+      expect(price).toBeInvalid()
     })
     await expectNoAxeViolations(container)
   })
 
   it('order builder general error banner', async () => {
     const { container } = await renderBuilder()
-    await addProduct('Vitamin D3', '20.00')
+    const user = userEvent.setup()
+    await addProduct(user, 'Vitamin D3', '20.00')
     await screen.findByText('Patient pays')
     vi.mocked(api.createOrder).mockRejectedValue(
       new api.ApiRequestError(500, 'INTERNAL', 'Could not save the draft'),
     )
-    await fireEvent.click(screen.getByRole('button', { name: 'Save draft' }))
+    await user.click(screen.getByRole('button', { name: 'Save draft' }))
     await screen.findByRole('alert')
     await screen.findByText('Could not save the draft')
     await expectNoAxeViolations(container)
@@ -375,8 +396,9 @@ describe('accessibility', () => {
 
   it('add-product modal step 1 with disabled rows', async () => {
     const { container } = await renderBuilder()
-    await addProduct('Vitamin D3')
-    await fireEvent.click(screen.getByRole('button', { name: 'Add line' }))
+    const user = userEvent.setup()
+    await addProduct(user, 'Vitamin D3')
+    await user.click(screen.getByRole('button', { name: 'Add line' }))
     await screen.findByRole('heading', {
       name: 'Add product: choose a product',
     })
@@ -387,14 +409,18 @@ describe('accessibility', () => {
 
   it('add-product modal step 2 validation error', async () => {
     const { container } = await renderBuilder()
-    await chooseProduct('Magnesium')
-    await fireEvent.update(
+    const user = userEvent.setup()
+    await chooseProduct(user, 'Magnesium')
+    await replaceInput(
+      user,
       screen.getByLabelText('Patient price (each)'),
       '1.00',
     )
-    await fireEvent.click(screen.getByRole('button', { name: 'Add to order' }))
+    await user.click(screen.getByRole('button', { name: 'Add to order' }))
     await screen.findByText(/Price must be at least/)
-    expect(screen.queryByLabelText('Patient price for line 1')).toBeNull()
+    expect(
+      screen.queryByLabelText('Patient price for line 1'),
+    ).not.toBeInTheDocument()
     await expectNoAxeViolations(container)
   })
 
@@ -416,7 +442,8 @@ describe('accessibility', () => {
     await screen.findByText('GMV')
     await screen.findByText('Jordan Lee')
     await screen.findByText('Vitamin D3')
-    await fireEvent.update(screen.getByLabelText('Search products'), 'Vitamin')
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('Search products'), 'Vitamin')
     await vi.waitFor(() => {
       expect(api.searchProducts).toHaveBeenLastCalledWith({
         q: 'Vitamin',
@@ -458,10 +485,11 @@ describe('accessibility', () => {
       props: { orderId: '42' },
     })
     await screen.findByRole('button', { name: 'Pay $120.00' })
-    await fireEvent.click(
+    const user = userEvent.setup()
+    await user.click(
       screen.getByLabelText('Simulate gateway failure (dev only)'),
     )
-    await fireEvent.click(screen.getByRole('button', { name: 'Pay $120.00' }))
+    await user.click(screen.getByRole('button', { name: 'Pay $120.00' }))
     await screen.findByText(/Card declined/)
     await expectNoAxeViolations(container)
   })
