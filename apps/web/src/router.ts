@@ -12,14 +12,7 @@ import {
   showNotice,
   useCurrentUser,
 } from './user'
-import DashboardView from './views/DashboardView.vue'
 import LoginView from './views/LoginView.vue'
-import MyOrdersView from './views/MyOrdersView.vue'
-import OrderBuilderView from './views/OrderBuilderView.vue'
-import PatientDetailView from './views/PatientDetailView.vue'
-import PatientOrderView from './views/PatientOrderView.vue'
-import PatientsView from './views/PatientsView.vue'
-import ProviderOrderView from './views/ProviderOrderView.vue'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -30,20 +23,25 @@ declare module 'vue-router' {
 const provider = { persona: 'provider' as const }
 const patient = { persona: 'patient' as const }
 
+// Views load on demand so the login screen doesn't pay for every table.
 export const routes: RouteRecordRaw[] = [
   { path: '/login', name: 'login', component: LoginView },
   // `/` only ever redirects (see the guard); LoginView is a placeholder.
   { path: '/', name: 'home', component: LoginView },
-  { path: '/patients', component: PatientsView, meta: provider },
+  {
+    path: '/patients',
+    component: () => import('./views/PatientsView.vue'),
+    meta: provider,
+  },
   {
     path: '/patients/:patientId',
-    component: PatientDetailView,
+    component: () => import('./views/PatientDetailView.vue'),
     meta: provider,
     props: true,
   },
   {
     path: '/patients/:patientId/orders/new',
-    component: OrderBuilderView,
+    component: () => import('./views/OrderBuilderView.vue'),
     meta: provider,
     // ?orderId= reopens an existing draft in the builder.
     props: (route) => ({
@@ -56,15 +54,23 @@ export const routes: RouteRecordRaw[] = [
   },
   {
     path: '/orders/:orderId',
-    component: ProviderOrderView,
+    component: () => import('./views/ProviderOrderView.vue'),
     meta: provider,
     props: true,
   },
-  { path: '/dashboard', component: DashboardView, meta: provider },
-  { path: '/my-orders', component: MyOrdersView, meta: patient },
+  {
+    path: '/dashboard',
+    component: () => import('./views/DashboardView.vue'),
+    meta: provider,
+  },
+  {
+    path: '/my-orders',
+    component: () => import('./views/MyOrdersView.vue'),
+    meta: patient,
+  },
   {
     path: '/my-orders/:orderId',
-    component: PatientOrderView,
+    component: () => import('./views/PatientOrderView.vue'),
     meta: patient,
     props: true,
   },
