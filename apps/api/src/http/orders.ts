@@ -10,13 +10,15 @@ import { patients } from '../db/schema'
 import {
   cancelOrder,
   createDraft,
+  deleteDraft,
   payOrder,
+  reopenOrder,
   replaceDraftLines,
   sendOrder,
 } from '../orders/service'
 import {
   findOrderOwnership,
-  listAwaitingPayment,
+  listProviderOrderPage,
   listPatientOrders,
   listProviderOrders,
   loadPatientOrderDetail,
@@ -66,7 +68,8 @@ export function ordersRouter(ctx: AppContext) {
       const provider = requireRole(user, 'provider')
       if (patientId !== undefined) await assertOwnPatient(provider, patientId)
       res.json(
-        await listAwaitingPayment(db, provider.providerId, {
+        await listProviderOrderPage(db, provider.providerId, {
+          status,
           patientId,
           offset,
           limit,
@@ -115,6 +118,20 @@ export function ordersRouter(ctx: AppContext) {
     const user = requireRole(await auth.getCurrentUser(req), 'provider')
     const orderId = parseId(req.params.id)
     await sendOrder(ctx, user, orderId)
+    res.json(await loadProviderOrderDetail(db, orderId))
+  })
+
+  router.delete('/:id', async (req, res) => {
+    const user = requireRole(await auth.getCurrentUser(req), 'provider')
+    const orderId = parseId(req.params.id)
+    await deleteDraft(db, user, orderId)
+    res.status(204).end()
+  })
+
+  router.post('/:id/reopen', async (req, res) => {
+    const user = requireRole(await auth.getCurrentUser(req), 'provider')
+    const orderId = parseId(req.params.id)
+    await reopenOrder(db, user, orderId)
     res.json(await loadProviderOrderDetail(db, orderId))
   })
 

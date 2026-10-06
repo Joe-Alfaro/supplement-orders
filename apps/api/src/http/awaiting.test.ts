@@ -103,10 +103,11 @@ describe('GET /api/orders?status=pending_payment', () => {
     expect(mineFiltered.body.total).toBe(1)
   })
 
-  it('rejects other status values and bad paging with a field', async () => {
+  it('rejects unknown status values and bad paging with a field', async () => {
+    // Revision 8 accepts every order status and "all"; see order-list.test.ts.
     const results = await Promise.all(
       [
-        '?status=shipped',
+        '?status=bogus',
         '?status=PAID',
         '?status=pending_payment&limit=101',
       ].map((q) =>

@@ -123,7 +123,8 @@ export const orders = pgTable(
       .defaultNow(),
     sentAt: timestamp('sent_at', { withTimezone: true }),
     paidAt: timestamp('paid_at', { withTimezone: true }),
-    // Revision 6: a provider may cancel a draft or pending order. No ledger or stock effect.
+    // Set when a provider cancels a pending order. No ledger or stock effect.
+    // Revision 6 also allowed cancelling drafts; such rows may still exist.
     cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
   },
   (t) => [
@@ -141,6 +142,26 @@ export const orders = pgTable(
       sql`(${t.status} = 'cancelled') = (${t.cancelledAt} is not null)`,
     ),
     // Dashboard "Awaiting payment": one provider's pending orders, oldest first.
+    // Revision 8: patients' latest-order filter (latest by created_at, then id).
+    index('orders_patient_created_idx').on(
+      t.patientId,
+      sql`${t.createdAt} desc`,
+      sql`${t.id} desc`,
+    ),
+    // Revision 8 Orders tab: most recent activity first, per status and for "all".
+    // The expression must match orderActivityAt in orders/views.ts. Plain DESC
+    // (nulls first) to match ORDER BY ... DESC; .desc() would add NULLS LAST.
+    index('orders_provider_status_activity_idx').on(
+      t.providerId,
+      t.status,
+      sql`coalesce(${t.paidAt}, ${t.cancelledAt}, ${t.sentAt}, ${t.createdAt}) desc`,
+      sql`${t.id} desc`,
+    ),
+    index('orders_provider_activity_idx').on(
+      t.providerId,
+      sql`coalesce(${t.paidAt}, ${t.cancelledAt}, ${t.sentAt}, ${t.createdAt}) desc`,
+      sql`${t.id} desc`,
+    ),
     index('orders_provider_status_sent_idx').on(
       t.providerId,
       t.status,

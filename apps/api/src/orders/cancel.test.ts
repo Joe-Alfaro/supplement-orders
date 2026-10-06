@@ -88,22 +88,18 @@ describe('POST /api/orders/:id/cancel', () => {
     expect(ctx.gateway.charges).toEqual([])
   })
 
-  it('cancels a draft silently and keeps it hidden from the patient', async () => {
+  it('refuses to cancel a draft: drafts are deleted instead (revision 8)', async () => {
     const orderId = await createDraft(ctx)
 
     const res = await cancel(orderId)
-    const view = await patientView(orderId)
-    const list = await ctx.request
-      .get('/api/orders')
-      .set(as(ctx.seed.patientUserId))
-    const payRes = await pay(ctx, orderId)
 
-    expect(res.status).toBe(200)
-    expect(res.body).toMatchObject({ status: 'cancelled', sentAt: null })
+    expect(res.status).toBe(409)
+    expect(res.body.error.code).toBe('ORDER_NOT_CANCELLABLE')
     expect(ctx.notifier.cancelled).toEqual([])
-    expect(view.status).toBe(404)
-    expect(list.body).toEqual([])
-    expect(payRes.status).toBe(404)
+    const view = await ctx.request
+      .get(`/api/orders/${orderId}`)
+      .set(as(ctx.seed.providerUserId))
+    expect(view.body.status).toBe('draft')
   })
 
   it('refuses to cancel a paid or already-cancelled order', async () => {

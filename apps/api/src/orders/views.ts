@@ -3,8 +3,9 @@ import {
   markupBpsFromPrice,
   minUnitPriceCents,
   SplitValidationError,
-  type AwaitingPaymentOrderDto,
-  type AwaitingPaymentPageDto,
+  type OrderStatusSelection,
+  type ProviderOrderListItemDto,
+  type ProviderOrderListPageDto,
   type LedgerEntryDto,
   type OrderLineDto,
   type OrderSplitDto,
@@ -24,6 +25,7 @@ import {
   inArray,
   isNotNull,
   ne,
+  sql,
   type SQL,
 } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
@@ -343,23 +345,45 @@ export async function loadPatientOrderDetail(
 }
 
 /**
- * Dashboard "Awaiting payment": one provider's pending orders, oldest sentAt
- * first, then id. Served by the (provider_id, status, sent_at, id) index.
+ * The most relevant date for an order's state: when it was paid or cancelled,
+ * else sent, else created. Only one of paidAt/cancelledAt is ever set, and each
+ * is later than sentAt, so this equals the latest activity. Mirrors the
+ * expression index orders_provider_status_activity_idx (migration 0006).
  */
-export async function listAwaitingPayment(
+export const orderActivityAt = sql<Date>`coalesce(${orders.paidAt}, ${orders.cancelledAt}, ${orders.sentAt}, ${orders.createdAt})`
+
+/**
+ * Provider order list (Orders tab, dashboard Awaiting payment). Exactly
+ * [pending_payment] lists the oldest sent first, served by (provider_id, status,
+ * sent_at, id). Any other selection, `all` included, lists the most recent
+ * activity first: one status uses orders_provider_status_activity_idx, several
+ * (status IN ...) or all walk orders_provider_activity_idx in order and filter.
+ */
+export async function listProviderOrderPage(
   db: Db,
   providerId: number,
   {
+    status,
     patientId,
     offset,
     limit,
-  }: { patientId?: number; offset: number; limit: number },
-): Promise<AwaitingPaymentPageDto> {
+  }: {
+    status: OrderStatusSelection
+    patientId?: number
+    offset: number
+    limit: number
+  },
+): Promise<ProviderOrderListPageDto> {
   const where = and(
     eq(orders.providerId, providerId),
-    eq(orders.status, 'pending_payment'),
+    status === 'all' ? undefined : inArray(orders.status, status),
     patientId === undefined ? undefined : eq(orders.patientId, patientId),
   )
+  const awaitingOnly =
+    status !== 'all' && status.length === 1 && status[0] === 'pending_payment'
+  const ordering = awaitingOnly
+    ? [asc(orders.sentAt), asc(orders.id)]
+    : [desc(orderActivityAt), desc(orders.id)]
   const [rows, [counted]] = await Promise.all([
     db
       .select({
@@ -367,28 +391,28 @@ export async function listAwaitingPayment(
         patientId: orders.patientId,
         patientName: patientUsers.name,
         patientDateOfBirth: patients.dateOfBirth,
+        status: orders.status,
         totalCents: orders.totalCents,
+        createdAt: orders.createdAt,
         sentAt: orders.sentAt,
+        paidAt: orders.paidAt,
+        cancelledAt: orders.cancelledAt,
       })
       .from(orders)
       .innerJoin(patients, eq(patients.id, orders.patientId))
       .innerJoin(patientUsers, eq(patientUsers.id, patients.userId))
       .where(where)
-      .orderBy(asc(orders.sentAt), asc(orders.id))
+      .orderBy(...ordering)
       .limit(limit)
       .offset(offset),
     db.select({ total: count() }).from(orders).where(where),
   ])
-  const items = rows.map((row): AwaitingPaymentOrderDto => {
-    // A pending order always has a sentAt and a total (CHECK constraints).
-    if (row.sentAt === null || row.totalCents === null) {
-      throw new Error(`Pending order ${row.id} is missing its sent snapshot`)
-    }
-    return {
-      ...row,
-      totalCents: row.totalCents,
-      sentAt: row.sentAt.toISOString(),
-    }
-  })
+  const items = rows.map((row): ProviderOrderListItemDto => ({
+    ...row,
+    createdAt: row.createdAt.toISOString(),
+    sentAt: iso(row.sentAt),
+    paidAt: iso(row.paidAt),
+    cancelledAt: iso(row.cancelledAt),
+  }))
   return { items, total: counted?.total ?? 0, offset, limit }
 }

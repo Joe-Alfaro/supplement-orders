@@ -10,7 +10,7 @@ import { z } from 'zod'
  * - 404 NOT_FOUND: the resource does not exist
  * - 409 ORDER_NOT_DRAFT / ORDER_NOT_PAYABLE / ORDER_NOT_CANCELLABLE / ORDER_NOT_REOPENABLE:
  *   the order is in the wrong status. Edit, send and DELETE need a draft; cancel needs
- *   draft or pending_payment; reopen needs cancelled.
+ *   pending_payment (revision 8: drafts are deleted instead); reopen needs cancelled.
  * - 422 split codes, INCOMPLETE_LINE, DUPLICATE_PRODUCT, UNKNOWN_PRODUCT, INSUFFICIENT_STOCK:
  *   business rule failed. INCOMPLETE_LINE (send only) names the missing part,
  *   e.g. `lines.1.productId` or `lines.0.unitPriceCents`. EMPTY_ORDER has no field.
