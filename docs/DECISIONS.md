@@ -89,7 +89,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 - **First decision (revision 6):** a provider could cancel a `draft` or a `pending_payment` order.
 - **Final decision:** a draft is deleted outright (`DELETE /api/orders/:id`, behind a confirmation), and Cancel applies only to orders awaiting payment.
-- **Why it changed:** product owner feedback after using the app. A hard delete is safe for a draft: it was never sent, so it has no payment, ledger rows or patient-facing history, and nothing references it.
+- **Why it changed:** product owner feedback after using the app. A hard delete is safe for a draft: a draft has no `sentAt`, so it has no payment, no ledger rows, and the patient can't see it. A draft created by reopen was sent earlier, but reopen already cleared that history.
 - **Alternative:** a soft delete with a `deleted_at` column, which keeps more audit history. A draft has no financial or patient-facing history worth keeping.
 - **Tradeoff:** deleting can't be undone. Delete takes the order row lock, so it can't race a send: whichever commits first wins, and the other gets a 409 or 404.
 
@@ -186,7 +186,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 **Reversed: manual end-to-end checks -> Playwright**
 
 - **First decision:** the end-to-end flow was checked by hand in a browser, to keep the suite small.
-- **Final decision:** three Playwright specs (happy path, gateway failure, cancel) on a dedicated `supplement_orders_e2e` database, run with `npm run test:e2e` and kept out of `npm test`.
+- **Final decision:** five Playwright specs (happy path, gateway failure, cancel, order lifecycle, and URL-state navigation) on a dedicated `supplement_orders_e2e` database, run with `npm run test:e2e` and kept out of `npm test`.
 - **Why it changed:** the product owner asked whether there was an end-to-end test. After half a dozen revisions to pricing rules, manual checks clearly weren't catching regressions. The happy path asserts exact dashboard and stock deltas, not just "something changed".
 - **Tradeoff:** a browser download and about 30 seconds per run.
 

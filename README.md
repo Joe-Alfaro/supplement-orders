@@ -128,7 +128,7 @@ Service variables:
 - `NODE_ENV=production`: turns on static serving and turns off **Simulate gateway failure**. The decline and rollback path is demonstrated locally.
 - `PORT`: provided by Railway.
 
-Production static serving: hashed files under `/assets/` are cached for a year, `index.html` is `no-cache`, and any other non-`/api` GET returns `index.html` so deep links such as `/orders?status=paid` work. Unknown `/api` routes still return a JSON 404.
+Production static serving: hashed files under `/assets/` are cached for a year, a missing `/assets/` file is a plain 404, `index.html` is `no-cache`, and any other non-`/api` GET returns `index.html` so deep links such as `/orders?status=paid` work. Unknown `/api` routes still return a JSON 404.
 
 To deploy, run `railway up` from the repo root on an up-to-date `main`. Railway's repo auto-deploy only supports GitHub, and this repository is on GitLab.
 
@@ -147,12 +147,12 @@ Each stub sits behind an interface in `apps/api/src/seams/` and is injected thro
 
 ## Testing
 
-| Suite                                         | Count | Notes                                                                                                                                                                |
-| --------------------------------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/domain` (Vitest)                    | 308   | Fee, minimum price, split, ledger, markup conversions, money parsing and formatting, request schemas                                                                 |
-| `apps/api` (Vitest + Supertest)               | 195   | Against a real Postgres: HTTP contract tests, pay rollback and idempotency, concurrent pay/cancel, delete and reopen, order list filters, search, SPA serving        |
-| `apps/web` (Vitest + Testing Library + jsdom) | 141   | Views and components, 16 axe-core accessibility scans, 23 loading/error/empty/persona state tests                                                                    |
-| `e2e/` (Playwright)                           | 4     | Happy path (order, pay, ledger, exact dashboard and stock deltas), simulated gateway failure, cancel, order lifecycle (delete draft, cancel, reopen, status filters) |
+| Suite                                         | Count | Notes                                                                                                                                                                                                |
+| --------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/domain` (Vitest)                    | 308   | Fee, minimum price, split, ledger, markup conversions, money parsing and formatting, request schemas                                                                                                 |
+| `apps/api` (Vitest + Supertest)               | 195   | Against a real Postgres: HTTP contract tests, pay rollback and idempotency, concurrent pay/cancel, delete and reopen, order list filters, search, SPA serving                                        |
+| `apps/web` (Vitest + Testing Library + jsdom) | 141   | Views and components, 16 axe-core accessibility scans, 23 loading/error/empty/persona state tests                                                                                                    |
+| `e2e/` (Playwright)                           | 5     | Happy path (order, pay, ledger, exact dashboard and stock deltas), simulated gateway failure, cancel, order lifecycle (delete draft, cancel, reopen, status filters), URL-state navigation (4 cases) |
 
 Counts are from `npm test` and `npm run test:e2e` at the time of writing.
 
