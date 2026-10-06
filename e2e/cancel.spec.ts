@@ -1,7 +1,9 @@
-import { expect, test } from '@playwright/test'
+import { expect, type Page, test } from '@playwright/test'
 import {
   addProduct,
+  AWAITING_ORDERS_LINK,
   openDashboard,
+  openOrdersViaDashboard,
   openPatient,
   readSalesTiles,
   readStock,
@@ -39,10 +41,12 @@ test('cancelling an unpaid order leaves the dashboard and stock unchanged', asyn
     )
 
     await openDashboard(page)
+    await openOrdersViaDashboard(page, AWAITING_ORDERS_LINK, 'pending_payment')
     const waiting = page
-      .getByRole('table', { name: 'Awaiting payment' })
+      .getByRole('table', { name: 'Orders', exact: true })
       .getByRole('row', { name: PATIENT })
     await expect(waiting).toHaveCount(1)
+    await expect(waiting).toContainText('Awaiting payment')
     await waiting.click()
     await expect(page.getByRole('heading', { level: 1 })).toContainText(
       'Awaiting payment',
@@ -68,18 +72,12 @@ test('cancelling an unpaid order leaves the dashboard and stock unchanged', asyn
     ).toBeVisible()
 
     await openDashboard(page)
-    await expect(
-      page
-        .getByRole('table', { name: 'Awaiting payment' })
-        .getByRole('row', { name: PATIENT }),
-    ).toHaveCount(1)
+    await openOrdersViaDashboard(page, AWAITING_ORDERS_LINK, 'pending_payment')
+    await expect(awaitingOrder(page)).toHaveCount(1)
   })
 
   await test.step('confirming cancel removes it and does not move the dashboard', async () => {
-    await page
-      .getByRole('table', { name: 'Awaiting payment' })
-      .getByRole('row', { name: PATIENT })
-      .click()
+    await awaitingOrder(page).click()
     await page.getByRole('button', { name: 'Cancel order' }).click()
     const dialog = page.getByRole('alertdialog', { name: 'Cancel order' })
     await dialog.getByRole('button', { name: 'Cancel order' }).click()
@@ -92,14 +90,12 @@ test('cancelling an unpaid order leaves the dashboard and stock unchanged', asyn
     ).toHaveCount(0)
 
     await openDashboard(page)
-    await expect(
-      page
-        .getByRole('table', { name: 'Awaiting payment' })
-        .getByRole('row', { name: PATIENT }),
-    ).toHaveCount(0)
     const after = await readSalesTiles(page)
     expect(after).toEqual(recorded.baseline)
     expect(await readStock(page, SKU)).toBe(recorded.stock)
+    await openOrdersViaDashboard(page, AWAITING_ORDERS_LINK, 'pending_payment')
+    await expect(awaitingOrder(page)).toHaveCount(0)
+    await expect(page.getByText('No orders awaiting payment.')).toBeVisible()
   })
 
   await test.step('patient sees the cancellation and cannot pay', async () => {
@@ -119,3 +115,9 @@ test('cancelling an unpaid order leaves the dashboard and stock unchanged', asyn
     await expect(page.getByRole('button', { name: /^Pay / })).toHaveCount(0)
   })
 })
+
+function awaitingOrder(page: Page) {
+  return page
+    .getByRole('table', { name: 'Orders', exact: true })
+    .getByRole('row', { name: PATIENT })
+}
