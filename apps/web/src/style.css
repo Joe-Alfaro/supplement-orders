@@ -18,12 +18,38 @@ body {
   margin: 0;
 }
 
+/* Layout (revision 8e): one centered column for the header contents, notices
+   and the page, so wide windows don't leave everything flush left. */
+:root {
+  --page-max-width: 1200px;
+  --page-gutter: 1.5rem;
+}
+
+@media (max-width: 640px) {
+  :root {
+    --page-gutter: 1rem;
+  }
+}
+
+.page-column {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: var(--page-max-width);
+  margin-inline: auto;
+  padding-inline: var(--page-gutter);
+}
+
+/* The bar spans the window; its contents sit in the column. */
 .app-header {
-  display: flex;
-  gap: 1.5rem;
-  align-items: center;
-  padding: 0.5rem 1.5rem;
   border-bottom: 1px solid var(--p-content-border-color);
+}
+
+.app-header-inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  align-items: center;
+  padding-block: 0.5rem;
 }
 
 .app-header nav {
@@ -43,12 +69,16 @@ body {
 }
 
 main {
-  padding: 1rem 1.5rem 3rem;
-  max-width: 76rem;
+  padding-block: 1rem 3rem;
 }
 
 .notice:not(:empty) {
-  padding: 0.5rem 1.5rem 0;
+  padding-top: 0.5rem;
+}
+
+/* Wide tables scroll inside the column instead of breaking it. */
+.p-datatable-table-container {
+  overflow-x: auto;
 }
 
 /* Label/value money summaries (split, patient total). */

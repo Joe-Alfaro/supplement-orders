@@ -22,24 +22,27 @@ async function onSignOut() {
 
 <template>
   <header v-if="currentUser" class="app-header">
-    <strong>Supplement Orders</strong>
-    <nav aria-label="Main">
-      <template v-if="currentUser.role === 'provider'">
-        <RouterLink to="/patients">Patients</RouterLink>
-        <RouterLink to="/orders">Orders</RouterLink>
-        <RouterLink to="/dashboard">Dashboard</RouterLink>
-      </template>
-      <RouterLink v-else to="/my-orders">My Orders</RouterLink>
-    </nav>
-    <span class="signed-in">
-      Signed in as {{ currentUser.name }} ({{ roleLabel(currentUser.role) }}) ·
-      <Button label="Sign out" link size="small" @click="onSignOut" />
-    </span>
+    <div class="app-header-inner page-column">
+      <strong>Supplement Orders</strong>
+      <nav aria-label="Main">
+        <template v-if="currentUser.role === 'provider'">
+          <RouterLink to="/patients">Patients</RouterLink>
+          <RouterLink to="/orders">Orders</RouterLink>
+          <RouterLink to="/dashboard">Dashboard</RouterLink>
+        </template>
+        <RouterLink v-else to="/my-orders">My Orders</RouterLink>
+      </nav>
+      <span class="signed-in">
+        Signed in as {{ currentUser.name }} ({{ roleLabel(currentUser.role) }})
+        ·
+        <Button label="Sign out" link size="small" @click="onSignOut" />
+      </span>
+    </div>
   </header>
-  <div aria-live="polite" class="notice">
+  <div aria-live="polite" class="notice page-column">
     <Message v-if="notice" severity="info">{{ notice.message }}</Message>
   </div>
-  <main>
+  <main class="page-column">
     <RouterView />
   </main>
 </template>
