@@ -323,10 +323,9 @@ export async function reopenOrder(db: Db, user: ProviderUser, orderId: number) {
   })
 }
 
-const CANCELLABLE = new Set(['draft', 'pending_payment'])
-
 /**
- * Provider cancels a draft or pending order. Takes the same row lock as pay, so
+ * Provider cancels a pending order (revision 8: drafts are deleted, not
+ * cancelled). Takes the same row lock as pay, so
  * a concurrent cancel and pay serialize: whichever commits first wins and the
  * other gets a 409. No ledger rows, no stock change (stock only moves on pay).
  * The patient is notified only if the order had been sent to them.
@@ -341,7 +340,7 @@ export async function cancelOrder(
     if (order.providerId !== user.providerId) {
       throw forbidden('This order belongs to another provider')
     }
-    if (!CANCELLABLE.has(order.status)) {
+    if (order.status !== 'pending_payment') {
       throw new ApiError(
         409,
         'ORDER_NOT_CANCELLABLE',

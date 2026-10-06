@@ -238,7 +238,7 @@ interface OrderSummaryBase {
   createdAt: string
   sentAt: string | null
   paidAt: string | null
-  /** Set when a provider cancelled the order (from draft or pending_payment). */
+  /** Set when a provider cancelled the order (from pending_payment; revision 6 also allowed drafts). */
   cancelledAt: string | null
 }
 
