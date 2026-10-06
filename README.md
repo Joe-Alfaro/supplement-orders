@@ -87,9 +87,9 @@ When the patient pays, the API writes three ledger entries (`cogs`, `provider_ma
 
 ## Deployment
 
-Public demo: _URL to be added after the first deploy_
+Public demo: <https://web-production-b7c8c.up.railway.app>
 
-The app runs on [Railway](https://railway.com) as one service plus a Railway Postgres service. The API serves the built web app, so there is one origin and no CORS. [`railway.json`](railway.json) records the build and deploy settings. Railway no longer reads that file for new services (Config as Code is deprecated), so the same values are set on the service itself:
+The app runs on [Railway](https://railway.com) as one service plus a Railway Postgres service. The API serves the built web app, so there is one origin and no CORS. [`railway.json`](railway.json) records the build and deploy settings. Railway has [deprecated Config as Code](https://docs.railway.com/infrastructure-as-code#migrating-from-config-as-code) and new services do not read it, so the same values are applied to the service directly:
 
 | Step       | Command                                          | Notes                                                                                                                      |
 | ---------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
