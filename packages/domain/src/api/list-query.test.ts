@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { listQuerySchema } from './requests'
+import { listOrdersQuerySchema, listQuerySchema } from './requests'
 import { pageSchema, productDtoSchema } from './responses'
 
 function issuePath(input: Record<string, unknown>) {
@@ -59,5 +59,34 @@ describe('pageSchema', () => {
     expect(
       schema.safeParse({ items: [], total: -1, offset: 0, limit: 25 }).success,
     ).toBe(false)
+  })
+})
+
+describe('listOrdersQuerySchema', () => {
+  it('parses the awaiting-payment page query', () => {
+    expect(
+      listOrdersQuerySchema.parse({
+        status: 'pending_payment',
+        offset: '25',
+        limit: '25',
+      }),
+    ).toEqual({ status: 'pending_payment', offset: 25, limit: 25 })
+  })
+
+  it('keeps the plain patient filter working', () => {
+    expect(listOrdersQuerySchema.parse({ patientId: '7' })).toEqual({
+      patientId: 7,
+      offset: 0,
+      limit: 25,
+    })
+  })
+
+  it.each([
+    [{ status: 'paid' }, 'status'],
+    [{ status: 'cancelled' }, 'status'],
+    [{ status: 'pending_payment', limit: '0' }, 'limit'],
+  ])('rejects %j on %s', (input, field) => {
+    const result = listOrdersQuerySchema.safeParse(input)
+    expect(result.error?.issues[0]?.path).toEqual([field])
   })
 })

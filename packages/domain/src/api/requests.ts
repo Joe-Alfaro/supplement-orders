@@ -73,12 +73,34 @@ export const listProductsQuerySchema = listQuerySchema
 export const listPatientsQuerySchema = listQuerySchema
 
 /** GET /api/orders?patientId= */
+/**
+ * GET /api/orders. Without `status` it returns every visible order as an array
+ * (optionally one patient's). With `status=pending_payment` (provider only) it
+ * returns a Page<AwaitingPaymentOrderDto>, oldest sentAt first, and honours
+ * `offset`/`limit` like the other list endpoints. Other status values are 400.
+ */
 export interface ListOrdersQuery {
   patientId?: number
+  status?: 'pending_payment'
+  offset?: number
+  limit?: number
 }
 
-export const listOrdersQuerySchema: z.ZodType<ListOrdersQuery> = z.object({
+export interface ParsedListOrdersQuery {
+  patientId?: number
+  status?: 'pending_payment'
+  offset: number
+  limit: number
+}
+
+export const listOrdersQuerySchema: z.ZodType<
+  ParsedListOrdersQuery,
+  ListQueryParams & { patientId?: unknown; status?: unknown }
+> = z.object({
   patientId: idParamSchema.optional(),
+  status: z.literal('pending_payment').optional(),
+  offset: intParam(0, Number.MAX_SAFE_INTEGER, 0),
+  limit: intParam(1, PAGE_LIMIT_MAX, PAGE_LIMIT_DEFAULT),
 })
 
 /** POST /api/orders creates an empty draft. */
