@@ -39,7 +39,9 @@ test('a simulated gateway failure leaves the order payable and the dashboard unc
   await test.step('patient decline keeps the order payable', async () => {
     await signOut(page)
     await signIn(page, PATIENT_USER)
-    const awaiting = page.getByRole('row', { name: 'Awaiting payment' })
+    const awaiting = page
+      .getByRole('table', { name: 'My orders' })
+      .getByRole('row', { name: 'Awaiting payment' })
     await expect(awaiting).toHaveCount(1)
     await awaiting.click()
 
@@ -63,7 +65,7 @@ test('a simulated gateway failure leaves the order payable and the dashboard unc
     const after = await readSalesTiles(page)
     expect(after).toEqual(recorded.baseline)
     await expect(
-      page.getByRole('region', { name: 'Sales' }).getByRole('row', {
+      page.getByRole('table', { name: 'Paid orders' }).getByRole('row', {
         name: PATIENT,
       }),
     ).toHaveCount(0)

@@ -44,18 +44,17 @@ export async function openDashboard(page: Page): Promise<void> {
   ).toBeVisible()
 }
 
-/**
- * The stat tiles are PrimeVue cards: the label is not an accessible name for
- * the amount, so the amounts are read from the Sales region's text.
- */
+/** Each stat tile is a group named by its label. The amount is the money inside. */
 export async function readSalesTiles(page: Page): Promise<SalesTiles> {
-  const sales = page.getByRole('region', { name: 'Sales' })
-  await expect(sales.getByText('GMV', { exact: true })).toBeVisible()
-  const text = await sales.innerText()
+  async function groupCents(name: string): Promise<number> {
+    const tile = page.getByRole('group', { name, exact: true })
+    await expect(tile).toBeVisible()
+    return moneyIn(await tile.innerText())
+  }
   return {
-    gmvCents: dollarsToCents(textAfter(text, 'GMV')),
-    marginCents: dollarsToCents(textAfter(text, 'Your margin earned')),
-    feeCents: dollarsToCents(textAfter(text, 'Processing fees')),
+    gmvCents: await groupCents('GMV'),
+    marginCents: await groupCents('Your margin earned'),
+    feeCents: await groupCents('Processing fees'),
   }
 }
 
@@ -67,9 +66,10 @@ export async function readStock(
   const inventory = page.getByRole('region', { name: 'Inventory' })
   await inventory.getByLabel('Search products').fill(skuFragment)
   await expect(inventory.getByText(SINGLE_RESULT)).toBeVisible()
-  const row = inventory.getByRole('row', { name: skuFragment })
+  const table = inventory.getByRole('table', { name: 'Inventory' })
+  const row = table.getByRole('row', { name: skuFragment })
   await expect(row).toHaveCount(1)
-  // The stock cell's name is only the quantity. The name cell also contains
+  // The quantity cell's name is only digits. The product name also contains
   // digits (for example "120 softgels"), so the name has to be all digits.
   const stockCell = row.getByRole('cell', { name: /^\d+$/ })
   await expect(stockCell).toHaveCount(1)
@@ -81,7 +81,9 @@ export async function openPatient(page: Page, name: string): Promise<void> {
   await page.getByRole('link', { name: 'Patients' }).click()
   await page.getByLabel('Search by name or date of birth').fill(name)
   await expect(page.getByText(SINGLE_RESULT)).toBeVisible()
-  const row = page.getByRole('row', { name })
+  const row = page
+    .getByRole('table', { name: 'Patients' })
+    .getByRole('row', { name })
   await expect(row).toHaveCount(1)
   await row.click()
   await expect(page.getByRole('heading', { name, level: 1 })).toBeVisible()
@@ -90,10 +92,11 @@ export async function openPatient(page: Page, name: string): Promise<void> {
 interface AddProductOptions {
   quantity: number
   /**
-   * When set, step 2 types this markup. The resulting price is whatever the
-   * field shows; it is not computed from a markup formula.
+   * When set, step 2 types this into Margin %. The resulting price is whatever
+   * the field shows; it is not computed from a margin formula. Revision 5
+   * renames the label to Markup %; that change is not on this UI yet.
    */
-  markupPercent?: string
+  marginPercent?: string
 }
 
 /**
@@ -114,7 +117,9 @@ export async function addProduct(
   ).toBeVisible()
   await dialog.getByLabel('Search products').fill(skuFragment)
   await expect(dialog.getByText(SINGLE_RESULT)).toBeVisible()
-  const row = dialog.getByRole('row', { name: skuFragment })
+  const row = dialog
+    .getByRole('table', { name: 'Products' })
+    .getByRole('row', { name: skuFragment })
   await expect(row).toHaveCount(1)
   await row.click()
 
@@ -127,35 +132,38 @@ export async function addProduct(
   const prefilled = dollarsToCents(prefilledInput)
   expect(prefilled).toBeGreaterThanOrEqual(minimum)
 
-  if (options.markupPercent) {
-    const typedMarkup = options.markupPercent
-    const feeBefore = dollarsToCents(await fee.inputValue())
-    const markup = dialog.getByLabel('Markup %')
-    await markup.fill(typedMarkup)
+  if (options.marginPercent) {
+    const typedMargin = options.marginPercent
+    const feeBefore = await shownFee(fee)
+    const margin = dialog.getByLabel('Margin %')
+    await margin.fill(typedMargin)
     await expect(price).not.toHaveValue(prefilledInput)
     await expectFeeForPrice(dialog, price, fee, minimum)
-    expect(dollarsToCents(await fee.inputValue())).not.toBe(feeBefore)
-    await markup.blur()
-    // The edited field stays the typed percent (300 and 300.00 are the same).
-    // A gross-margin rewrite would show a different number, or reject 300.
+    expect(await shownFee(fee)).not.toBe(feeBefore)
+    await margin.blur()
+    // Blur may format "40" as "40.00". Either way it stays the typed percent.
     await expect(async () => {
-      expect(percentToBps(await markup.inputValue())).toBe(
-        percentToBps(typedMarkup),
+      expect(percentToBps(await margin.inputValue())).toBe(
+        percentToBps(typedMargin),
       )
     }).toPass()
     await expectFeeForPrice(dialog, price, fee, minimum)
   }
 
   if (options.quantity !== 1) {
-    const feeBefore = formatCents(dollarsToCents(await fee.inputValue()))
+    const feeBefore = await shownFee(fee)
     await dialog.getByLabel('Qty').fill(String(options.quantity))
-    await expect(fee).not.toHaveValue(feeBefore)
+    await expect(fee).not.toHaveText(feeBefore)
     await expectFeeForPrice(dialog, price, fee, minimum)
   }
 
   await dialog.getByRole('button', { name: 'Add to order' }).click()
   await expect(dialog).toBeHidden()
-  await expect(page.getByRole('row', { name: skuFragment })).toBeVisible()
+  await expect(
+    page
+      .getByRole('table', { name: 'Order lines' })
+      .getByRole('row', { name: skuFragment }),
+  ).toBeVisible()
 }
 
 export async function readSplit(page: Page): Promise<OrderSplit> {
@@ -174,9 +182,13 @@ export async function readSplit(page: Page): Promise<OrderSplit> {
   return { patientPaysCents, wholesaleCents, feeCents, marginCents }
 }
 
+/** The step-2 fee is a labelled output. Its text is not an input value. */
+async function shownFee(fee: Locator): Promise<string> {
+  return (await fee.innerText()).trim()
+}
+
 /**
- * The fee control is a readonly input on this branch, so its text is its
- * value. That text must be 75 bps of the displayed unit price times quantity,
+ * The fee text must be 75 bps of the displayed unit price times quantity,
  * rounded half up, and the unit price must stay at or above the minimum.
  */
 async function expectFeeForPrice(
@@ -191,7 +203,7 @@ async function expectFeeForPrice(
       (await dialog.getByLabel('Qty').inputValue()).trim(),
     )
     expect(unit).toBeGreaterThanOrEqual(minimumCents)
-    expect(await fee.inputValue()).toBe(
+    expect(await shownFee(fee)).toBe(
       formatCents(platformFeeCents(unit * quantity)),
     )
   }).toPass()

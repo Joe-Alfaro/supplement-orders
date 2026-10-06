@@ -14,9 +14,9 @@ import {
 import { moneyIn } from './money'
 
 // Small supplement_orders_e2e seed: the first provider, their first patient, and two products
-// chosen by SKU fragment. Vitamin D3 gets Markup % 300, which gross margin
-// cannot express. The price is read back from the field rather than computed.
-// Magnesium stays at its prefilled
+// chosen by SKU fragment. Vitamin D3 gets Margin % 40. The price is read back
+// from the field rather than computed. Markup % lands later. Magnesium stays
+// at its prefilled
 // price with quantity 2.
 const PROVIDER = 'Dr. Maya Rivera (Provider)'
 const PATIENT = 'Jordan Lee'
@@ -61,7 +61,7 @@ test('provider sends an order, the patient pays, and the dashboard matches', asy
 
     await addProduct(page, FIRST_SKU, {
       quantity: FIRST_QUANTITY,
-      markupPercent: '300',
+      marginPercent: '40',
     })
     await addProduct(page, SECOND_SKU, { quantity: SECOND_QUANTITY })
 
@@ -83,7 +83,9 @@ test('provider sends an order, the patient pays, and the dashboard matches', asy
     await expect(
       page.getByRole('heading', { name: 'My orders', level: 1 }),
     ).toBeVisible()
-    const awaiting = page.getByRole('row', { name: 'Awaiting payment' })
+    const awaiting = page
+      .getByRole('table', { name: 'My orders' })
+      .getByRole('row', { name: 'Awaiting payment' })
     await expect(awaiting).toHaveCount(1)
     expect(moneyIn(await awaiting.innerText())).toBe(
       recorded.split.patientPaysCents,
@@ -106,7 +108,9 @@ test('provider sends an order, the patient pays, and the dashboard matches', asy
     await expect(receipt.getByText(/Payment reference:\s*\S+/)).toBeVisible()
 
     await page.getByRole('link', { name: 'My Orders' }).click()
-    const paid = page.getByRole('row', { name: 'Paid' })
+    const paid = page
+      .getByRole('table', { name: 'My orders' })
+      .getByRole('row', { name: 'Paid' })
     await expect(paid).toHaveCount(1)
     expect(moneyIn(await paid.innerText())).toBe(
       recorded.split.patientPaysCents,
@@ -118,32 +122,27 @@ test('provider sends an order, the patient pays, and the dashboard matches', asy
     await signOut(page)
     await signIn(page, PROVIDER)
     await openPatient(page, PATIENT)
-    const order = page.getByRole('row', { name: 'Paid' })
+    const order = page
+      .getByRole('table', { name: 'Orders' })
+      .getByRole('row', { name: 'Paid' })
     await expect(order).toHaveCount(1)
     expect(moneyIn(await order.innerText())).toBe(
       recorded.split.patientPaysCents,
     )
     await order.click()
 
-    // The split summary uses the same words without a following timestamp, and
-    // DataTable does not expose its aria-label, so the ledger rows are named
-    // by the type plus the amount. "Your margin" is the summary; "Provider
-    // margin" is the ledger.
-    const entryNames = [
-      /^Wholesale cost \$[\d,.]+ \d/,
-      /^Provider margin \$/,
-      /^Processing fee \$/,
-    ]
+    const ledger = page.getByRole('table', { name: 'Ledger' })
+    const entryNames = ['Wholesale cost', 'Provider margin', 'Processing fee']
     const entryAmounts = await Promise.all(
       entryNames.map(async (name) => {
-        const row = page.getByRole('row', { name })
+        const row = ledger.getByRole('row', { name })
         await expect(row).toHaveCount(1)
         return moneyIn(await row.innerText())
       }),
     )
     const entryTotal = entryAmounts.reduce((sum, cents) => sum + cents, 0)
     expect(entryTotal).toBe(recorded.split.patientPaysCents)
-    const check = page.getByText(/Equals amount paid/)
+    const check = ledger.getByText(/Equals amount paid/)
     await expect(check).toBeVisible()
     expect(moneyIn(await check.innerText())).toBe(
       recorded.split.patientPaysCents,
@@ -161,8 +160,9 @@ test('provider sends an order, the patient pays, and the dashboard matches', asy
       recorded.split.feeCents,
     )
 
-    const sales = page.getByRole('region', { name: 'Sales' })
-    const paidOrder = sales.getByRole('row', { name: PATIENT })
+    const paidOrder = page
+      .getByRole('table', { name: 'Paid orders' })
+      .getByRole('row', { name: PATIENT })
     await expect(paidOrder).toHaveCount(1)
     expect(moneyIn(await paidOrder.innerText())).toBe(
       recorded.split.patientPaysCents,
