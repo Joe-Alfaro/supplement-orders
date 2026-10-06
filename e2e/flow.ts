@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page } from '@playwright/test'
+import { expect, type Page } from '@playwright/test'
 import {
   centsToInput,
   dollarsToCents,
@@ -69,13 +69,13 @@ export async function readStock(
   const inventory = page.getByRole('region', { name: 'Inventory' })
   await inventory.getByLabel('Search products').fill(skuFragment)
   await expect(inventory.getByText(SINGLE_RESULT)).toBeVisible()
-  const row = inventory.getByRole('row').filter({ hasText: skuFragment })
+  const row = inventory.getByRole('row', { name: skuFragment })
   await expect(row).toHaveCount(1)
-  const cells = row.getByRole('cell')
-  const stock = (await cells.last().innerText()).trim()
-  if (!/^\d+$/.test(stock)) {
-    throw new Error(`Stock for ${skuFragment} was "${stock}"`)
-  }
+  // The stock cell's name is only the quantity. The name cell also contains
+  // digits (for example "120 softgels"), so the name has to be all digits.
+  const stockCell = row.getByRole('cell', { name: /^\d+$/ })
+  await expect(stockCell).toHaveCount(1)
+  const stock = (await stockCell.innerText()).trim()
   return Number(stock)
 }
 
@@ -83,7 +83,7 @@ export async function openPatient(page: Page, name: string): Promise<void> {
   await page.getByRole('link', { name: 'Patients' }).click()
   await page.getByLabel('Search by name or date of birth').fill(name)
   await expect(page.getByText(SINGLE_RESULT)).toBeVisible()
-  const row = page.getByRole('row').filter({ hasText: name })
+  const row = page.getByRole('row', { name })
   await expect(row).toHaveCount(1)
   await row.click()
   await expect(page.getByRole('heading', { name, level: 1 })).toBeVisible()
@@ -112,7 +112,7 @@ export async function addProduct(
   ).toBeVisible()
   await dialog.getByLabel('Search products').fill(skuFragment)
   await expect(dialog.getByText(SINGLE_RESULT)).toBeVisible()
-  const row = dialog.getByRole('row').filter({ hasText: skuFragment })
+  const row = dialog.getByRole('row', { name: skuFragment })
   await expect(row).toHaveCount(1)
   await row.click()
 
@@ -155,9 +155,7 @@ export async function addProduct(
 
   await dialog.getByRole('button', { name: 'Add to order' }).click()
   await expect(dialog).toBeHidden()
-  await expect(
-    page.getByRole('row').filter({ hasText: skuFragment }),
-  ).toBeVisible()
+  await expect(page.getByRole('row', { name: skuFragment })).toBeVisible()
 }
 
 export async function readSplit(page: Page): Promise<OrderSplit> {
@@ -173,9 +171,4 @@ export async function readSplit(page: Page): Promise<OrderSplit> {
   const marginCents = await rowCents('Your margin')
   expect(patientPaysCents - wholesaleCents - feeCents).toBe(marginCents)
   return { patientPaysCents, wholesaleCents, feeCents, marginCents }
-}
-
-/** Ledger table is the one whose footer says the entries were checked. */
-export function ledgerTable(page: Page): Locator {
-  return page.getByRole('table').filter({ hasText: 'Total of entries' })
 }

@@ -1,7 +1,6 @@
 import { expect, test } from '@playwright/test'
 import {
   addProduct,
-  ledgerTable,
   openDashboard,
   openPatient,
   readSalesTiles,
@@ -82,9 +81,7 @@ test('provider sends an order, the patient pays, and the dashboard matches', asy
     await expect(
       page.getByRole('heading', { name: 'My orders', level: 1 }),
     ).toBeVisible()
-    const awaiting = page
-      .getByRole('row')
-      .filter({ hasText: 'Awaiting payment' })
+    const awaiting = page.getByRole('row', { name: 'Awaiting payment' })
     await expect(awaiting).toHaveCount(1)
     expect(moneyIn(await awaiting.innerText())).toBe(
       recorded.split.patientPaysCents,
@@ -106,7 +103,7 @@ test('provider sends an order, the patient pays, and the dashboard matches', asy
     await expect(receipt.getByText(/Payment reference:\s*\S+/)).toBeVisible()
 
     await page.getByRole('link', { name: 'My Orders' }).click()
-    const paid = page.getByRole('row').filter({ hasText: 'Paid' })
+    const paid = page.getByRole('row', { name: 'Paid' })
     await expect(paid).toHaveCount(1)
     expect(moneyIn(await paid.innerText())).toBe(
       recorded.split.patientPaysCents,
@@ -118,26 +115,32 @@ test('provider sends an order, the patient pays, and the dashboard matches', asy
     await signOut(page)
     await signIn(page, PROVIDER)
     await openPatient(page, PATIENT)
-    const order = page.getByRole('row').filter({ hasText: 'Paid' })
+    const order = page.getByRole('row', { name: 'Paid' })
     await expect(order).toHaveCount(1)
     expect(moneyIn(await order.innerText())).toBe(
       recorded.split.patientPaysCents,
     )
     await order.click()
 
-    const ledger = ledgerTable(page)
-    await expect(ledger).toHaveCount(1)
-    const entryLabels = ['Wholesale cost', 'Provider margin', 'Processing fee']
+    // The split summary uses the same words without a following timestamp, and
+    // DataTable does not expose its aria-label, so the ledger rows are named
+    // by the type plus the amount. "Your margin" is the summary; "Provider
+    // margin" is the ledger.
+    const entryNames = [
+      /^Wholesale cost \$[\d,.]+ \d/,
+      /^Provider margin \$/,
+      /^Processing fee \$/,
+    ]
     const entryAmounts = await Promise.all(
-      entryLabels.map(async (label) => {
-        const row = ledger.getByRole('row', { name: new RegExp(`^${label}`) })
+      entryNames.map(async (name) => {
+        const row = page.getByRole('row', { name })
         await expect(row).toHaveCount(1)
         return moneyIn(await row.innerText())
       }),
     )
     const entryTotal = entryAmounts.reduce((sum, cents) => sum + cents, 0)
     expect(entryTotal).toBe(recorded.split.patientPaysCents)
-    const check = ledger.getByText(/Equals amount paid/)
+    const check = page.getByText(/Equals amount paid/)
     await expect(check).toBeVisible()
     expect(moneyIn(await check.innerText())).toBe(
       recorded.split.patientPaysCents,
@@ -156,7 +159,7 @@ test('provider sends an order, the patient pays, and the dashboard matches', asy
     )
 
     const sales = page.getByRole('region', { name: 'Sales' })
-    const paidOrder = sales.getByRole('row').filter({ hasText: PATIENT })
+    const paidOrder = sales.getByRole('row', { name: PATIENT })
     await expect(paidOrder).toHaveCount(1)
     expect(moneyIn(await paidOrder.innerText())).toBe(
       recorded.split.patientPaysCents,
