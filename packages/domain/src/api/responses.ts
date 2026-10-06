@@ -294,7 +294,8 @@ export const patientOrderSummaryDtoSchema: z.ZodType<PatientOrderSummaryDto> =
 
 /**
  * Returned by POST /api/orders (201), PUT /api/orders/:id/lines, POST /api/orders/:id/send,
- * POST /api/orders/:id/cancel, and GET /api/orders/:id when the caller is the order's provider.
+ * POST /api/orders/:id/cancel, POST /api/orders/:id/reopen, and GET /api/orders/:id when
+ * the caller is the order's provider. DELETE /api/orders/:id returns 204 with no body.
  * `payment` and `ledger` are populated once paid; ledger is empty before that.
  */
 export interface ProviderOrderDetailDto extends ProviderOrderSummaryDto {
@@ -389,31 +390,49 @@ export const productPageDtoSchema = pageSchema(productDtoSchema)
 export const patientPageDtoSchema = pageSchema(patientDtoSchema)
 
 /**
- * One row of GET /api/orders?status=pending_payment (provider only, own orders,
- * oldest sentAt first, then id). Days waiting is left to the client, computed
- * from `sentAt` in the viewer's timezone.
+ * One row of GET /api/orders?status=... (provider only, own orders). `totalCents`
+ * and `sentAt` are null for drafts and for orders cancelled or reopened before
+ * sending. Days waiting is left to the client, computed from `sentAt`.
  */
-export interface AwaitingPaymentOrderDto {
+export interface ProviderOrderListItemDto {
   id: number
   patientId: number
   patientName: string
   /** `YYYY-MM-DD` */
   patientDateOfBirth: string
-  totalCents: number
-  sentAt: string
+  status: OrderStatus
+  /** The amount the patient pays, snapshotted on send. */
+  totalCents: number | null
+  createdAt: string
+  sentAt: string | null
+  paidAt: string | null
+  cancelledAt: string | null
 }
 
-export const awaitingPaymentOrderDtoSchema: z.ZodType<AwaitingPaymentOrderDto> =
+export const providerOrderListItemDtoSchema: z.ZodType<ProviderOrderListItemDto> =
   z.object({
     id,
     patientId: id,
     patientName: z.string(),
     patientDateOfBirth: isoDate,
-    totalCents: cents,
-    sentAt: timestamp,
+    status: z.enum(ORDER_STATUSES),
+    totalCents: cents.nullable(),
+    createdAt: timestamp,
+    sentAt: timestamp.nullable(),
+    paidAt: timestamp.nullable(),
+    cancelledAt: timestamp.nullable(),
   })
 
-export type AwaitingPaymentPageDto = Page<AwaitingPaymentOrderDto>
-export const awaitingPaymentPageDtoSchema = pageSchema(
-  awaitingPaymentOrderDtoSchema,
+export type ProviderOrderListPageDto = Page<ProviderOrderListItemDto>
+export const providerOrderListPageDtoSchema = pageSchema(
+  providerOrderListItemDtoSchema,
 )
+
+/** @deprecated Revision 8 generalized this to ProviderOrderListItemDto. */
+export type AwaitingPaymentOrderDto = ProviderOrderListItemDto
+/** @deprecated Use ProviderOrderListPageDto. */
+export type AwaitingPaymentPageDto = ProviderOrderListPageDto
+/** @deprecated Use providerOrderListItemDtoSchema. */
+export const awaitingPaymentOrderDtoSchema = providerOrderListItemDtoSchema
+/** @deprecated Use providerOrderListPageDtoSchema. */
+export const awaitingPaymentPageDtoSchema = providerOrderListPageDtoSchema
