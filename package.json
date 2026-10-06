@@ -22,10 +22,12 @@
     "db:seed": "npm run db:seed -w apps/api",
     "e2e:db": "npm run e2e:db -w apps/api",
     "e2e:api": "npm run e2e:api -w apps/api",
-    "e2e:web": "npm run e2e:web -w apps/web"
+    "e2e:web": "npm run e2e:web -w apps/web",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
+    "@playwright/test": "^1.63.0",
     "@types/node": "^26.6.4",
     "concurrently": "^10.0.5",
     "eslint": "^9.39.5",

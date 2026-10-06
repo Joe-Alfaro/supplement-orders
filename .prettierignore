@@ -4,3 +4,6 @@ dist/
 node_modules/
 package-lock.json
 apps/api/drizzle/meta/
+test-results/
+playwright-report/
+blob-report/
