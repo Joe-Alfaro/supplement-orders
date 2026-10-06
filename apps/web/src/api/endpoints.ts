@@ -15,7 +15,6 @@ import type {
   PayOrderRequest,
   ProductPageDto,
   ProviderOrderDetailDto,
-  ProviderOrderListPageDto,
   ReplaceOrderLinesRequest,
   UserDto,
 } from '@supplement-orders/domain'
@@ -76,18 +75,6 @@ export function listOrders(query: ListOrdersQuery = {}) {
   const search =
     query.patientId === undefined ? '' : `?patientId=${query.patientId}`
   return request<OrderSummaryDto[]>('GET', `/orders${search}`)
-}
-
-/** The provider's pending_payment orders, one page, oldest sent first. */
-export function listAwaitingPayment(
-  query: Pick<ListOrdersQuery, 'offset' | 'limit'> = {},
-) {
-  const search = listQueryString(query)
-  const params = search ? `&${search.slice(1)}` : ''
-  return request<ProviderOrderListPageDto>(
-    'GET',
-    `/orders?status=pending_payment${params}`,
-  )
 }
 
 export function createOrder(patientId: number) {
