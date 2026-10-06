@@ -30,8 +30,11 @@ import { orders } from '../db/schema'
 import { createInternalTestContext } from '../testing/harness'
 import type { InternalTestContext } from '../testing/harness'
 
-// Revision 8 HTTP contract. The domain types landed first; this file stays red
-// until DELETE, reopen, the provider status page, and latestStatus are implemented.
+// Revision 8 HTTP contract for delete, reopen, the provider order page, and
+// latestStatus. Cancel is pending_payment only; a draft is deleted, not
+// cancelled. A cancelled order with no sentAt is a legacy row (revision 6
+// could cancel drafts) and is inserted here by writing the columns, not by
+// POST /cancel.
 //
 // DELETE /api/orders/:id is 204 with no body for the provider's own draft. GET
 // then is 404, and the order is absent from GET /api/orders?status=draft.
@@ -54,9 +57,10 @@ import type { InternalTestContext } from '../testing/harness'
 // or all mixed with a status is 400 on status. Exactly pending_payment (one
 // status after de-duplicating) is oldest sentAt first, then id. Every other
 // selection, including all and any multi-status set, is most recent activity
-// first (latest of paidAt, cancelledAt, sentAt, createdAt), then id
-// descending. totalCents and sentAt are null for drafts and for orders
-// cancelled before sending. A bad offset or limit is 400 naming that field.
+// first, then id descending. Activity is the first stamp that is set, in the
+// order paidAt, cancelledAt, sentAt, createdAt. totalCents and sentAt are null
+// for drafts and for orders cancelled before sending. A bad offset or limit is
+// 400 naming that field.
 // Without status, the provider array and the patient array are unchanged. A
 // patient who passes status is 403.
 //
@@ -704,6 +708,22 @@ function reopenOrder(orderId: number, userId?: number) {
   return request.set(USER_ID_HEADER, String(userId))
 }
 
+async function markCancelledUnsent(
+  orderId: number,
+  clock: { cancelledAt: string; createdAt?: string },
+): Promise<void> {
+  await context()
+    .db.update(orders)
+    .set({
+      status: 'cancelled',
+      cancelledAt: new Date(clock.cancelledAt),
+      ...(clock.createdAt === undefined
+        ? {}
+        : { createdAt: new Date(clock.createdAt) }),
+    })
+    .where(eq(orders.id, orderId))
+}
+
 async function stampOrder(orderId: number, clock: OrderClock): Promise<void> {
   await context()
     .db.update(orders)
@@ -819,8 +839,8 @@ describe('DELETE /api/orders/:id', () => {
     const cancelled = await cancelOrder((await placePayableOrder()).detail.id)
     expect(cancelled.status).toBe('cancelled')
     expect(cancelled.sentAt).not.toBeNull()
-    const cancelledDraft = await cancelOrder((await savePricedDraft()).id)
-    expect(cancelledDraft.sentAt).toBeNull()
+    const cancelledDraft = await savePricedDraft()
+    await markCancelledUnsent(cancelledDraft.id, { cancelledAt: APR })
 
     const pendingDelete = await deleteOrder(
       pending.detail.id,
@@ -865,7 +885,10 @@ describe('DELETE /api/orders/:id', () => {
     )
     expect((await getProviderOrder(paid.detail.id)).status).toBe('paid')
     expect((await getProviderOrder(cancelled.id)).status).toBe('cancelled')
-    expect((await getProviderOrder(cancelledDraft.id)).status).toBe('cancelled')
+    const unsent = await getProviderOrder(cancelledDraft.id)
+    expect(unsent.status).toBe('cancelled')
+    expect(unsent.sentAt).toBeNull()
+    expect(unsent.cancelledAt).toBe(APR)
   })
 
   it('forbids a patient and another provider, and rejects an unknown user', async () => {
@@ -1084,7 +1107,8 @@ describe('GET /api/orders?status=', () => {
       (await placePayableOrder()).detail.id,
     )
     const draftLate = await savePricedDraft()
-    const unsent = await cancelOrder((await savePricedDraft()).id)
+    const unsent = await savePricedDraft()
+    await markCancelledUnsent(unsent.id, { cancelledAt: APR })
     const paidOld = await placePaid()
 
     await stampOrder(paidLow.detail.id, {
@@ -1100,22 +1124,23 @@ describe('GET /api/orders?status=', () => {
       cancelledAt: JUL,
     })
     await stampOrder(draftLate.id, { createdAt: FEB })
-    await stampOrder(unsent.id, { createdAt: JAN, cancelledAt: APR })
+    await stampOrder(unsent.id, { createdAt: JAN })
     await stampOrder(paidOld.detail.id, {
       createdAt: JAN,
       sentAt: AUG,
       paidAt: MAR,
     })
 
-    // paidOld's latest stamp is its August sentAt, which outranks its March
-    // paidAt and the July cancellation. The two drafts share February and
-    // break that tie by id descending.
+    // Activity is the first stamp that is set: paidAt, else cancelledAt, else
+    // sentAt, else createdAt. paidOld was sent in August and paid in March, so
+    // its activity is the March paidAt, after the April unsent cancellation.
+    // The two drafts share February and break that tie by id descending.
     const expectedAll = [
       paidLow.detail.id,
-      paidOld.detail.id,
       cancelledHigh.id,
       pendingMid.detail.id,
       unsent.id,
+      paidOld.detail.id,
       draftLate.id,
       draftMid.id,
     ]
@@ -1396,7 +1421,8 @@ describe('GET /api/orders?status=', () => {
 describe('GET /api/orders without status', () => {
   it('keeps the provider array and the patient array, and blocks a patient status filter', async () => {
     const openDraft = await savePricedDraft()
-    const cancelledDraft = await cancelOrder((await createDraft()).id)
+    const cancelledDraft = await createDraft()
+    await markCancelledUnsent(cancelledDraft.id, { cancelledAt: APR })
     const pending = await placePayableOrder()
     const cancelled = await cancelOrder((await placePayableOrder()).detail.id)
     const paid = await placePaid()
