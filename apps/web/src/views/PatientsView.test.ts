@@ -70,6 +70,7 @@ describe('PatientsView', () => {
       path: '/patients',
     })
     expect(await screen.findByText('Showing 1–25 of 312')).toBeInTheDocument()
+    expect(screen.getByRole('table', { name: 'Patients' })).toBeInTheDocument()
 
     await user.type(
       screen.getByRole('searchbox', {

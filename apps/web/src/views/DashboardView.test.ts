@@ -1,5 +1,5 @@
 import type { DashboardDto, ProductDto } from '@supplement-orders/domain'
-import { screen } from '@testing-library/vue'
+import { screen, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
@@ -90,5 +90,28 @@ describe('DashboardView', () => {
     await vi.waitFor(() =>
       expect(router.currentRoute.value.path).toBe('/orders/7'),
     )
+  })
+
+  it('names each stat tile and table so they can be found by role', async () => {
+    await renderWithRouter(DashboardView)
+    await screen.findByText('Vitamin D3')
+
+    expect(
+      within(screen.getByRole('group', { name: 'GMV' })).getByText('$69.51'),
+    ).toBeInTheDocument()
+    expect(
+      within(
+        screen.getByRole('group', { name: 'Your margin earned' }),
+      ).getByText('$34.99'),
+    ).toBeInTheDocument()
+    expect(
+      within(screen.getByRole('group', { name: 'Processing fees' })).getByText(
+        '$0.52',
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('table', { name: 'Paid orders' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('table', { name: 'Inventory' })).toBeInTheDocument()
   })
 })

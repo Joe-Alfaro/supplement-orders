@@ -42,7 +42,7 @@ function openOrder(event: DataTableRowClickEvent<PatientOrderSummaryDto>) {
       data-key="id"
       selection-mode="single"
       :meta-key-selection="false"
-      aria-label="My orders"
+      :table-props="{ 'aria-label': 'My orders' }"
       @row-click="openOrder"
     >
       <Column header="Created">

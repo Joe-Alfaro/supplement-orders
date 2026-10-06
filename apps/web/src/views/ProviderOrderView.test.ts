@@ -80,6 +80,10 @@ describe('ProviderOrderView', () => {
       props: { orderId: '42' },
     })
     await screen.findByText('Total of entries')
+    expect(
+      screen.getByRole('table', { name: 'Order lines' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('table', { name: 'Ledger' })).toBeInTheDocument()
 
     expect(
       screen.getByRole('cell', { name: 'Processing fee' }),

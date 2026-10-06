@@ -160,6 +160,9 @@ describe('OrderBuilderView', () => {
 
     expect(screen.getByTestId('product-0')).toHaveTextContent('Vitamin D3')
     await fill(user, 'Patient price for line 1', '12.05')
+    expect(
+      screen.getByRole('table', { name: 'Order lines' }),
+    ).toBeInTheDocument()
 
     const hint = screen.getByTestId('min-0')
     expect(hint).toHaveTextContent('Min $12.10')
@@ -361,6 +364,9 @@ describe('Add-product modal', () => {
     await openAddProduct(user)
 
     await within(dialog()).findByText('Already added')
+    expect(
+      within(dialog()).getByRole('table', { name: 'Products' }),
+    ).toBeInTheDocument()
     const added = productRow('Vitamin D3')
     expect(added).toHaveClass('row-unavailable')
     expect(added).toHaveTextContent('Already added')

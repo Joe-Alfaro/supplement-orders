@@ -70,7 +70,7 @@ function orderLink(order: ProviderOrderSummaryDto) {
       data-key="id"
       selection-mode="single"
       :meta-key-selection="false"
-      aria-label="Orders"
+      :table-props="{ 'aria-label': 'Orders' }"
       @row-click="openOrder"
     >
       <Column header="Created">

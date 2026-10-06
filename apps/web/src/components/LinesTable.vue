@@ -16,7 +16,7 @@ defineProps<Props>()
 </script>
 
 <template>
-  <DataTable :value="lines" aria-label="Order lines">
+  <DataTable :value="lines" :table-props="{ 'aria-label': 'Order lines' }">
     <Column header="Product">
       <template #body="{ data }">{{ data.productName ?? '—' }}</template>
     </Column>

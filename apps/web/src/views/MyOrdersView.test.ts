@@ -51,6 +51,9 @@ describe('MyOrdersView', () => {
     const user = userEvent.setup()
     const { router } = await renderWithRouter(MyOrdersView)
     const row = await screen.findByRole('row', { name: /Dr. Maya Rivera/ })
+    expect(screen.getByRole('table', { name: 'My orders' })).toContainElement(
+      row,
+    )
 
     // The first row is the table's single tab stop; arrow keys move between rows.
     expect(row).toHaveAttribute('tabindex', '0')

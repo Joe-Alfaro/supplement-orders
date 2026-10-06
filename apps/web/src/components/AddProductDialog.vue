@@ -224,7 +224,7 @@ function addToOrder() {
           :meta-key-selection="false"
           :row-class="rowClass"
           :loading="search.loading.value"
-          aria-label="Products"
+          :table-props="{ 'aria-label': 'Products' }"
           @page="onPage"
           @row-click="onRowClick"
         >

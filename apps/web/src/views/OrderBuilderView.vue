@@ -186,7 +186,7 @@ function rowIndex(row: EvaluatedLine) {
       :value="evaluated"
       data-key="line.key"
       class="builder"
-      aria-label="Order lines"
+      :table-props="{ 'aria-label': 'Order lines' }"
     >
       <Column header="Product">
         <template #body="{ data: row }">
