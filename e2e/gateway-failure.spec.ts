@@ -2,7 +2,9 @@ import { expect, test } from '@playwright/test'
 import {
   addProduct,
   openDashboard,
+  openOrdersViaDashboard,
   openPatient,
+  PAID_ORDERS_LINK,
   readSalesTiles,
   signIn,
   signOut,
@@ -64,10 +66,12 @@ test('a simulated gateway failure leaves the order payable and the dashboard unc
     await openDashboard(page)
     const after = await readSalesTiles(page)
     expect(after).toEqual(recorded.baseline)
+    await openOrdersViaDashboard(page, PAID_ORDERS_LINK, 'paid')
     await expect(
-      page.getByRole('table', { name: 'Paid orders' }).getByRole('row', {
-        name: PATIENT,
-      }),
+      page
+        .getByRole('table', { name: 'Orders', exact: true })
+        .getByRole('row', { name: PATIENT }),
     ).toHaveCount(0)
+    await expect(page.getByText('No paid orders.')).toBeVisible()
   })
 })
