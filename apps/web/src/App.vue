@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import Button from 'primevue/button'
+import Message from 'primevue/message'
 import { RouterLink, RouterView, useRouter } from 'vue-router'
 import { notice, roleLabel, useCurrentUser } from './user'
 
@@ -23,13 +25,11 @@ async function onSignOut() {
     </nav>
     <span class="signed-in">
       Signed in as {{ currentUser.name }} ({{ roleLabel(currentUser.role) }}) ·
-      <button type="button" class="link-button" @click="onSignOut">
-        Sign out
-      </button>
+      <Button label="Sign out" link size="small" @click="onSignOut" />
     </span>
   </header>
-  <div aria-live="polite">
-    <p v-if="notice" class="banner">{{ notice.message }}</p>
+  <div aria-live="polite" class="notice">
+    <Message v-if="notice" severity="info">{{ notice.message }}</Message>
   </div>
   <main>
     <RouterView />

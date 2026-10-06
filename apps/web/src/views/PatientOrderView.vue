@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import type { PatientOrderDetailDto } from '@supplement-orders/domain'
+import Button from 'primevue/button'
+import Checkbox from 'primevue/checkbox'
 import { onMounted, ref } from 'vue'
 import { ApiRequestError, errorMessage, getOrder, payOrder } from '../api'
 import {
@@ -74,27 +76,28 @@ async function pay() {
     <TotalsSummary :total-cents="order.totalCents" />
 
     <section v-if="order.status === 'pending_payment'" aria-label="Payment">
-      <p v-if="isDev">
-        <label>
-          <input v-model="simulateFailure" type="checkbox" />
-          Simulate gateway failure (dev only)
-        </label>
-      </p>
-      <p>
-        <button
-          type="button"
-          class="primary"
-          :disabled="paying"
-          :aria-busy="paying"
-          @click="pay"
+      <div v-if="isDev" class="checkbox-field">
+        <Checkbox
+          v-model="simulateFailure"
+          input-id="simulate-failure"
+          binary
+        />
+        <label for="simulate-failure"
+          >Simulate gateway failure (dev only)</label
         >
-          <span v-if="paying" class="spinner" aria-hidden="true"></span>
-          {{
+      </div>
+      <p>
+        <Button
+          :label="
             paying
               ? `Paying ${formatCents(order.totalCents)}…`
               : `Pay ${formatCents(order.totalCents)}`
-          }}
-        </button>
+          "
+          :loading="paying"
+          :disabled="paying"
+          :aria-busy="paying"
+          @click="pay"
+        />
       </p>
       <div aria-live="polite">
         <ErrorBanner v-if="payError" :message="`Payment failed: ${payError}`" />

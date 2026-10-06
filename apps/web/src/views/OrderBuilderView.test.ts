@@ -100,9 +100,20 @@ function draftDetail(
 // Vitamin D3 costs $12.00, so its minimum price is 1200 + ceil(75 * 1200 / 9925) = $12.10.
 
 function dialogElement() {
-  const dialog = document.querySelector('dialog')
-  if (!dialog) throw new Error('no dialog')
-  return dialog
+  return screen.getByRole('dialog')
+}
+
+/** The picker row for a product, found through its status cell. */
+function productRow(productId: number) {
+  const row = within(dialogElement())
+    .getByTestId(`product-status-${productId}`)
+    .closest('tr')
+  if (!row) throw new Error(`no row for product ${productId}`)
+  return row
+}
+
+async function expectDialogClosed() {
+  await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
 }
 
 async function openAddProduct() {
@@ -341,15 +352,16 @@ describe('Add-product modal', () => {
     await addProduct('Vitamin D3')
     await openAddProduct()
 
-    const added = await within(dialogElement()).findByTestId('product-row-1')
-    expect(added.getAttribute('aria-disabled')).toBe('true')
+    await within(dialogElement()).findByTestId('product-status-1')
+    const added = productRow(1)
+    expect(added.classList.contains('row-unavailable')).toBe(true)
     expect(added.textContent).toContain('Already added')
-    const outOfStock = within(dialogElement()).getByTestId('product-row-3')
-    expect(outOfStock.getAttribute('aria-disabled')).toBe('true')
+    const outOfStock = productRow(3)
+    expect(outOfStock.classList.contains('row-unavailable')).toBe(true)
     expect(outOfStock.textContent).toContain('Out of stock')
 
     await fireEvent.click(added)
-    await fireEvent.keyDown(outOfStock, { key: 'Enter' })
+    await fireEvent.keyDown(outOfStock, { key: 'Enter', code: 'Enter' })
     expect(
       screen.getByRole('heading', { name: /choose a product/ }),
     ).toBeTruthy()
@@ -363,8 +375,8 @@ describe('Add-product modal', () => {
       expect(within(dialogElement()).queryByText('Vitamin D3')).toBeNull(),
     )
 
-    const row = within(dialogElement()).getByTestId('product-row-2')
-    await fireEvent.keyDown(row, { key: 'Enter' })
+    const row = productRow(2)
+    await fireEvent.keyDown(row, { key: 'Enter', code: 'Enter' })
     expect(
       await screen.findByRole('heading', { name: 'Add Magnesium' }),
     ).toBeTruthy()
@@ -380,7 +392,7 @@ describe('Add-product modal', () => {
     await renderBuilder()
     await addProduct('Vitamin D3', { qty: '3', margin: '40' })
 
-    expect(dialogElement().hasAttribute('open')).toBe(false)
+    await expectDialogClosed()
     expect(screen.getByTestId('product-0').textContent).toBe('Vitamin D3')
     expect(inputValue('Quantity for line 1')).toBe('3')
     expect(inputValue('Patient price for line 1')).toBe('20.00')
@@ -407,17 +419,26 @@ describe('Add-product modal', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Add to order' }))
 
     expect(screen.getByText('Price must be at least $12.10')).toBeTruthy()
-    expect(dialogElement().hasAttribute('open')).toBe(true)
+    expect(dialogElement()).toBeTruthy()
     expect(screen.queryByTestId('product-0')).toBeNull()
   })
 
   it('closes on Escape and returns focus to Add line', async () => {
     await renderBuilder()
     await openAddProduct()
+    // Escape is live once the dialog has finished opening and focused search.
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByLabelText('Search products'),
+      ),
+    )
 
-    await fireEvent.keyDown(dialogElement(), { key: 'Escape' })
+    await fireEvent.keyDown(screen.getByLabelText('Search products'), {
+      key: 'Escape',
+      code: 'Escape',
+    })
 
-    expect(dialogElement().hasAttribute('open')).toBe(false)
+    await expectDialogClosed()
     await vi.waitFor(() =>
       expect(document.activeElement).toBe(
         screen.getByRole('button', { name: 'Add line' }),
@@ -463,5 +484,35 @@ describe('OrderBuilderView patient and stock', () => {
     await fireEvent.update(screen.getByLabelText('Quantity for line 1'), '4')
     expect(screen.getByText('Only 3 in stock')).toBeTruthy()
     expect(sendButton()).toHaveProperty('disabled', true)
+  })
+
+  it('keeps price and margin as text inputs holding integer cents (no InputNumber)', async () => {
+    vi.mocked(api.createOrder).mockResolvedValue(draftDetail([]))
+    vi.mocked(api.replaceOrderLines).mockResolvedValue(draftDetail([]))
+    const { container } = await renderBuilder()
+    await openAddProduct()
+    await chooseProduct('Vitamin D3')
+
+    // Step 2 of the modal: plain text inputs, no PrimeVue InputNumber.
+    expect(document.querySelector('.p-inputnumber')).toBeNull()
+    const modalPrice = screen.getByLabelText('Patient price (each)')
+    expect(modalPrice.getAttribute('type') ?? 'text').toBe('text')
+    await fireEvent.update(modalPrice, '12.50')
+    expect(inputValue('Patient price (each)')).toBe('12.50')
+    await fireEvent.click(screen.getByRole('button', { name: 'Add to order' }))
+
+    const price = screen.getByLabelText('Patient price for line 1')
+    const margin = screen.getByLabelText('Margin % for line 1')
+    expect(container.querySelector('.p-inputnumber')).toBeNull()
+    expect(price.getAttribute('type') ?? 'text').toBe('text')
+    expect(margin.getAttribute('type') ?? 'text').toBe('text')
+    expect(inputValue('Patient price for line 1')).toBe('12.50')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Save draft' }))
+    await vi.waitFor(() =>
+      expect(api.replaceOrderLines).toHaveBeenCalledWith(99, [
+        { productId: 1, quantity: 1, unitPriceCents: 1250 },
+      ]),
+    )
   })
 })

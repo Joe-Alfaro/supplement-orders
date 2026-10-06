@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import Button from 'primevue/button'
+import Message from 'primevue/message'
+
 interface Props {
   message: string
   /** Shows a Retry button when set. */
@@ -10,8 +13,15 @@ const emit = defineEmits<{ retry: [] }>()
 </script>
 
 <template>
-  <div class="banner banner-error" role="alert">
+  <Message severity="error" class="banner">
     <span>{{ message }}</span>
-    <button v-if="retryable" type="button" @click="emit('retry')">Retry</button>
-  </div>
+    <Button
+      v-if="retryable"
+      label="Retry"
+      size="small"
+      severity="secondary"
+      class="banner-action"
+      @click="emit('retry')"
+    />
+  </Message>
 </template>

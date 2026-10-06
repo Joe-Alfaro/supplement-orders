@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import type { PatientOrderSummaryDto } from '@supplement-orders/domain'
+import Column from 'primevue/column'
+import DataTable, { type DataTableRowClickEvent } from 'primevue/datatable'
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { listOrders } from '../api'
@@ -23,8 +25,8 @@ onMounted(load)
 const router = useRouter()
 
 // Several orders can share a date, so the whole row is the link.
-function openOrder(orderId: number) {
-  router.push(`/my-orders/${orderId}`)
+function openOrder(event: DataTableRowClickEvent<PatientOrderSummaryDto>) {
+  router.push(`/my-orders/${event.data.id}`)
 }
 </script>
 
@@ -34,30 +36,29 @@ function openOrder(orderId: number) {
   <ErrorBanner v-else-if="error" :message="error" retryable @retry="load" />
   <template v-else-if="orders">
     <p v-if="orders.length === 0">You have no orders yet.</p>
-    <table v-else>
-      <thead>
-        <tr>
-          <th scope="col">Created</th>
-          <th scope="col">Provider</th>
-          <th scope="col">Total</th>
-          <th scope="col">Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr
-          v-for="order in orders"
-          :key="order.id"
-          class="row-link"
-          tabindex="0"
-          @click="openOrder(order.id)"
-          @keydown.enter="openOrder(order.id)"
-        >
-          <td>{{ formatDate(order.createdAt) }}</td>
-          <td>{{ order.providerName }}</td>
-          <td><MoneyText :cents="order.totalCents" /></td>
-          <td><StatusBadge :status="order.status" /></td>
-        </tr>
-      </tbody>
-    </table>
+    <DataTable
+      v-else
+      :value="orders"
+      data-key="id"
+      selection-mode="single"
+      :meta-key-selection="false"
+      aria-label="My orders"
+      @row-click="openOrder"
+    >
+      <Column header="Created">
+        <template #body="{ data }">{{ formatDate(data.createdAt) }}</template>
+      </Column>
+      <Column field="providerName" header="Provider" />
+      <Column header="Total">
+        <template #body="{ data }"
+          ><MoneyText :cents="data.totalCents"
+        /></template>
+      </Column>
+      <Column header="Status">
+        <template #body="{ data }"
+          ><StatusBadge :status="data.status"
+        /></template>
+      </Column>
+    </DataTable>
   </template>
 </template>

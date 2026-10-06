@@ -97,6 +97,14 @@ export function usePagedSearch<T>(
     return load()
   }
 
+  /** Jump to a page by its first row, e.g. from DataTable's `@page`. */
+  function goTo(first: number) {
+    const target = Math.max(0, first)
+    if (target === offset.value) return
+    offset.value = target
+    return load()
+  }
+
   onScopeDispose(cancelPending)
 
   return {
@@ -116,5 +124,6 @@ export function usePagedSearch<T>(
     clear,
     next,
     previous,
+    goTo,
   }
 }

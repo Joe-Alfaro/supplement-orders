@@ -69,7 +69,11 @@ describe('stub login', () => {
   it('signs in, stores the user, and lands on the persona home', async () => {
     const router = await renderApp('/login')
 
-    await fireEvent.update(await screen.findByLabelText('User'), '2')
+    // PrimeVue Select: open the combobox, then pick the option (on mousedown).
+    await fireEvent.click(await screen.findByRole('combobox', { name: 'User' }))
+    await fireEvent.mouseDown(
+      await screen.findByRole('option', { name: 'Jordan Lee (Patient)' }),
+    )
     await fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
 
     await vi.waitFor(() =>

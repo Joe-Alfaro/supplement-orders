@@ -1,16 +1,26 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import Button from 'primevue/button'
+import Message from 'primevue/message'
+import Select from 'primevue/select'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ErrorBanner } from '../components'
 import { homePathFor, roleLabel, useCurrentUser } from '../user'
 
 const router = useRouter()
 const { users, loadError, ensureUsersLoaded, signIn } = useCurrentUser()
-const selectedId = ref('')
+const selectedId = ref<number | null>(null)
+
+const options = computed(() =>
+  users.value.map((user) => ({
+    id: user.id,
+    label: `${user.name} (${roleLabel(user.role)})`,
+  })),
+)
 
 async function submit() {
   const user = users.value.find(
-    (candidate) => String(candidate.id) === selectedId.value,
+    (candidate) => candidate.id === selectedId.value,
   )
   if (!user) return
   signIn(user.id)
@@ -21,30 +31,32 @@ async function submit() {
 <template>
   <section class="login" aria-labelledby="login-heading">
     <h1 id="login-heading">Sign in</h1>
-    <p class="banner" role="note">
+    <Message severity="info" :closable="false">
       Authentication is stubbed for this demo: choose a user to continue.
-    </p>
+    </Message>
     <ErrorBanner
       v-if="loadError"
       :message="`Could not load users: ${loadError}`"
       retryable
       @retry="ensureUsersLoaded"
     />
-    <form @submit.prevent="submit">
-      <p>
-        <label for="login-user">User</label><br />
-        <select id="login-user" v-model="selectedId">
-          <option value="" disabled>Choose a user…</option>
-          <option v-for="user in users" :key="user.id" :value="String(user.id)">
-            {{ user.name }} ({{ roleLabel(user.role) }})
-          </option>
-        </select>
-      </p>
-      <p>
-        <button type="submit" class="primary" :disabled="selectedId === ''">
-          Sign in
-        </button>
-      </p>
+    <form class="login-form" @submit.prevent="submit">
+      <div class="field">
+        <label id="login-user-label" for="login-user">User</label>
+        <Select
+          v-model="selectedId"
+          input-id="login-user"
+          aria-labelledby="login-user-label"
+          :options="options"
+          option-label="label"
+          option-value="id"
+          placeholder="Choose a user…"
+          filter
+          filter-placeholder="Search users"
+          fluid
+        />
+      </div>
+      <Button type="submit" label="Sign in" :disabled="selectedId === null" />
     </form>
   </section>
 </template>

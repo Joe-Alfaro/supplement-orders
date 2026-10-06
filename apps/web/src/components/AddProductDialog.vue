@@ -1,5 +1,16 @@
 <script setup lang="ts">
 import type { ProductDto } from '@supplement-orders/domain'
+import Button from 'primevue/button'
+import Column from 'primevue/column'
+import DataTable, {
+  type DataTablePageEvent,
+  type DataTableRowClickEvent,
+} from 'primevue/datatable'
+import Dialog from 'primevue/dialog'
+import IconField from 'primevue/iconfield'
+import InputIcon from 'primevue/inputicon'
+import InputText from 'primevue/inputtext'
+import Message from 'primevue/message'
 import { computed, nextTick, ref, watch } from 'vue'
 import { searchProducts } from '../api'
 import {
@@ -14,7 +25,7 @@ import { formatCents } from '../money'
 import { usePagedSearch } from '../search'
 import ErrorBanner from './ErrorBanner.vue'
 import MoneyText from './MoneyText.vue'
-import PaginationControls from './PaginationControls.vue'
+import PageSummary from './PageSummary.vue'
 
 interface Props {
   open: boolean
@@ -24,10 +35,6 @@ interface Props {
 
 const props = defineProps<Props>()
 const emit = defineEmits<{ close: []; add: [line: NewLine] }>()
-
-const dialog = ref<HTMLDialogElement | null>(null)
-const searchInput = ref<HTMLInputElement | null>(null)
-const quantityInputEl = ref<HTMLInputElement | null>(null)
 
 const search = usePagedSearch(searchProducts)
 
@@ -67,48 +74,47 @@ const priceError = computed(
     (attempted.value ? belowMinimumError.value : null),
 )
 
-async function focusSearch() {
+const title = computed(() =>
+  step.value === 2 && chosen.value
+    ? `Add ${chosen.value.name}`
+    : 'Add product: choose a product',
+)
+
+async function focusById(id: string) {
   await nextTick()
-  searchInput.value?.focus()
-}
-
-function showDialog() {
-  const el = dialog.value
-  if (!el || el.open) return
-  // jsdom lacks showModal; the open attribute is enough there.
-  if (typeof el.showModal === 'function') {
-    el.showModal()
-    return
-  }
-  el.setAttribute('open', '')
-}
-
-function hideDialog() {
-  const el = dialog.value
-  if (!el?.open) return
-  if (typeof el.close === 'function') {
-    el.close()
-    return
-  }
-  el.removeAttribute('open')
+  document.getElementById(id)?.focus()
 }
 
 watch(
   () => props.open,
-  async (open) => {
-    if (!open) {
-      hideDialog()
-      return
-    }
+  (open) => {
+    if (!open) return
     step.value = 1
     chosen.value = null
-    search.query.value = ''
-    await nextTick()
-    showDialog()
-    focusSearch()
     search.clear()
   },
 )
+
+/**
+ * v-model:visible from the Dialog: the X button closes through here. Escape is
+ * handled on the dialog root instead of PrimeVue's document listener, so it
+ * only ever closes this dialog and behaves the same in tests.
+ */
+function onVisible(visible: boolean) {
+  if (!visible) emit('close')
+}
+
+function onRowClick(event: DataTableRowClickEvent<ProductDto>) {
+  choose(event.data)
+}
+
+function onPage(event: DataTablePageEvent) {
+  search.goTo(event.first)
+}
+
+function rowClass(product: ProductDto) {
+  return unavailableReason(product) ? 'row-unavailable' : ''
+}
 
 async function choose(product: ProductDto) {
   if (unavailableReason(product)) return
@@ -119,13 +125,12 @@ async function choose(product: ProductDto) {
   source.value = 'price'
   attempted.value = false
   step.value = 2
-  await nextTick()
-  quantityInputEl.value?.focus()
+  focusById('add-product-qty')
 }
 
 function back() {
   step.value = 1
-  focusSearch()
+  focusById('add-product-search')
 }
 
 function onPrice(value: string) {
@@ -157,39 +162,35 @@ function addToOrder() {
     source: source.value,
   })
 }
-
-function inputValue(event: Event) {
-  return (event.target as HTMLInputElement).value
-}
-
-/** Escape fires `cancel` on a native modal dialog; let the parent close it. */
-function onCancel(event: Event) {
-  event.preventDefault()
-  emit('close')
-}
 </script>
 
 <template>
-  <dialog
-    ref="dialog"
-    class="modal"
-    aria-labelledby="add-product-heading"
-    @cancel="onCancel"
-    @keydown.esc.prevent="emit('close')"
+  <Dialog
+    :visible="open"
+    modal
+    :header="title"
+    :draggable="false"
+    :style="{ width: 'min(56rem, 95vw)' }"
+    :pt="{ title: { role: 'heading', 'aria-level': 2 } }"
+    :close-on-escape="false"
+    @update:visible="onVisible"
+    @keydown.esc.stop="emit('close')"
   >
     <template v-if="step === 1">
-      <h2 id="add-product-heading">Add product: choose a product</h2>
-      <p class="search">
-        <label for="add-product-search">Search products</label><br />
-        <input
-          id="add-product-search"
-          ref="searchInput"
-          type="search"
-          placeholder="Name or SKU"
-          :value="search.query.value"
-          @input="search.setQuery(inputValue($event))"
-        />
-      </p>
+      <div class="search">
+        <label for="add-product-search">Search products</label>
+        <IconField>
+          <InputIcon class="pi pi-search" />
+          <InputText
+            id="add-product-search"
+            type="search"
+            placeholder="Name or SKU"
+            autofocus
+            :model-value="search.query.value"
+            @update:model-value="search.setQuery($event ?? '')"
+          />
+        </IconField>
+      </div>
       <ErrorBanner
         v-if="search.error.value"
         :message="search.error.value"
@@ -204,55 +205,58 @@ function onCancel(event: Event) {
           >
           <template v-else>No products.</template>
         </p>
-        <table v-else aria-label="Products">
-          <thead>
-            <tr>
-              <th scope="col">Name</th>
-              <th scope="col">SKU</th>
-              <th scope="col">Wholesale cost</th>
-              <th scope="col">In stock</th>
-              <th scope="col"><span class="visually-hidden">Status</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="product in search.items.value"
-              :key="product.id"
-              :class="{ 'row-link': !unavailableReason(product) }"
-              :tabindex="unavailableReason(product) ? undefined : 0"
-              :aria-disabled="unavailableReason(product) ? 'true' : undefined"
-              :data-testid="`product-row-${product.id}`"
-              @click="choose(product)"
-              @keydown.enter.prevent="choose(product)"
-            >
-              <td>{{ product.name }}</td>
-              <td>
-                <code>{{ product.sku }}</code>
-              </td>
-              <td><MoneyText :cents="product.cogsCents" /></td>
-              <td class="num">{{ product.stockQuantity }}</td>
-              <td class="small">{{ unavailableReason(product) }}</td>
-            </tr>
-          </tbody>
-        </table>
-        <PaginationControls
-          :offset="search.offset.value"
-          :count="search.items.value.length"
-          :total="search.total.value"
-          :can-previous="search.canPrevious.value"
-          :can-next="search.canNext.value"
-          label="products"
-          @previous="search.previous"
-          @next="search.next"
-        />
+        <DataTable
+          v-else
+          :value="search.items.value"
+          data-key="id"
+          lazy
+          paginator
+          :rows="search.limit"
+          :first="search.offset.value"
+          :total-records="search.total.value"
+          paginator-template="PrevPageLink NextPageLink"
+          selection-mode="single"
+          :meta-key-selection="false"
+          :row-class="rowClass"
+          :loading="search.loading.value"
+          aria-label="Products"
+          @page="onPage"
+          @row-click="onRowClick"
+        >
+          <template #paginatorstart>
+            <PageSummary
+              :offset="search.offset.value"
+              :count="search.items.value.length"
+              :total="search.total.value"
+            />
+          </template>
+          <Column field="name" header="Name" />
+          <Column header="SKU">
+            <template #body="{ data }">
+              <code>{{ data.sku }}</code>
+            </template>
+          </Column>
+          <Column header="Wholesale cost">
+            <template #body="{ data }">
+              <MoneyText :cents="data.cogsCents" />
+            </template>
+          </Column>
+          <Column field="stockQuantity" header="In stock" />
+          <Column header="Status">
+            <template #body="{ data }">
+              <span class="small" :data-testid="`product-status-${data.id}`">{{
+                unavailableReason(data)
+              }}</span>
+            </template>
+          </Column>
+        </DataTable>
       </template>
-      <p class="actions">
-        <button type="button" @click="emit('close')">Cancel</button>
-      </p>
+      <div class="actions">
+        <Button label="Cancel" severity="secondary" @click="emit('close')" />
+      </div>
     </template>
 
     <form v-else-if="chosen" @submit.prevent="addToOrder">
-      <h2 id="add-product-heading">Add {{ chosen.name }}</h2>
       <dl class="facts">
         <dt>SKU</dt>
         <dd>
@@ -271,86 +275,86 @@ function onCancel(event: Event) {
         </dd>
       </dl>
 
-      <p>
-        <label for="add-product-qty">Qty</label><br />
-        <input
-          id="add-product-qty"
-          ref="quantityInputEl"
-          class="qty"
-          type="number"
-          min="1"
-          step="1"
-          :max="chosen.stockQuantity"
-          :value="quantityInput"
-          :aria-invalid="pricing.errors.quantity ? 'true' : undefined"
-          aria-describedby="add-product-qty-error"
-          @input="quantityInput = inputValue($event)"
-        />
-        <span
-          v-if="pricing.errors.quantity"
-          id="add-product-qty-error"
-          class="field-error"
-          >{{ pricing.errors.quantity }}</span
-        >
-      </p>
-      <p>
-        <label for="add-product-margin">Margin %</label><br />
-        <input
-          id="add-product-margin"
-          class="margin"
-          type="text"
-          inputmode="decimal"
-          placeholder="0.00"
-          :value="marginInput"
-          :aria-invalid="pricing.errors.margin ? 'true' : undefined"
-          aria-describedby="add-product-margin-error"
-          @input="onMargin(inputValue($event))"
-          @blur="marginInput = normalizedMarginInput(marginInput)"
-        /><span aria-hidden="true">%</span>
-        <span
-          v-if="pricing.errors.margin"
-          id="add-product-margin-error"
-          class="field-error"
-          >{{ pricing.errors.margin }}</span
-        >
-      </p>
-      <p>
-        <label for="add-product-price">Patient price (each)</label><br />
-        <span aria-hidden="true">$</span>
-        <input
-          id="add-product-price"
-          class="price"
-          type="text"
-          inputmode="decimal"
-          placeholder="0.00"
-          :value="priceInput"
-          :aria-invalid="
-            pricing.errors.unitPriceCents || pricing.belowMinimum
-              ? 'true'
-              : undefined
-          "
-          aria-describedby="add-product-min add-product-price-error"
-          @input="onPrice(inputValue($event))"
-          @blur="priceInput = normalizedPriceInput(priceInput)"
-        />
-        <span
-          v-if="pricing.minPriceCents !== null"
-          id="add-product-min"
-          class="hint"
-          :class="{ negative: pricing.belowMinimum }"
-        >
-          Min {{ formatCents(pricing.minPriceCents) }}</span
-        >
-      </p>
-      <p aria-live="polite">
-        <span
+      <div class="fields">
+        <div class="field">
+          <label for="add-product-qty">Qty</label>
+          <InputText
+            id="add-product-qty"
+            class="qty"
+            inputmode="numeric"
+            :model-value="quantityInput"
+            :invalid="Boolean(pricing.errors.quantity)"
+            :aria-describedby="
+              pricing.errors.quantity ? 'add-product-qty-error' : undefined
+            "
+            @update:model-value="quantityInput = $event ?? ''"
+          />
+          <Message
+            v-if="pricing.errors.quantity"
+            id="add-product-qty-error"
+            severity="error"
+            size="small"
+            variant="simple"
+            >{{ pricing.errors.quantity }}</Message
+          >
+        </div>
+        <div class="field">
+          <label for="add-product-margin">Margin %</label>
+          <InputText
+            id="add-product-margin"
+            class="margin"
+            inputmode="decimal"
+            placeholder="0.00"
+            :model-value="marginInput"
+            :invalid="Boolean(pricing.errors.margin)"
+            :aria-describedby="
+              pricing.errors.margin ? 'add-product-margin-error' : undefined
+            "
+            @update:model-value="onMargin($event ?? '')"
+            @blur="marginInput = normalizedMarginInput(marginInput)"
+          />
+          <Message
+            v-if="pricing.errors.margin"
+            id="add-product-margin-error"
+            severity="error"
+            size="small"
+            variant="simple"
+            >{{ pricing.errors.margin }}</Message
+          >
+        </div>
+        <div class="field">
+          <label for="add-product-price">Patient price (each)</label>
+          <InputText
+            id="add-product-price"
+            class="price"
+            inputmode="decimal"
+            placeholder="0.00"
+            :model-value="priceInput"
+            :invalid="Boolean(priceError) || pricing.belowMinimum"
+            aria-describedby="add-product-min add-product-price-error"
+            @update:model-value="onPrice($event ?? '')"
+            @blur="priceInput = normalizedPriceInput(priceInput)"
+          />
+          <small
+            v-if="pricing.minPriceCents !== null"
+            id="add-product-min"
+            class="hint"
+            :class="{ negative: pricing.belowMinimum }"
+          >
+            Min {{ formatCents(pricing.minPriceCents) }}</small
+          >
+        </div>
+      </div>
+      <div aria-live="polite">
+        <Message
           v-if="priceError"
           id="add-product-price-error"
-          class="field-error"
+          severity="error"
+          size="small"
+          variant="simple"
+          >{{ priceError }}</Message
         >
-          {{ priceError }}
-        </span>
-      </p>
+      </div>
       <p>
         Line total:
         <MoneyText
@@ -359,11 +363,16 @@ function onCancel(event: Event) {
         />
         <span v-else>—</span>
       </p>
-      <p class="actions">
-        <button type="button" @click="back">Back</button>
-        <button type="submit" class="primary">Add to order</button>
-        <button type="button" @click="emit('close')">Cancel</button>
-      </p>
+      <div class="actions">
+        <Button label="Back" severity="secondary" @click="back" />
+        <Button type="submit" label="Add to order" />
+        <Button
+          label="Cancel"
+          severity="secondary"
+          text
+          @click="emit('close')"
+        />
+      </div>
     </form>
-  </dialog>
+  </Dialog>
 </template>

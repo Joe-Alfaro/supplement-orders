@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import type { ProviderOrderSummaryDto } from '@supplement-orders/domain'
+import Button from 'primevue/button'
+import Column from 'primevue/column'
+import DataTable, { type DataTableRowClickEvent } from 'primevue/datatable'
 import { computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { getPatient, listOrders } from '../api'
 import { ErrorBanner, MoneyText, StatusBadge } from '../components'
 import { formatDate, formatDateOfBirth } from '../format'
@@ -25,6 +29,12 @@ const { data, loading, error, load } = useResource(async () => {
 })
 onMounted(load)
 
+const router = useRouter()
+
+function openOrder(event: DataTableRowClickEvent<ProviderOrderSummaryDto>) {
+  router.push(orderLink(event.data))
+}
+
 function orderLink(order: ProviderOrderSummaryDto) {
   if (order.status === 'draft') {
     return `/patients/${order.patientId}/orders/new?orderId=${order.id}`
@@ -45,38 +55,49 @@ function orderLink(order: ProviderOrderSummaryDto) {
       <dd>{{ data.patient.address }}</dd>
     </dl>
     <p>
-      <RouterLink class="button" :to="`/patients/${patientId}/orders/new`"
-        >New order</RouterLink
-      >
+      <Button
+        as="router-link"
+        :to="`/patients/${patientId}/orders/new`"
+        label="New order"
+        icon="pi pi-plus"
+      />
     </p>
     <h2>Orders</h2>
     <p v-if="data.orders.length === 0">No orders for this patient yet.</p>
-    <table v-else>
-      <thead>
-        <tr>
-          <th scope="col">Created</th>
-          <th scope="col">Status</th>
-          <th scope="col">Patient total</th>
-          <th scope="col">Your margin</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="order in data.orders" :key="order.id">
-          <td>
-            <RouterLink :to="orderLink(order)">{{
-              formatDate(order.createdAt)
-            }}</RouterLink>
-          </td>
-          <td><StatusBadge :status="order.status" /></td>
-          <template v-if="order.split">
-            <td><MoneyText :cents="order.split.totalCents" /></td>
-            <td><MoneyText :cents="order.split.providerMarginCents" /></td>
-          </template>
-          <template v-else>
-            <td colspan="2" class="muted">Incomplete draft</td>
-          </template>
-        </tr>
-      </tbody>
-    </table>
+    <DataTable
+      v-else
+      :value="data.orders"
+      data-key="id"
+      selection-mode="single"
+      :meta-key-selection="false"
+      aria-label="Orders"
+      @row-click="openOrder"
+    >
+      <Column header="Created">
+        <template #body="{ data: order }">{{
+          formatDate(order.createdAt)
+        }}</template>
+      </Column>
+      <Column header="Status">
+        <template #body="{ data: order }"
+          ><StatusBadge :status="order.status"
+        /></template>
+      </Column>
+      <Column header="Patient total">
+        <template #body="{ data: order }">
+          <MoneyText v-if="order.split" :cents="order.split.totalCents" />
+          <span v-else class="muted">Incomplete draft</span>
+        </template>
+      </Column>
+      <Column header="Your margin">
+        <template #body="{ data: order }">
+          <MoneyText
+            v-if="order.split"
+            :cents="order.split.providerMarginCents"
+          />
+          <span v-else class="muted">—</span>
+        </template>
+      </Column>
+    </DataTable>
   </template>
 </template>

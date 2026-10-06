@@ -98,13 +98,9 @@ describe('PatientsView', () => {
       limit: 25,
     })
 
-    const previous = screen.getByRole('button', {
-      name: 'Previous page of patients',
-    })
+    const previous = screen.getByRole('button', { name: 'Previous Page' })
     expect(previous).toHaveProperty('disabled', true)
-    await fireEvent.click(
-      screen.getByRole('button', { name: 'Next page of patients' }),
-    )
+    await fireEvent.click(screen.getByRole('button', { name: 'Next Page' }))
 
     expect(await screen.findByText('Showing 26–50 of 312')).toBeTruthy()
     expect(api.searchPatients).toHaveBeenLastCalledWith({
@@ -140,7 +136,7 @@ describe('PatientsView', () => {
 
     const row = screen.getByText('Patient 5').closest('tr')
     if (!row) throw new Error('row not found')
-    await fireEvent.keyDown(row, { key: 'Enter' })
+    await fireEvent.keyDown(row, { key: 'Enter', code: 'Enter' })
     await vi.waitFor(() =>
       expect(router.currentRoute.value.path).toBe('/patients/5'),
     )

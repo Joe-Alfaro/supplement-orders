@@ -52,7 +52,7 @@ describe('MyOrdersView', () => {
 
     expect(row.tabIndex).toBe(0)
     row.focus()
-    await fireEvent.keyDown(row, { key: 'Enter' })
+    await fireEvent.keyDown(row, { key: 'Enter', code: 'Enter' })
 
     await vi.waitFor(() =>
       expect(router.currentRoute.value.path).toBe('/my-orders/11'),

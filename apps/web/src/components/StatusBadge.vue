@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { OrderStatus } from '@supplement-orders/domain'
+import Tag from 'primevue/tag'
 
 interface Props {
   status: OrderStatus
@@ -13,8 +14,15 @@ const LABELS: Record<OrderStatus, string> = {
   paid: 'Paid',
   cancelled: 'Cancelled',
 }
+
+const SEVERITIES: Record<OrderStatus, string> = {
+  draft: 'secondary',
+  pending_payment: 'warn',
+  paid: 'success',
+  cancelled: 'danger',
+}
 </script>
 
 <template>
-  <span class="badge" :class="`badge-${status}`">{{ LABELS[status] }}</span>
+  <Tag :value="LABELS[status]" :severity="SEVERITIES[status]" />
 </template>

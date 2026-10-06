@@ -1,5 +1,10 @@
 <script setup lang="ts">
 import type { PatientDto } from '@supplement-orders/domain'
+import Button from 'primevue/button'
+import Column from 'primevue/column'
+import DataTable from 'primevue/datatable'
+import InputText from 'primevue/inputtext'
+import Message from 'primevue/message'
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
@@ -11,7 +16,7 @@ import {
   replaceOrderLines,
   sendOrder,
 } from '../api'
-import { useOrderDraft, type NewLine } from '../builder'
+import { useOrderDraft, type EvaluatedLine, type NewLine } from '../builder'
 import {
   AddProductDialog,
   ErrorBanner,
@@ -128,7 +133,6 @@ function sendToPatient() {
 }
 
 const dialogOpen = ref(false)
-const addLineButton = ref<HTMLButtonElement | null>(null)
 
 function openAddProduct() {
   dialogOpen.value = true
@@ -138,7 +142,7 @@ function openAddProduct() {
 async function closeAddProduct() {
   dialogOpen.value = false
   await nextTick()
-  addLineButton.value?.focus()
+  document.getElementById('add-line')?.focus()
 }
 
 /** The new line appears in the table and its Qty input takes focus. */
@@ -149,12 +153,12 @@ async function addFromDialog(line: NewLine) {
   document.getElementById(fieldId(key, 'qty'))?.focus()
 }
 
-function inputValue(event: Event) {
-  return (event.target as HTMLInputElement).value
-}
-
 function fieldId(key: number, field: string) {
   return `line-${key}-${field}`
+}
+
+function rowIndex(row: EvaluatedLine) {
+  return evaluated.value.indexOf(row)
 }
 </script>
 
@@ -177,163 +181,169 @@ function fieldId(key: number, field: string) {
 
     <ErrorBanner v-if="banner" :message="banner" />
 
-    <table v-if="lines.length > 0" class="builder">
-      <thead>
-        <tr>
-          <th scope="col">Product</th>
-          <th scope="col">Wholesale cost</th>
-          <th scope="col">Qty</th>
-          <th scope="col">Margin %</th>
-          <th scope="col">Patient price (each)</th>
-          <th scope="col">Line total</th>
-          <th scope="col"><span class="visually-hidden">Remove</span></th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="(row, index) in evaluated" :key="row.line.key">
-          <td>
-            <template v-if="row.product">
-              <span :data-testid="`product-${index}`">{{
-                row.product.name
-              }}</span>
-              <br />
-              <span class="small">
-                <code>{{ row.product.sku }}</code>
-                <template v-if="row.product.stockQuantity !== null">
-                  · {{ row.product.stockQuantity }} in stock</template
-                >
-              </span>
-            </template>
-            <span v-else class="muted">No product (remove this line)</span>
-            <p
-              v-if="row.errors.productId"
-              :id="fieldId(row.line.key, 'product-error')"
-              class="field-error"
-            >
-              {{ row.errors.productId }}
-            </p>
-          </td>
-          <td>
-            <MoneyText v-if="row.product" :cents="row.product.cogsCents" />
-            <span v-else>—</span>
-          </td>
-          <td>
-            <label :for="fieldId(row.line.key, 'qty')" class="visually-hidden"
-              >Quantity for line {{ index + 1 }}</label
-            >
-            <input
-              :id="fieldId(row.line.key, 'qty')"
-              class="qty"
-              type="number"
-              min="1"
-              step="1"
-              :max="row.product?.stockQuantity ?? undefined"
-              :value="row.line.quantityInput"
-              :aria-invalid="row.errors.quantity ? 'true' : undefined"
-              :aria-describedby="
-                row.errors.quantity
-                  ? fieldId(row.line.key, 'qty-error')
-                  : undefined
-              "
-              @input="draft.setQuantity(row.line.key, inputValue($event))"
-            />
-            <p
-              v-if="row.errors.quantity"
-              :id="fieldId(row.line.key, 'qty-error')"
-              class="field-error"
-            >
-              {{ row.errors.quantity }}
-            </p>
-          </td>
-          <td>
-            <label
-              :for="fieldId(row.line.key, 'margin')"
-              class="visually-hidden"
-              >Margin % for line {{ index + 1 }}</label
-            >
-            <input
-              :id="fieldId(row.line.key, 'margin')"
-              class="margin"
-              type="text"
-              inputmode="decimal"
-              placeholder="0.00"
-              :value="row.line.marginInput"
-              :class="{ negative: row.line.marginInput.startsWith('-') }"
-              :aria-invalid="row.errors.margin ? 'true' : undefined"
-              :aria-describedby="
-                row.errors.margin
-                  ? fieldId(row.line.key, 'margin-error')
-                  : undefined
-              "
-              @input="draft.setMargin(row.line.key, inputValue($event))"
-              @blur="draft.normalizeMargin(row.line.key)"
-            /><span aria-hidden="true">%</span>
-            <p
-              v-if="row.errors.margin"
-              :id="fieldId(row.line.key, 'margin-error')"
-              class="field-error"
-            >
-              {{ row.errors.margin }}
-            </p>
-          </td>
-          <td>
-            <label :for="fieldId(row.line.key, 'price')" class="visually-hidden"
-              >Patient price for line {{ index + 1 }}</label
-            >
-            <span class="dollar" aria-hidden="true">$</span>
-            <input
-              :id="fieldId(row.line.key, 'price')"
-              class="price"
-              type="text"
-              inputmode="decimal"
-              placeholder="0.00"
-              :value="row.line.priceInput"
-              :aria-invalid="
-                row.errors.unitPriceCents || row.belowMinimum
-                  ? 'true'
-                  : undefined
-              "
-              :aria-describedby="`${fieldId(row.line.key, 'price-min')} ${fieldId(row.line.key, 'price-error')}`"
-              @input="draft.setPrice(row.line.key, inputValue($event))"
-              @blur="draft.normalizePrice(row.line.key)"
-            />
-            <p
-              v-if="row.minPriceCents !== null"
-              :id="fieldId(row.line.key, 'price-min')"
-              class="hint"
-              :class="{ negative: row.belowMinimum }"
-              :data-testid="`min-${index}`"
-            >
-              Min {{ formatCents(row.minPriceCents) }}
-            </p>
-            <p
-              v-if="row.errors.unitPriceCents"
-              :id="fieldId(row.line.key, 'price-error')"
-              class="field-error"
-            >
-              {{ row.errors.unitPriceCents }}
-            </p>
-          </td>
-          <td>
-            <MoneyText
-              v-if="row.lineTotalCents !== null"
-              :cents="row.lineTotalCents"
-            />
-            <span v-else>—</span>
-          </td>
-          <td>
-            <button type="button" @click="draft.removeLine(row.line.key)">
-              Remove<span class="visually-hidden"> line {{ index + 1 }}</span>
-            </button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    <p v-if="lines.length === 0">No lines yet. Add a product to start.</p>
+    <DataTable
+      v-if="lines.length > 0"
+      :value="evaluated"
+      data-key="line.key"
+      class="builder"
+      aria-label="Order lines"
+    >
+      <Column header="Product">
+        <template #body="{ data: row }">
+          <template v-if="row.product">
+            <span :data-testid="`product-${rowIndex(row)}`">{{
+              row.product.name
+            }}</span>
+            <br />
+            <span class="small">
+              <code>{{ row.product.sku }}</code>
+              <template v-if="row.product.stockQuantity !== null">
+                · {{ row.product.stockQuantity }} in stock</template
+              >
+            </span>
+          </template>
+          <span v-else class="muted">No product (remove this line)</span>
+          <Message
+            v-if="row.errors.productId"
+            :id="fieldId(row.line.key, 'product-error')"
+            severity="error"
+            size="small"
+            variant="simple"
+            >{{ row.errors.productId }}</Message
+          >
+        </template>
+      </Column>
+      <Column header="Wholesale cost">
+        <template #body="{ data: row }">
+          <MoneyText v-if="row.product" :cents="row.product.cogsCents" />
+          <span v-else>—</span>
+        </template>
+      </Column>
+      <Column header="Qty">
+        <template #body="{ data: row }">
+          <label :for="fieldId(row.line.key, 'qty')" class="visually-hidden"
+            >Quantity for line {{ rowIndex(row) + 1 }}</label
+          >
+          <InputText
+            :id="fieldId(row.line.key, 'qty')"
+            class="qty"
+            inputmode="numeric"
+            :model-value="row.line.quantityInput"
+            :invalid="Boolean(row.errors.quantity)"
+            :aria-describedby="
+              row.errors.quantity
+                ? fieldId(row.line.key, 'qty-error')
+                : undefined
+            "
+            @update:model-value="draft.setQuantity(row.line.key, $event ?? '')"
+          />
+          <Message
+            v-if="row.errors.quantity"
+            :id="fieldId(row.line.key, 'qty-error')"
+            severity="error"
+            size="small"
+            variant="simple"
+            >{{ row.errors.quantity }}</Message
+          >
+        </template>
+      </Column>
+      <Column header="Margin %">
+        <template #body="{ data: row }">
+          <label :for="fieldId(row.line.key, 'margin')" class="visually-hidden"
+            >Margin % for line {{ rowIndex(row) + 1 }}</label
+          >
+          <InputText
+            :id="fieldId(row.line.key, 'margin')"
+            class="margin"
+            inputmode="decimal"
+            placeholder="0.00"
+            :model-value="row.line.marginInput"
+            :class="{ negative: row.line.marginInput.startsWith('-') }"
+            :invalid="Boolean(row.errors.margin)"
+            :aria-describedby="
+              row.errors.margin
+                ? fieldId(row.line.key, 'margin-error')
+                : undefined
+            "
+            @update:model-value="draft.setMargin(row.line.key, $event ?? '')"
+            @blur="draft.normalizeMargin(row.line.key)"
+          />
+          <Message
+            v-if="row.errors.margin"
+            :id="fieldId(row.line.key, 'margin-error')"
+            severity="error"
+            size="small"
+            variant="simple"
+            >{{ row.errors.margin }}</Message
+          >
+        </template>
+      </Column>
+      <Column header="Patient price (each)">
+        <template #body="{ data: row }">
+          <label :for="fieldId(row.line.key, 'price')" class="visually-hidden"
+            >Patient price for line {{ rowIndex(row) + 1 }}</label
+          >
+          <InputText
+            :id="fieldId(row.line.key, 'price')"
+            class="price"
+            inputmode="decimal"
+            placeholder="0.00"
+            :model-value="row.line.priceInput"
+            :invalid="Boolean(row.errors.unitPriceCents) || row.belowMinimum"
+            :aria-describedby="`${fieldId(row.line.key, 'price-min')} ${fieldId(row.line.key, 'price-error')}`"
+            @update:model-value="draft.setPrice(row.line.key, $event ?? '')"
+            @blur="draft.normalizePrice(row.line.key)"
+          />
+          <small
+            v-if="row.minPriceCents !== null"
+            :id="fieldId(row.line.key, 'price-min')"
+            class="hint"
+            :class="{ negative: row.belowMinimum }"
+            :data-testid="`min-${rowIndex(row)}`"
+          >
+            Min {{ formatCents(row.minPriceCents) }}
+          </small>
+          <Message
+            v-if="row.errors.unitPriceCents"
+            :id="fieldId(row.line.key, 'price-error')"
+            severity="error"
+            size="small"
+            variant="simple"
+            >{{ row.errors.unitPriceCents }}</Message
+          >
+        </template>
+      </Column>
+      <Column header="Line total">
+        <template #body="{ data: row }">
+          <MoneyText
+            v-if="row.lineTotalCents !== null"
+            :cents="row.lineTotalCents"
+          />
+          <span v-else>—</span>
+        </template>
+      </Column>
+      <Column>
+        <template #header><span class="visually-hidden">Remove</span></template>
+        <template #body="{ data: row }">
+          <Button
+            icon="pi pi-trash"
+            severity="secondary"
+            text
+            :aria-label="`Remove line ${rowIndex(row) + 1}`"
+            @click="draft.removeLine(row.line.key)"
+          />
+        </template>
+      </Column>
+    </DataTable>
+    <p v-else>No lines yet. Add a product to start.</p>
     <p>
-      <button ref="addLineButton" type="button" @click="openAddProduct">
-        Add line
-      </button>
+      <Button
+        id="add-line"
+        label="Add line"
+        icon="pi pi-plus"
+        severity="secondary"
+        @click="openAddProduct"
+      />
     </p>
     <AddProductDialog
       :open="dialogOpen"
@@ -350,19 +360,19 @@ function fieldId(key: number, field: string) {
       order and comes out of your margin.
     </p>
 
-    <p class="actions">
-      <button type="button" :disabled="saving" @click="saveDraft">
-        Save draft
-      </button>
-      <button
-        type="button"
-        class="primary"
+    <div class="actions">
+      <Button
+        label="Save draft"
+        severity="secondary"
+        :disabled="saving"
+        @click="saveDraft"
+      />
+      <Button
+        label="Send to patient"
         :disabled="saving || !canSend"
         @click="sendToPatient"
-      >
-        Send to patient
-      </button>
-    </p>
+      />
+    </div>
     <p aria-live="polite" class="status">{{ status }}</p>
   </template>
 </template>

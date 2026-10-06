@@ -1,13 +1,17 @@
 <script setup lang="ts">
+import type { DashboardPaidOrderDto } from '@supplement-orders/domain'
+import Column from 'primevue/column'
+import DataTable, {
+  type DataTablePageEvent,
+  type DataTableRowClickEvent,
+} from 'primevue/datatable'
+import IconField from 'primevue/iconfield'
+import InputIcon from 'primevue/inputicon'
+import InputText from 'primevue/inputtext'
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { getDashboard, searchProducts } from '../api'
-import {
-  ErrorBanner,
-  MoneyText,
-  PaginationControls,
-  StatTile,
-} from '../components'
+import { ErrorBanner, MoneyText, PageSummary, StatTile } from '../components'
 import { formatDate } from '../format'
 import { usePagedSearch } from '../search'
 import { useResource } from '../useResource'
@@ -22,12 +26,12 @@ onMounted(() => {
   inventory.load()
 })
 
-function onInventorySearch(event: Event) {
-  inventory.setQuery((event.target as HTMLInputElement).value)
+function openOrder(event: DataTableRowClickEvent<DashboardPaidOrderDto>) {
+  router.push(`/orders/${event.data.orderId}`)
 }
 
-function openOrder(orderId: number) {
-  router.push(`/orders/${orderId}`)
+function onInventoryPage(event: DataTablePageEvent) {
+  inventory.goTo(event.first)
 }
 </script>
 
@@ -56,35 +60,40 @@ function openOrder(orderId: number) {
         />
       </div>
       <p v-if="sales.data.value.paidOrders.length === 0">No paid orders yet.</p>
-      <table v-else>
-        <thead>
-          <tr>
-            <th scope="col">Paid</th>
-            <th scope="col">Patient</th>
-            <th scope="col">Patient total</th>
-            <th scope="col">Wholesale cost</th>
-            <th scope="col">Platform fee</th>
-            <th scope="col">Your margin</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="order in sales.data.value.paidOrders"
-            :key="order.orderId"
-            class="row-link"
-            tabindex="0"
-            @click="openOrder(order.orderId)"
-            @keydown.enter="openOrder(order.orderId)"
-          >
-            <td>{{ formatDate(order.paidAt) }}</td>
-            <td>{{ order.patientName }}</td>
-            <td><MoneyText :cents="order.totalCents" /></td>
-            <td><MoneyText :cents="order.cogsCents" /></td>
-            <td><MoneyText :cents="order.platformFeeCents" /></td>
-            <td><MoneyText :cents="order.providerMarginCents" /></td>
-          </tr>
-        </tbody>
-      </table>
+      <DataTable
+        v-else
+        :value="sales.data.value.paidOrders"
+        data-key="orderId"
+        selection-mode="single"
+        :meta-key-selection="false"
+        aria-label="Paid orders"
+        @row-click="openOrder"
+      >
+        <Column header="Paid">
+          <template #body="{ data }">{{ formatDate(data.paidAt) }}</template>
+        </Column>
+        <Column field="patientName" header="Patient" />
+        <Column header="Patient total">
+          <template #body="{ data }"
+            ><MoneyText :cents="data.totalCents"
+          /></template>
+        </Column>
+        <Column header="Wholesale cost">
+          <template #body="{ data }"
+            ><MoneyText :cents="data.cogsCents"
+          /></template>
+        </Column>
+        <Column header="Platform fee">
+          <template #body="{ data }"
+            ><MoneyText :cents="data.platformFeeCents"
+          /></template>
+        </Column>
+        <Column header="Your margin">
+          <template #body="{ data }"
+            ><MoneyText :cents="data.providerMarginCents"
+          /></template>
+        </Column>
+      </DataTable>
     </template>
   </section>
 
@@ -94,16 +103,19 @@ function openOrder(orderId: number) {
       Stock decreases automatically when orders are paid. It is not edited by
       hand.
     </p>
-    <p class="search">
-      <label for="inventory-search">Search products</label><br />
-      <input
-        id="inventory-search"
-        type="search"
-        placeholder="Name or SKU"
-        :value="inventory.query.value"
-        @input="onInventorySearch"
-      />
-    </p>
+    <div class="search">
+      <label for="inventory-search">Search products</label>
+      <IconField>
+        <InputIcon class="pi pi-search" />
+        <InputText
+          id="inventory-search"
+          type="search"
+          placeholder="Name or SKU"
+          :model-value="inventory.query.value"
+          @update:model-value="inventory.setQuery($event ?? '')"
+        />
+      </IconField>
+    </div>
     <ErrorBanner
       v-if="inventory.error.value"
       :message="inventory.error.value"
@@ -118,36 +130,40 @@ function openOrder(orderId: number) {
         >
         <template v-else>No products.</template>
       </p>
-      <table v-else>
-        <thead>
-          <tr>
-            <th scope="col">Name</th>
-            <th scope="col">SKU</th>
-            <th scope="col">Wholesale cost</th>
-            <th scope="col">Stock on hand</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="product in inventory.items.value" :key="product.id">
-            <td>{{ product.name }}</td>
-            <td>
-              <code>{{ product.sku }}</code>
-            </td>
-            <td><MoneyText :cents="product.cogsCents" /></td>
-            <td class="num">{{ product.stockQuantity }}</td>
-          </tr>
-        </tbody>
-      </table>
-      <PaginationControls
-        :offset="inventory.offset.value"
-        :count="inventory.items.value.length"
-        :total="inventory.total.value"
-        :can-previous="inventory.canPrevious.value"
-        :can-next="inventory.canNext.value"
-        label="products"
-        @previous="inventory.previous"
-        @next="inventory.next"
-      />
+      <DataTable
+        v-else
+        :value="inventory.items.value"
+        data-key="id"
+        lazy
+        paginator
+        :rows="inventory.limit"
+        :first="inventory.offset.value"
+        :total-records="inventory.total.value"
+        paginator-template="PrevPageLink NextPageLink"
+        :loading="inventory.loading.value"
+        aria-label="Inventory"
+        @page="onInventoryPage"
+      >
+        <template #paginatorstart>
+          <PageSummary
+            :offset="inventory.offset.value"
+            :count="inventory.items.value.length"
+            :total="inventory.total.value"
+          />
+        </template>
+        <Column field="name" header="Name" />
+        <Column header="SKU">
+          <template #body="{ data }">
+            <code>{{ data.sku }}</code>
+          </template>
+        </Column>
+        <Column header="Wholesale cost">
+          <template #body="{ data }"
+            ><MoneyText :cents="data.cogsCents"
+          /></template>
+        </Column>
+        <Column field="stockQuantity" header="Stock on hand" />
+      </DataTable>
     </template>
   </section>
 </template>

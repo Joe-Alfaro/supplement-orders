@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Card from 'primevue/card'
 import MoneyText from './MoneyText.vue'
 
 interface Props {
@@ -10,8 +11,10 @@ defineProps<Props>()
 </script>
 
 <template>
-  <div class="tile">
-    <div class="tile-label">{{ label }}</div>
-    <div class="tile-value"><MoneyText :cents="cents" /></div>
-  </div>
+  <Card class="tile">
+    <template #subtitle>{{ label }}</template>
+    <template #content>
+      <span class="tile-value"><MoneyText :cents="cents" /></span>
+    </template>
+  </Card>
 </template>
