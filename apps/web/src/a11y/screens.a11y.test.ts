@@ -105,6 +105,7 @@ const providerSummary: ProviderOrderSummaryDto = {
   createdAt: '2026-10-05T12:00:00.000Z',
   sentAt: '2026-10-05T12:05:00.000Z',
   paidAt: '2026-10-05T12:10:00.000Z',
+  cancelledAt: null,
   split: paidSplit,
 }
 
@@ -176,6 +177,7 @@ const pendingPatientOrder: PatientOrderDetailDto = {
   createdAt: '2026-10-05T12:00:00.000Z',
   sentAt: '2026-10-05T12:05:00.000Z',
   paidAt: null,
+  cancelledAt: null,
   patientAddress: '214 Alder St, Portland, OR 97205',
   totalCents: 12000,
   lines: [
@@ -215,6 +217,7 @@ const myOrders: PatientOrderSummaryDto[] = [
     createdAt: '2026-10-05T12:00:00.000Z',
     sentAt: '2026-10-05T12:00:00.000Z',
     paidAt: null,
+    cancelledAt: null,
     totalCents: 12000,
   },
 ]

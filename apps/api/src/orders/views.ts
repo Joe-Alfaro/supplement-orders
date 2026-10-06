@@ -3,6 +3,8 @@ import {
   markupBpsFromPrice,
   minUnitPriceCents,
   SplitValidationError,
+  type AwaitingPaymentOrderDto,
+  type AwaitingPaymentPageDto,
   type LedgerEntryDto,
   type OrderLineDto,
   type OrderSplitDto,
@@ -13,7 +15,17 @@ import {
   type ProviderOrderLineDto,
   type ProviderOrderSummaryDto,
 } from '@supplement-orders/domain'
-import { and, asc, desc, eq, inArray, ne, type SQL } from 'drizzle-orm'
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  ne,
+  type SQL,
+} from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import type { Db } from '../db/client'
 import {
@@ -53,6 +65,7 @@ async function selectOrders(db: Db, where: SQL | undefined) {
       createdAt: orders.createdAt,
       sentAt: orders.sentAt,
       paidAt: orders.paidAt,
+      cancelledAt: orders.cancelledAt,
     })
     .from(orders)
     .innerJoin(patients, eq(patients.id, orders.patientId))
@@ -137,6 +150,7 @@ function summaryBase(order: OrderRow) {
     createdAt: order.createdAt.toISOString(),
     sentAt: iso(order.sentAt),
     paidAt: iso(order.paidAt),
+    cancelledAt: iso(order.cancelledAt),
   }
 }
 
@@ -236,11 +250,15 @@ export async function listProviderOrders(
   return rows.map((o) => providerSummary(o, lines.get(o.id) ?? []))
 }
 
-/** Patients never see drafts. */
+/** Patients see only orders they were sent: never drafts or drafts cancelled unsent. */
 export async function listPatientOrders(db: Db, patientId: number) {
   const rows = await selectOrders(
     db,
-    and(eq(orders.patientId, patientId), ne(orders.status, 'draft')),
+    and(
+      eq(orders.patientId, patientId),
+      ne(orders.status, 'draft'),
+      isNotNull(orders.sentAt),
+    ),
   )
   return rows.map(patientSummary)
 }
@@ -253,6 +271,7 @@ export async function findOrderOwnership(db: Db, orderId: number) {
       providerId: orders.providerId,
       patientId: orders.patientId,
       status: orders.status,
+      sentAt: orders.sentAt,
     })
     .from(orders)
     .where(eq(orders.id, orderId))
@@ -321,4 +340,55 @@ export async function loadPatientOrderDetail(
     lines: lines.map(patientLine),
     payment,
   }
+}
+
+/**
+ * Dashboard "Awaiting payment": one provider's pending orders, oldest sentAt
+ * first, then id. Served by the (provider_id, status, sent_at, id) index.
+ */
+export async function listAwaitingPayment(
+  db: Db,
+  providerId: number,
+  {
+    patientId,
+    offset,
+    limit,
+  }: { patientId?: number; offset: number; limit: number },
+): Promise<AwaitingPaymentPageDto> {
+  const where = and(
+    eq(orders.providerId, providerId),
+    eq(orders.status, 'pending_payment'),
+    patientId === undefined ? undefined : eq(orders.patientId, patientId),
+  )
+  const [rows, [counted]] = await Promise.all([
+    db
+      .select({
+        id: orders.id,
+        patientId: orders.patientId,
+        patientName: patientUsers.name,
+        patientDateOfBirth: patients.dateOfBirth,
+        totalCents: orders.totalCents,
+        sentAt: orders.sentAt,
+      })
+      .from(orders)
+      .innerJoin(patients, eq(patients.id, orders.patientId))
+      .innerJoin(patientUsers, eq(patientUsers.id, patients.userId))
+      .where(where)
+      .orderBy(asc(orders.sentAt), asc(orders.id))
+      .limit(limit)
+      .offset(offset),
+    db.select({ total: count() }).from(orders).where(where),
+  ])
+  const items = rows.map((row): AwaitingPaymentOrderDto => {
+    // A pending order always has a sentAt and a total (CHECK constraints).
+    if (row.sentAt === null || row.totalCents === null) {
+      throw new Error(`Pending order ${row.id} is missing its sent snapshot`)
+    }
+    return {
+      ...row,
+      totalCents: row.totalCents,
+      sentAt: row.sentAt.toISOString(),
+    }
+  })
+  return { items, total: counted?.total ?? 0, offset, limit }
 }

@@ -8,6 +8,7 @@ import { eq } from 'drizzle-orm'
 import { Router } from 'express'
 import { patients } from '../db/schema'
 import {
+  cancelOrder,
   createDraft,
   payOrder,
   replaceDraftLines,
@@ -15,6 +16,7 @@ import {
 } from '../orders/service'
 import {
   findOrderOwnership,
+  listAwaitingPayment,
   listPatientOrders,
   listProviderOrders,
   loadPatientOrderDetail,
@@ -29,6 +31,18 @@ export function ordersRouter(ctx: AppContext) {
   const { db, auth } = ctx
   const router = Router()
 
+  async function assertOwnPatient(
+    user: Extract<CurrentUser, { role: 'provider' }>,
+    patientId: number,
+  ) {
+    const [patient] = await db
+      .select({ providerId: patients.providerId })
+      .from(patients)
+      .where(eq(patients.id, patientId))
+    if (!patient) throw notFound('Patient')
+    if (patient.providerId !== user.providerId) throw forbidden()
+  }
+
   /** 404 if missing (or a draft, for its patient); 403 if not the caller's. */
   async function assertCanView(user: CurrentUser, orderId: number) {
     const order = await findOrderOwnership(db, orderId)
@@ -38,12 +52,28 @@ export function ordersRouter(ctx: AppContext) {
       return
     }
     if (order.patientId !== user.patientId) throw forbidden()
-    if (order.status === 'draft') throw notFound('Order')
+    // Unsent orders (drafts, and drafts cancelled before sending) stay hidden.
+    if (order.sentAt === null) throw notFound('Order')
   }
 
   router.get('/', async (req, res) => {
     const user = await auth.getCurrentUser(req)
-    const { patientId } = parseOrThrow(listOrdersQuerySchema, req.query)
+    const { patientId, status, offset, limit } = parseOrThrow(
+      listOrdersQuerySchema,
+      req.query,
+    )
+    if (status !== undefined) {
+      const provider = requireRole(user, 'provider')
+      if (patientId !== undefined) await assertOwnPatient(provider, patientId)
+      res.json(
+        await listAwaitingPayment(db, provider.providerId, {
+          patientId,
+          offset,
+          limit,
+        }),
+      )
+      return
+    }
     if (user.role === 'patient') {
       if (patientId !== undefined && patientId !== user.patientId) {
         throw forbidden()
@@ -51,14 +81,7 @@ export function ordersRouter(ctx: AppContext) {
       res.json(await listPatientOrders(db, user.patientId))
       return
     }
-    if (patientId !== undefined) {
-      const [patient] = await db
-        .select({ providerId: patients.providerId })
-        .from(patients)
-        .where(eq(patients.id, patientId))
-      if (!patient) throw notFound('Patient')
-      if (patient.providerId !== user.providerId) throw forbidden()
-    }
+    if (patientId !== undefined) await assertOwnPatient(user, patientId)
     res.json(await listProviderOrders(db, user.providerId, patientId))
   })
 
@@ -92,6 +115,13 @@ export function ordersRouter(ctx: AppContext) {
     const user = requireRole(await auth.getCurrentUser(req), 'provider')
     const orderId = parseId(req.params.id)
     await sendOrder(ctx, user, orderId)
+    res.json(await loadProviderOrderDetail(db, orderId))
+  })
+
+  router.post('/:id/cancel', async (req, res) => {
+    const user = requireRole(await auth.getCurrentUser(req), 'provider')
+    const orderId = parseId(req.params.id)
+    await cancelOrder(ctx, user, orderId)
     res.json(await loadProviderOrderDetail(db, orderId))
   })
 
