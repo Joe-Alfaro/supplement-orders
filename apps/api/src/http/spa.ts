@@ -8,7 +8,6 @@ import express from 'express'
  * immediately. Any other GET falls back to index.html for client-side routes.
  */
 export function spaRouter(distDir: string) {
-  const indexHtml = join(distDir, 'index.html')
   const router = express.Router()
 
   router.use(
@@ -26,7 +25,8 @@ export function spaRouter(distDir: string) {
   router.use(express.static(distDir, { index: false }))
   router.get('/{*path}', (_req, res) => {
     res.setHeader('Cache-Control', 'no-cache')
-    res.sendFile(indexHtml)
+    // With `root`, send() checks for dotfiles only below distDir, not in it.
+    res.sendFile('index.html', { root: distDir })
   })
 
   return router

@@ -10,6 +10,7 @@ import { createApp } from '../server'
 const INDEX_HTML = '<!doctype html><title>Supplement Orders</title><div id="app"></div>'
 const ASSET_JS = 'console.log("app")'
 
+let tmpRoot: string
 let webDist: string
 
 function appServingWeb(dist: string | undefined) {
@@ -24,14 +25,17 @@ function appServingWeb(dist: string | undefined) {
 }
 
 beforeAll(() => {
-  webDist = mkdtempSync(join(tmpdir(), 'supplement-orders-web-dist-'))
-  mkdirSync(join(webDist, 'assets'))
+  tmpRoot = mkdtempSync(join(tmpdir(), 'supplement-orders-web-dist-'))
+  // A dot-directory in the absolute path (like ~/.ao/worktrees) must not hide
+  // the build: send() ignores dotfiles anywhere in a path it is given.
+  webDist = join(tmpRoot, '.checkout', 'dist')
+  mkdirSync(join(webDist, 'assets'), { recursive: true })
   writeFileSync(join(webDist, 'index.html'), INDEX_HTML)
   writeFileSync(join(webDist, 'assets', 'index-abc123.js'), ASSET_JS)
 })
 
 afterAll(() => {
-  rmSync(webDist, { recursive: true, force: true })
+  rmSync(tmpRoot, { recursive: true, force: true })
 })
 
 describe('serving the built web app', () => {
