@@ -276,6 +276,46 @@ export async function sendOrder(
   })
 }
 
+const CANCELLABLE = new Set(['draft', 'pending_payment'])
+
+/**
+ * Provider cancels a draft or pending order. Takes the same row lock as pay, so
+ * a concurrent cancel and pay serialize: whichever commits first wins and the
+ * other gets a 409. No ledger rows, no stock change (stock only moves on pay).
+ * The patient is notified only if the order had been sent to them.
+ */
+export async function cancelOrder(
+  { db, notifier }: AppContext,
+  user: ProviderUser,
+  orderId: number,
+) {
+  const wasSent = await db.transaction(async (tx) => {
+    const order = await lockOrder(tx, orderId)
+    if (order.providerId !== user.providerId) {
+      throw forbidden('This order belongs to another provider')
+    }
+    if (!CANCELLABLE.has(order.status)) {
+      throw new ApiError(
+        409,
+        'ORDER_NOT_CANCELLABLE',
+        `Order is ${order.status} and cannot be cancelled`,
+      )
+    }
+    const now = new Date()
+    await tx
+      .update(orders)
+      .set({ status: 'cancelled', cancelledAt: now, updatedAt: now })
+      .where(eq(orders.id, orderId))
+    return order.sentAt !== null
+  })
+
+  if (!wasSent) return
+  // Already committed; a notification failure must not undo the cancel.
+  await notifier.notifyPatientOrderCancelled(orderId).catch((err: unknown) => {
+    console.error(`[notifier] cancel notice failed for order ${orderId}`, err)
+  })
+}
+
 /**
  * The money path (ARCHITECTURE §6.4). One transaction: lock the order, reserve
  * stock, charge, record the payment, write and verify the three ledger rows,
@@ -296,7 +336,8 @@ export async function payOrder(
     if (order.patientId !== user.patientId) {
       throw forbidden('This order belongs to another patient')
     }
-    if (order.status === 'draft') throw notFound('Order')
+    // The patient never saw an unsent order, including a draft cancelled before sending.
+    if (order.sentAt === null) throw notFound('Order')
     if (order.status === 'paid') return
     if (order.status !== 'pending_payment' || order.totalCents === null) {
       throw new ApiError(
