@@ -19,7 +19,10 @@
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
     "db:migrate": "npm run db:migrate -w apps/api",
-    "db:seed": "npm run db:seed -w apps/api"
+    "db:seed": "npm run db:seed -w apps/api",
+    "e2e:db": "npm run e2e:db -w apps/api",
+    "e2e:api": "npm run e2e:api -w apps/api",
+    "e2e:web": "npm run e2e:web -w apps/web"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

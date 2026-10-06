@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-const LOCAL_DATABASE_URL = 'postgres://supplement_orders:supplement_orders@localhost:54329/supplement_orders'
+export const LOCAL_DATABASE_URL = 'postgres://supplement_orders:supplement_orders@localhost:54329/supplement_orders'
 
 const envSchema = z.object({
   DATABASE_URL: z.url().default(LOCAL_DATABASE_URL),

@@ -1,6 +1,6 @@
-import pg from 'pg'
 import supertest from 'supertest'
 import { createDb, type Db } from '../db/client'
+import { ensureDatabase, siblingDatabaseUrl } from '../db/databases'
 import { runMigrations } from '../db/migrate'
 import { seedDatabase, truncateAll, type SeedResult } from '../db/seed'
 import { FakePaymentGateway, RecordingNotifier } from '../seams'
@@ -41,35 +41,8 @@ export interface InternalTestContext extends TestContext {
   payHooks: PayHooks
 }
 
-const DEFAULT_ADMIN_URL = 'postgres://supplement_orders:supplement_orders@localhost:54329/supplement_orders'
-const TEST_DB_NAME = 'supplement_orders_test'
-
 function testDatabaseUrl() {
-  if (process.env.TEST_DATABASE_URL) return process.env.TEST_DATABASE_URL
-  const url = new URL(process.env.DATABASE_URL ?? DEFAULT_ADMIN_URL)
-  url.pathname = `/${TEST_DB_NAME}`
-  return url.toString()
-}
-
-/** Creates the dedicated test database if needed so tests never touch dev data. */
-async function ensureTestDatabase(url: string) {
-  const target = new URL(url)
-  const dbName = target.pathname.slice(1)
-  const admin = new URL(url)
-  admin.pathname = '/postgres'
-  const client = new pg.Client({ connectionString: admin.toString() })
-  await client.connect()
-  try {
-    const existing = await client.query(
-      'select 1 from pg_database where datname = $1',
-      [dbName],
-    )
-    if (existing.rowCount === 0) {
-      await client.query(`create database "${dbName.replaceAll('"', '""')}"`)
-    }
-  } finally {
-    await client.end()
-  }
+  return process.env.TEST_DATABASE_URL ?? siblingDatabaseUrl('supplement_orders_test')
 }
 
 function toSeedIds(result: SeedResult): SeedIds {
@@ -98,7 +71,7 @@ export async function createInternalTestContext(
   options: InternalTestOptions = {},
 ): Promise<InternalTestContext> {
   const url = testDatabaseUrl()
-  await ensureTestDatabase(url)
+  await ensureDatabase(url)
   const { db, pool, ping } = createDb(url)
   await runMigrations(db)
 

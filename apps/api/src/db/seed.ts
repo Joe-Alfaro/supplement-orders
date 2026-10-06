@@ -3,6 +3,29 @@ import type { Db } from './client'
 import { patients, products, providers, users } from './schema'
 import { generatePatients, generateProducts } from './seed-bulk'
 
+/*
+ * Named seed: what the API test harness and `npm run e2e:db` load (no bulk rows).
+ * Tables are truncated with RESTART IDENTITY first, so these ids are stable.
+ * Tests and e2e specs may rely on every value below; change them together.
+ *
+ * Users (sign-in list order = id order)
+ *   id 1  Dr. Maya Rivera  provider 1  patients: Jordan Lee, Sam Patel
+ *   id 2  Jordan Lee       patient 1   DOB 1984-03-14 (03/14/1984)  214 Alder St, Portland, OR 97205
+ *   id 3  Sam Patel        patient 2   DOB 1971-11-02 (11/02/1971)  88 Elm Ave, Austin, TX 78704
+ *   id 4  Dr. Owen Brooks  provider 2  patients: Alex Kim, Riley Chen
+ *   id 5  Alex Kim         patient 3   DOB 1993-07-21 (07/21/1993)  1502 Pine Rd, Denver, CO 80203
+ *   id 6  Riley Chen       patient 4   DOB 1958-01-30 (01/30/1958)  9 Harbor Way, Boston, MA 02110
+ *
+ * Products (id, SKU, name, wholesale cost, stock, minimum unit price)
+ *   1  VITD3-5000   Vitamin D3 5000 IU (120 softgels)        $8.50   120  $8.57
+ *   2  MAG-GLY-400  Magnesium Glycinate 400 mg (90 caps)     $12.75   80  $12.85
+ *   3  OMEGA3-1000  Omega-3 Fish Oil 1000 mg (60 softgels)   $16.40   60  $16.53
+ *   4  PROBIO-50B   Probiotic 50 Billion CFU (30 caps)       $21.99   40  $22.16
+ *   5  B-COMPLEX    Methylated B-Complex (60 caps)           $9.90    25  $9.98
+ * Listed by name (the API's order): Magnesium, Methylated B-Complex, Omega-3,
+ * Probiotic, Vitamin D3. No orders, payments or ledger rows are seeded.
+ */
+
 interface SeedProvider {
   name: string
   patients: { name: string; dateOfBirth: string; address: string }[]

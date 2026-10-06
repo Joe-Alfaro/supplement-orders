@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file-if-exists=.env src/db/migrate-cli.ts",
-    "db:seed": "tsx --env-file-if-exists=.env src/db/seed-cli.ts"
+    "db:seed": "tsx --env-file-if-exists=.env src/db/seed-cli.ts",
+    "e2e:db": "tsx src/db/e2e-reset.ts",
+    "e2e:api": "tsx src/e2e-server.ts"
   },
   "dependencies": {
     "@supplement-orders/domain": "^0.0.0",
