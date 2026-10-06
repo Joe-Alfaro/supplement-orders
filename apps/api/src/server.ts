@@ -5,6 +5,7 @@ import { errorHandler } from './http/errors'
 import { ordersRouter } from './http/orders'
 import { patientsRouter } from './http/patients'
 import { productsRouter } from './http/products'
+import { spaRouter } from './http/spa'
 import { usersRouter } from './http/users'
 import type { Auth, Notifier, PaymentGateway } from './seams'
 import { HeaderAuth } from './seams'
@@ -26,6 +27,8 @@ export interface AppDeps {
   /** `simulateFailure` on pay is ignored when this is 'production'. */
   nodeEnv?: string
   payHooks?: PayHooks
+  /** Built web app to serve outside /api (production); omitted in dev and tests. */
+  webDist?: string
 }
 
 export interface AppContext {
@@ -70,6 +73,7 @@ export function createApp(deps: AppDeps) {
       .status(404)
       .json({ error: { code: 'NOT_FOUND', message: 'No such endpoint' } })
   })
+  if (deps.webDist) app.use(spaRouter(deps.webDist))
   app.use(errorHandler)
 
   return app
