@@ -1,6 +1,8 @@
 # Supplement Orders
 
-A working vertical slice of in-house supplement ordering inside an EHR. A provider assembles a supplement order for a patient and sets the patient-facing price per item. The patient pays through a stubbed gateway. The system splits every paid order into wholesale cost, provider margin and a 75 bps processing fee (ledger type `platform_fee`), and records the split as three immutable ledger entries that sum exactly to the amount paid. A provider dashboard shows orders awaiting payment, sales totals (GMV, margin earned, processing fees) and read-only stock.
+A working vertical slice of in-house supplement ordering inside an EHR. A provider assembles a supplement order for a patient and sets the patient-facing price per item. The patient pays through a stubbed gateway. The system splits every paid order into wholesale cost, provider margin and a 75 bps processing fee (ledger type `platform_fee`), and records the split as three immutable ledger entries that sum exactly to the amount paid. Providers also get an Orders tab with a status filter, and a dashboard with sales totals (GMV, margin earned, processing fees) and read-only stock.
+
+**Live demo: <https://web-production-b7c8c.up.railway.app>.** Auth is stubbed: pick any seeded user on the sign-in screen, no password. All data is fake.
 
 Stack: TypeScript end to end. Vue 3 + Vite + PrimeVue 4 on the front end, an Express 5 REST API with Zod validation, Drizzle ORM, and Postgres 16. npm workspaces share one domain package, so the money logic lives in exactly one place.
 
@@ -10,7 +12,29 @@ Stack: TypeScript end to end. Vue 3 + Vite + PrimeVue 4 on the front end, an Exp
 
 ## Screenshots
 
-To be added.
+Captured from the live demo at 1440x900, signed in as Dr. Maya Rivera.
+
+![Sign-in screen with a notice that authentication is stubbed and a single user dropdown](docs/screenshots/login.png)
+
+![Patients list with a name or date-of-birth search box, a Latest order status filter, and a table of patients with date of birth, order count and latest order](docs/screenshots/patients.png)
+
+![Add-product dialog, step 2, for Magnesium Glycinate: wholesale cost $12.75, minimum price $12.85, Markup % 60.00, read-only processing fee $0.16, patient price $20.55](docs/screenshots/order-builder-add-product.png)
+
+![Orders tab with the Status multi-select open and every status checked: Draft, Awaiting payment, Paid, Cancelled](docs/screenshots/orders-status-filter.png)
+
+![Dashboard with GMV, margin earned and processing fee tiles, links to paid and awaiting-payment orders, and a searchable read-only inventory table](docs/screenshots/dashboard.png)
+
+## Features
+
+- **Provider** (nav: Patients | Orders | Dashboard)
+  - **Patients:** search by name or date of birth (`MM/DD/YYYY` or `YYYY-MM-DD`), filter by latest order status, paginated.
+  - **Order builder:** add products through a searchable Add-product dialog, then set Markup % or Patient price (linked both ways). The line's processing fee is shown read-only and rounds up to the cent. The price starts at the product's minimum. Drafts can be saved incomplete; Send requires every line complete and at or above its minimum.
+  - **Order detail:** lines, split and, once paid, the three ledger entries with a "Total of entries" check. Actions depend on status: **Delete draft**, **Cancel order** (awaiting payment), **Reopen as draft** (cancelled). Paid orders have no actions.
+  - **Orders:** all of the provider's orders, filtered by a multi-select Status (Draft, Awaiting payment, Paid, Cancelled; all statuses by default).
+  - **Dashboard:** GMV, margin earned and processing fee tiles, "See paid orders →" and "See orders awaiting payment →" links into the Orders tab, and a searchable, read-only inventory.
+  - List filters, searches and pages are kept in the URL, so reload, Back and shared links restore the same view.
+- **Patient** (nav: My Orders): sees sent orders and pays them. Never sees wholesale cost, margin or the fee.
+- Page content is centered in a max-width column on wide screens.
 
 ## Quickstart
 
@@ -19,7 +43,7 @@ Prerequisites: Node 22 or later (`engines` in `package.json`), npm, and Docker. 
 ```sh
 npm install
 npm run db:up        # Postgres 16 in Docker on localhost:54329; waits until healthy
-npm run db:migrate   # applies migrations 0000-0005 (includes the pg_trgm extension)
+npm run db:migrate   # applies migrations 0000-0006 (includes the pg_trgm extension)
 npm run db:seed      # wipes the dev database and loads the demo seed
 npm run dev          # API on http://localhost:3000, web on http://localhost:5173
 ```
@@ -30,7 +54,7 @@ The API defaults `DATABASE_URL` to the Docker database (`postgres://supplement_o
 
 ### Signing in
 
-Authentication is stubbed. The `/login` dropdown lists every user in the database, including the generated patients described below. The named users are: Pick one and click **Sign in**; there is no password. The role comes from the user record on the server, never from the client.
+Authentication is stubbed. The `/login` dropdown lists every user in the database, including the generated patients described below. Pick one and click **Sign in**; there is no password. The role comes from the user record on the server, never from the client. The named users are:
 
 | User                 | Role     | Use it to                                                             |
 | -------------------- | -------- | --------------------------------------------------------------------- |
@@ -42,7 +66,7 @@ Authentication is stubbed. The `/login` dropdown lists every user in the databas
 
 `npm run db:seed` also adds generated data: 300 products in one catalog, and 250 patients split between the two providers, so search and pagination have something to page through. A few generated patients share a name and a provider and differ by date of birth and address.
 
-A demo path: sign in as Dr. Maya Rivera, open Jordan Lee, click **New order**, add a product through **Add line**, set Markup % or Patient price, **Send to patient**. Sign out, sign in as Jordan Lee, open the order under My orders and click **Pay**. Sign back in as Dr. Rivera to see the order's ledger and the dashboard.
+A demo path: sign in as Dr. Maya Rivera, open Jordan Lee, click **New order**, add a product through **Add line**, set Markup % or Patient price, **Send to patient**. Sign out, sign in as Jordan Lee, open the order under My orders and click **Pay**. Sign back in as Dr. Rivera to see the order's ledger, find it under Orders, and check the dashboard. On the live demo, other visitors may have created orders too.
 
 In development builds the patient pay screen has a "Simulate gateway failure (dev only)" checkbox. A simulated decline rolls back everything: no payment, no ledger rows, no stock change.
 
@@ -123,12 +147,12 @@ Each stub sits behind an interface in `apps/api/src/seams/` and is injected thro
 
 ## Testing
 
-| Suite                                         | Count | Notes                                                                                                     |
-| --------------------------------------------- | ----- | --------------------------------------------------------------------------------------------------------- |
-| `packages/domain` (Vitest)                    | 286   | Fee, minimum price, split, ledger, markup conversions, money parsing and formatting, request schemas      |
-| `apps/api` (Vitest + Supertest)               | 120   | Against a real Postgres: HTTP contract tests, pay rollback and idempotency, concurrent pay/cancel, search |
-| `apps/web` (Vitest + Testing Library + jsdom) | 113   | Views and components, 16 axe-core accessibility scans, 23 loading/error/empty/persona state tests         |
-| `e2e/` (Playwright)                           | 3     | Happy path (order, pay, ledger, exact dashboard and stock deltas), simulated gateway failure, cancel      |
+| Suite                                         | Count | Notes                                                                                                                                                                |
+| --------------------------------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/domain` (Vitest)                    | 308   | Fee, minimum price, split, ledger, markup conversions, money parsing and formatting, request schemas                                                                 |
+| `apps/api` (Vitest + Supertest)               | 195   | Against a real Postgres: HTTP contract tests, pay rollback and idempotency, concurrent pay/cancel, delete and reopen, order list filters, search, SPA serving        |
+| `apps/web` (Vitest + Testing Library + jsdom) | 141   | Views and components, 16 axe-core accessibility scans, 23 loading/error/empty/persona state tests                                                                    |
+| `e2e/` (Playwright)                           | 4     | Happy path (order, pay, ledger, exact dashboard and stock deltas), simulated gateway failure, cancel, order lifecycle (delete draft, cancel, reopen, status filters) |
 
 Counts are from `npm test` and `npm run test:e2e` at the time of writing.
 
@@ -144,13 +168,13 @@ packages/domain       @supplement-orders/domain: money logic (split, fee, minimu
                       format/parse) and the shared API types and Zod schemas. Consumed as
                       TypeScript source, no build step
 apps/api              Express REST API
-  src/http/           routes, error mapping, HTTP contract tests
-  src/orders/         order service (send, pay, cancel) and read views
+  src/http/           routes, error mapping, production SPA serving, HTTP contract tests
+  src/orders/         order service (send, pay, cancel, delete, reopen) and read views
   src/seams/          Auth, PaymentGateway, Notifier interfaces and fakes
   src/db/             Drizzle schema, migration runner, seed, test/e2e database helpers
-  drizzle/            SQL migrations 0000-0005
+  drizzle/            SQL migrations 0000-0006
   scripts/            explain-search.ts
 apps/web              Vue 3 + Vite + PrimeVue SPA (views, components, api client, a11y and state tests)
 e2e/                  Playwright specs
-docs/                 Architecture, decisions, AI usage
+docs/                 Architecture, decisions, AI usage, screenshots
 ```
