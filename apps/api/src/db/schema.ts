@@ -32,6 +32,12 @@ export const orderStatusEnum = pgEnum('order_status', [
   'cancelled',
 ])
 
+export const paymentAttemptStatusEnum = pgEnum('payment_attempt_status', [
+  'pending',
+  'succeeded',
+  'failed',
+])
+
 export const ledgerEntryTypeEnum = pgEnum('ledger_entry_type', [
   'cogs',
   'provider_margin',
@@ -126,6 +132,8 @@ export const orders = pgTable(
     // Set when a provider cancels a pending order. No ledger or stock effect.
     // Revision 6 also allowed cancelling drafts; such rows may still exist.
     cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    // Revision 9: the quote version. 0 until first sent, +1 on every send.
+    revision: integer('revision').notNull().default(0),
   },
   (t) => [
     check(
@@ -140,6 +148,10 @@ export const orders = pgTable(
     check(
       'orders_cancelled_at_iff_cancelled',
       sql`(${t.status} = 'cancelled') = (${t.cancelledAt} is not null)`,
+    ),
+    check(
+      'orders_revision_counts_sends',
+      sql`${t.revision} >= 0 and (${t.sentAt} is null or ${t.revision} >= 1)`,
     ),
     // Dashboard "Awaiting payment": one provider's pending orders, oldest first.
     // Revision 8: patients' latest-order filter (latest by created_at, then id).
@@ -211,6 +223,39 @@ export const orderItems = pgTable(
   ],
 )
 
+/**
+ * Revision 9: one row per (order, revision) quote, committed before the gateway
+ * is called and updated with its result in a separate transaction, so a charge
+ * that outlives a rolled-back payment write is never lost. A succeeded attempt
+ * without a payment row is an unreconciled charge.
+ */
+export const paymentAttempts = pgTable(
+  'payment_attempts',
+  {
+    id: serial('id').primaryKey(),
+    orderId: integer('order_id')
+      .notNull()
+      .references(() => orders.id),
+    revision: integer('revision').notNull(),
+    idempotencyKey: text('idempotency_key').notNull().unique(),
+    amountCents: cents('amount_cents').notNull(),
+    status: paymentAttemptStatusEnum('status').notNull().default('pending'),
+    gatewayReference: text('gateway_reference'),
+    createdAt: createdAt(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique('payment_attempts_order_revision_unique').on(t.orderId, t.revision),
+    check('payment_attempts_amount_nonnegative', sql`${t.amountCents} >= 0`),
+    check(
+      'payment_attempts_reference_iff_succeeded',
+      sql`(${t.status} = 'succeeded') = (${t.gatewayReference} is not null)`,
+    ),
+  ],
+)
+
 export const payments = pgTable(
   'payments',
   {
@@ -222,6 +267,10 @@ export const payments = pgTable(
     amountCents: cents('amount_cents').notNull(),
     idempotencyKey: text('idempotency_key').notNull().unique(),
     gatewayReference: text('gateway_reference').notNull(),
+    // Revision 9. Null only for payments recorded before attempts existed.
+    paymentAttemptId: integer('payment_attempt_id')
+      .unique()
+      .references(() => paymentAttempts.id),
     createdAt: createdAt(),
   },
   (t) => [check('payments_amount_nonnegative', sql`${t.amountCents} >= 0`)],
