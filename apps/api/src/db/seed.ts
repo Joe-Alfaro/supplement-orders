@@ -117,7 +117,10 @@ export async function truncateAll(db: Db) {
   await db.execute(sql`truncate table ${ALL_TABLES} restart identity cascade`)
 }
 
-async function seedProvider(db: Db, seed: SeedProvider) {
+/** The database or a transaction on it; seeding only inserts. */
+type Inserter = Pick<Db, 'insert'>
+
+async function seedProvider(db: Inserter, seed: SeedProvider) {
   const [user] = await db
     .insert(users)
     .values({ name: seed.name, role: 'provider' })
@@ -164,7 +167,7 @@ export interface SeedOptions {
 }
 
 /** Bulk patients alternate between the seeded providers. */
-async function seedBulkPatients(db: Db, providerIds: number[]) {
+async function seedBulkPatients(db: Inserter, providerIds: number[]) {
   const generated = generatePatients(BULK_PATIENT_COUNT)
   const inserted = await db
     .insert(users)
@@ -187,7 +190,7 @@ async function seedBulkPatients(db: Db, providerIds: number[]) {
  * their ids are the same with or without the bulk rows.
  */
 export async function seedDatabase(
-  db: Db,
+  db: Inserter,
   options: SeedOptions = {},
 ): Promise<SeedResult> {
   const seededProviders = await SEED_PROVIDERS.reduce<
@@ -215,4 +218,20 @@ export async function seedDatabase(
   }
 
   return { providers: seededProviders, products: seededProducts }
+}
+
+/**
+ * Loads the full demo seed (named and bulk rows) only if there are no users
+ * yet, so a deploy can run it every time without touching live data. Never
+ * truncates. The advisory lock makes concurrent runs wait, then see the rows.
+ * Returns whether it seeded.
+ */
+export async function seedIfEmpty(db: Db) {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('supplement-orders:seed'))`)
+    const existing = await tx.select({ id: users.id }).from(users).limit(1)
+    if (existing.length > 0) return false
+    await seedDatabase(tx, { bulk: true })
+    return true
+  })
 }
