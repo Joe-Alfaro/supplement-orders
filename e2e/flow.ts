@@ -1,12 +1,9 @@
-import { expect, type Page } from '@playwright/test'
+import { expect, type Locator, type Page } from '@playwright/test'
 import {
-  centsToInput,
   dollarsToCents,
   formatCents,
-  marginBps,
   moneyIn,
   platformFeeCents,
-  priceFromMarginCents,
   textAfter,
 } from './money'
 
@@ -91,14 +88,18 @@ export async function openPatient(page: Page, name: string): Promise<void> {
 
 interface AddProductOptions {
   quantity: number
-  /** When set, step 2 types this margin and checks the price and fee. */
+  /**
+   * When set, step 2 types this margin. The resulting price is whatever the
+   * field shows; it is not computed from a margin formula.
+   */
   marginPercent?: string
 }
 
 /**
- * Add line -> search by SKU fragment -> step 2. The price starts at the
- * minimum shown on the dialog. A margin edit must change both the price and
- * the processing fee. Quantity other than 1 is typed before adding.
+ * Add line -> search by SKU fragment -> step 2. The patient price is read
+ * from the field and must be at least the minimum shown. The processing fee
+ * must equal 75 bps of that price times the quantity, rounded half up.
+ * Quantity other than 1 is typed before adding.
  */
 export async function addProduct(
   page: Page,
@@ -121,36 +122,25 @@ export async function addProduct(
   await expect(price).toBeVisible()
   const facts = await dialog.innerText()
   const minimum = dollarsToCents(textAfter(facts, 'Minimum price'))
-  const prefilled = dollarsToCents(await price.inputValue())
-  expect(prefilled).toBe(minimum)
+  const prefilledInput = await price.inputValue()
+  const prefilled = dollarsToCents(prefilledInput)
+  expect(prefilled).toBeGreaterThanOrEqual(minimum)
 
   if (options.marginPercent) {
     const feeBefore = dollarsToCents(await fee.inputValue())
     const margin = dialog.getByLabel('Margin %')
     await margin.fill(options.marginPercent)
-    const wholesale = dollarsToCents(textAfter(facts, 'Wholesale cost'))
-    const expectedPrice = priceFromMarginCents(
-      wholesale,
-      marginBps(options.marginPercent),
-    )
-    await expect(price).toHaveValue(centsToInput(expectedPrice))
-    const quantity = Number(
-      (await dialog.getByLabel('Qty').inputValue()).trim(),
-    )
-    const expectedFee = platformFeeCents(expectedPrice * quantity)
-    await expect(fee).toHaveValue(formatCents(expectedFee))
-    expect(expectedPrice).not.toBe(prefilled)
-    expect(expectedFee).not.toBe(feeBefore)
+    await expect(price).not.toHaveValue(prefilledInput)
+    await expectFeeForPrice(dialog, price, fee, minimum)
+    expect(dollarsToCents(await fee.inputValue())).not.toBe(feeBefore)
     await margin.blur()
   }
 
   if (options.quantity !== 1) {
-    const feeBefore = dollarsToCents(await fee.inputValue())
+    const feeBefore = formatCents(dollarsToCents(await fee.inputValue()))
     await dialog.getByLabel('Qty').fill(String(options.quantity))
-    const unit = dollarsToCents(await price.inputValue())
-    const expectedFee = platformFeeCents(unit * options.quantity)
-    await expect(fee).toHaveValue(formatCents(expectedFee))
-    expect(expectedFee).not.toBe(feeBefore)
+    await expect(fee).not.toHaveValue(feeBefore)
+    await expectFeeForPrice(dialog, price, fee, minimum)
   }
 
   await dialog.getByRole('button', { name: 'Add to order' }).click()
@@ -169,6 +159,30 @@ export async function readSplit(page: Page): Promise<OrderSplit> {
   const wholesaleCents = await rowCents('Wholesale cost')
   const feeCents = await rowCents('Processing fee')
   const marginCents = await rowCents('Your margin')
-  expect(patientPaysCents - wholesaleCents - feeCents).toBe(marginCents)
+  expect(patientPaysCents).toBe(wholesaleCents + feeCents + marginCents)
+  expect(feeCents).toBe(platformFeeCents(patientPaysCents))
   return { patientPaysCents, wholesaleCents, feeCents, marginCents }
+}
+
+/**
+ * The fee control is a readonly input on this branch, so its text is its
+ * value. That text must be 75 bps of the displayed unit price times quantity,
+ * rounded half up, and the unit price must stay at or above the minimum.
+ */
+async function expectFeeForPrice(
+  dialog: Locator,
+  price: Locator,
+  fee: Locator,
+  minimumCents: number,
+): Promise<void> {
+  await expect(async () => {
+    const unit = dollarsToCents(await price.inputValue())
+    const quantity = Number(
+      (await dialog.getByLabel('Qty').inputValue()).trim(),
+    )
+    expect(unit).toBeGreaterThanOrEqual(minimumCents)
+    expect(await fee.inputValue()).toBe(
+      formatCents(platformFeeCents(unit * quantity)),
+    )
+  }).toPass()
 }

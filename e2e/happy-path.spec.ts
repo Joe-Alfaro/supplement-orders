@@ -14,8 +14,9 @@ import {
 import { moneyIn } from './money'
 
 // Small supplement_orders_e2e seed: the first provider, their first patient, and two products
-// chosen by SKU fragment. Vitamin D3 is priced at a 40% margin; magnesium stays
-// at its minimum price with quantity 2.
+// chosen by SKU fragment. Vitamin D3 gets Margin % 40, and the price is read
+// back from the field rather than computed. Magnesium stays at its prefilled
+// price with quantity 2.
 const PROVIDER = 'Dr. Maya Rivera (Provider)'
 const PATIENT = 'Jordan Lee'
 const PATIENT_USER = 'Jordan Lee (Patient)'

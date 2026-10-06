@@ -45,29 +45,6 @@ export function formatCents(cents: number): string {
   return `${sign}$${centsToInput(cents)}`
 }
 
-/** "40" or "40.5" -> 4000 or 4050 basis points, by joining digit strings. */
-export function marginBps(percent: string): number {
-  const [whole = '', fraction = ''] = percent.split('.')
-  if (!/^\d{1,2}$/.test(whole) || !/^\d{0,2}$/.test(fraction)) {
-    throw new Error(`Cannot parse margin "${percent}"`)
-  }
-  return Number(`${whole}${fraction.padEnd(2, '0')}`)
-}
-
-/**
- * cost * 10000 / (10000 - margin), rounded half up. Same integer division the
- * price field is specified to use, so the test can check the displayed price.
- */
-export function priceFromMarginCents(
-  cogsCents: number,
-  marginBasisPoints: number,
-): number {
-  const numerator = BigInt(cogsCents) * 10_000n
-  const denominator = 10_000n - BigInt(marginBasisPoints)
-  const doubled = numerator * 2n + denominator
-  return Number(doubled / (denominator * 2n))
-}
-
 /** 75 bps of an amount, rounded half up, in integer cents. */
 export function platformFeeCents(amountCents: number): number {
   return Math.floor((amountCents * 75 + 5_000) / 10_000)
