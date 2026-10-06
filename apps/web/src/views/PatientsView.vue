@@ -84,7 +84,7 @@ function onPage(event: DataTablePageEvent) {
       :meta-key-selection="false"
       :loading="loading"
       table-style="min-width: 40rem"
-      aria-label="Patients"
+      :table-props="{ 'aria-label': 'Patients' }"
       @page="onPage"
       @row-click="openPatient"
     >

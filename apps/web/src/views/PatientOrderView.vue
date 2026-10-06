@@ -3,7 +3,7 @@ import type { PatientOrderDetailDto } from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import Checkbox from 'primevue/checkbox'
 import { onMounted, ref } from 'vue'
-import { ApiRequestError, errorMessage, getOrder, payOrder } from '../api'
+import { ApiRequestError, handleApiError, getOrder, payOrder } from '../api'
 import {
   ErrorBanner,
   LinesTable,
@@ -52,7 +52,7 @@ async function pay() {
     )
   } catch (err) {
     // Nothing was persisted; the order stays payable.
-    payError.value = errorMessage(err)
+    payError.value = handleApiError(err)
   } finally {
     paying.value = false
   }

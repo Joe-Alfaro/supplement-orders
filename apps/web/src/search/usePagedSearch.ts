@@ -1,6 +1,6 @@
 import type { ListQuery, Page } from '@supplement-orders/domain'
 import { computed, onScopeDispose, ref, shallowRef } from 'vue'
-import { errorMessage } from '../api'
+import { handleApiError } from '../api'
 
 export interface PagedSearchOptions {
   initialQuery?: string
@@ -47,7 +47,7 @@ export function usePagedSearch<T>(
       })
       if (requestId === latestRequest) page.value = result
     } catch (err) {
-      if (requestId === latestRequest) error.value = errorMessage(err)
+      if (requestId === latestRequest) error.value = handleApiError(err)
     } finally {
       if (requestId === latestRequest) loading.value = false
     }

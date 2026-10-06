@@ -30,7 +30,11 @@ const balances = computed(() => totalCents.value === props.amountPaidCents)
 </script>
 
 <template>
-  <DataTable :value="entries" data-key="id" aria-label="Ledger">
+  <DataTable
+    :value="entries"
+    data-key="id"
+    :table-props="{ 'aria-label': 'Ledger' }"
+  >
     <Column header="Type" footer="Total of entries">
       <template #body="{ data }">{{ typeLabel(data) }}</template>
     </Column>

@@ -1,5 +1,5 @@
 import { ref, shallowRef } from 'vue'
-import { errorMessage } from './api'
+import { handleApiError } from './api'
 
 /** loading / error / data refs for a view that fetches on mount. */
 export function useResource<T>(loader: () => Promise<T>) {
@@ -13,7 +13,7 @@ export function useResource<T>(loader: () => Promise<T>) {
     try {
       data.value = await loader()
     } catch (err) {
-      error.value = errorMessage(err)
+      error.value = handleApiError(err)
     } finally {
       loading.value = false
     }
