@@ -1,0 +1,3 @@
+CREATE INDEX "orders_patient_created_idx" ON "orders" USING btree ("patient_id","created_at" desc,"id" desc);--> statement-breakpoint
+CREATE INDEX "orders_provider_status_activity_idx" ON "orders" USING btree ("provider_id","status",coalesce("paid_at", "cancelled_at", "sent_at", "created_at") desc,"id" desc);--> statement-breakpoint
+CREATE INDEX "orders_provider_activity_idx" ON "orders" USING btree ("provider_id",coalesce("paid_at", "cancelled_at", "sent_at", "created_at") desc,"id" desc);
