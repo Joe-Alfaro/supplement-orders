@@ -213,9 +213,8 @@ const ZERO_MARKUP_COSTS = Array.from(
   (_unused, cost) => cost,
 ).concat([1640, 2199, 2482, 7000])
 
-// One cent changes markup by 9925/c bps. Half a cent stays under 2 bps only
-// once cost is at least 2482; cost 100 can come back 50 bps off (74 -> 124).
-const ROUND_TRIP_COSTS = [2482, 2500, 4963, 5000, 7000, 10000, 12000]
+// Above the minimum, a round trip may miss by at most ceil(5000 / cost) + 1.
+// A fixed 2 bps cap does not hold: one cent at cost 100 is about 99 bps.
 
 function thrownBy(run: () => void): unknown {
   try {
@@ -252,10 +251,11 @@ function priceBelowMinimum(costs: readonly number[]): string | undefined {
   }, undefined)
 }
 
-function roundTripBeyondTwoBps(costs: readonly number[]): string | undefined {
+function roundTripPastBound(costs: readonly number[]): string | undefined {
   return costs.reduce<string | undefined>((found, cost) => {
-    if (found !== undefined) return found
+    if (found !== undefined || cost < 1) return found
     const minimum = minUnitPriceCents(cost)
+    const bound = Math.ceil(5000 / cost) + 1
     return SWEPT_MARKUPS.reduce<string | undefined>((hit, markupBps) => {
       if (hit !== undefined) return hit
       const unitPriceCents = priceFromMarkupBps(cost, markupBps)
@@ -265,8 +265,8 @@ function roundTripBeyondTwoBps(costs: readonly number[]): string | undefined {
         return `cost ${cost} at ${markupBps} bps priced ${unitPriceCents} and came back null`
       }
       const gap = Math.abs(recovered - markupBps)
-      if (gap > 2) {
-        return `cost ${cost} at ${markupBps} bps priced ${unitPriceCents} and came back ${recovered}`
+      if (gap > bound) {
+        return `cost ${cost} at ${markupBps} bps priced ${unitPriceCents} and came back ${recovered} (bound ${bound})`
       }
       return undefined
     }, undefined)
@@ -335,12 +335,12 @@ describe('priceFromMarkupBps', () => {
     expect(priceFromMarkupBps(1, 100_000)).toBe(11)
   })
 
-  it('stays within 2 bps above the minimum when half a cent is at most 2 bps', () => {
+  it('stays within ceil(5000 / cost) + 1 bps above the minimum', () => {
     const price = priceFromMarkupBps(1000, 30_000)
     expect(price).toBe(4030)
     expect(price).toBeGreaterThan(minUnitPriceCents(1000))
     expect(markupBpsFromPrice(1000, price)).toBe(29_998)
-    expect(roundTripBeyondTwoBps(ROUND_TRIP_COSTS)).toBeUndefined()
+    expect(roundTripPastBound(SWEEP_COSTS)).toBeUndefined()
   })
 
   it.each<RejectedMarkupCase>(REJECTED_MARKUP)(
