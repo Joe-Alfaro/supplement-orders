@@ -5,7 +5,8 @@ import type {
   ProductPageDto,
   ProviderOrderDetailDto,
 } from '@supplement-orders/domain'
-import { fireEvent, screen, within } from '@testing-library/vue'
+import userEvent, { type UserEvent } from '@testing-library/user-event'
+import { screen, within } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
@@ -57,20 +58,16 @@ const patient: PatientDto = {
 }
 
 async function renderBuilder(orderId?: string) {
-  const result = await renderWithRouter(OrderBuilderView, {
+  const view = await renderWithRouter(OrderBuilderView, {
     path: '/patients/7/orders/new',
     props: { patientId: '7', orderId },
   })
   await screen.findByRole('heading', { name: /New order|Draft order/ })
-  return result
+  return view
 }
 
 function sendButton() {
   return screen.getByRole('button', { name: 'Send to patient' })
-}
-
-function inputValue(label: string) {
-  return (screen.getByLabelText(label) as HTMLInputElement).value
 }
 
 /** A saved draft as the API returns it; only the fields the builder reads matter. */
@@ -99,53 +96,53 @@ function draftDetail(
 
 // Vitamin D3 costs $12.00, so its minimum price is 1200 + ceil(75 * 1200 / 9925) = $12.10.
 
-function dialogElement() {
+/** Replaces a field's text the way a user would: clear it, then type. */
+async function fill(user: UserEvent, label: string, value: string) {
+  const field = screen.getByLabelText(label)
+  await user.clear(field)
+  if (value !== '') await user.type(field, value)
+}
+
+function dialog() {
   return screen.getByRole('dialog')
 }
 
-/** The picker row for a product, found through its status cell. */
-function productRow(productId: number) {
-  const row = within(dialogElement())
-    .getByTestId(`product-status-${productId}`)
-    .closest('tr')
-  if (!row) throw new Error(`no row for product ${productId}`)
-  return row
+/** The picker row for a product, by its accessible name. */
+function productRow(name: string) {
+  return within(dialog()).getByRole('row', { name: new RegExp(name) })
 }
 
 async function expectDialogClosed() {
-  await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  await vi.waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
+  )
 }
 
-async function openAddProduct() {
-  await fireEvent.click(screen.getByRole('button', { name: 'Add line' }))
+async function openAddProduct(user: UserEvent) {
+  await user.click(screen.getByRole('button', { name: 'Add line' }))
   await screen.findByRole('heading', { name: /choose a product/ })
 }
 
-async function chooseProduct(name: string) {
-  await fireEvent.click(await within(dialogElement()).findByText(name))
+async function chooseProduct(user: UserEvent, name: string) {
+  await user.click(await within(dialog()).findByText(name))
   await screen.findByRole('heading', { name: `Add ${name}` })
 }
 
 /** Adds a product through the two-step modal. */
 async function addProduct(
+  user: UserEvent,
   name: string,
   fields: { qty?: string; margin?: string; price?: string } = {},
 ) {
-  await openAddProduct()
-  await chooseProduct(name)
-  if (fields.qty)
-    await fireEvent.update(screen.getByLabelText('Qty'), fields.qty)
-  if (fields.margin) {
-    await fireEvent.update(screen.getByLabelText('Margin %'), fields.margin)
-  }
+  await openAddProduct(user)
+  await chooseProduct(user, name)
+  if (fields.qty) await fill(user, 'Qty', fields.qty)
+  if (fields.margin) await fill(user, 'Margin %', fields.margin)
   // Step 2 prefills the minimum price; pass price: '' to leave the line incomplete.
   if (fields.price !== undefined) {
-    await fireEvent.update(
-      screen.getByLabelText('Patient price (each)'),
-      fields.price,
-    )
+    await fill(user, 'Patient price (each)', fields.price)
   }
-  await fireEvent.click(screen.getByRole('button', { name: 'Add to order' }))
+  await user.click(screen.getByRole('button', { name: 'Add to order' }))
 }
 
 beforeEach(() => {
@@ -157,54 +154,47 @@ beforeEach(() => {
 
 describe('OrderBuilderView', () => {
   it('shows a red Min hint and disables Send when priced below the minimum', async () => {
+    const user = userEvent.setup()
     await renderBuilder()
-    await addProduct('Vitamin D3')
+    await addProduct(user, 'Vitamin D3')
 
-    expect(screen.getByTestId('product-0').textContent).toBe('Vitamin D3')
-    await fireEvent.update(
-      screen.getByLabelText('Patient price for line 1'),
-      '12.05',
-    )
+    expect(screen.getByTestId('product-0')).toHaveTextContent('Vitamin D3')
+    await fill(user, 'Patient price for line 1', '12.05')
 
     const hint = screen.getByTestId('min-0')
-    expect(hint.textContent?.trim()).toBe('Min $12.10')
-    expect(hint.classList.contains('negative')).toBe(true)
-    expect(
-      screen
-        .getByLabelText('Patient price for line 1')
-        .getAttribute('aria-invalid'),
-    ).toBe('true')
-    expect(sendButton()).toHaveProperty('disabled', true)
+    expect(hint).toHaveTextContent('Min $12.10')
+    expect(hint).toHaveClass('negative')
+    expect(screen.getByLabelText('Patient price for line 1')).toHaveAttribute(
+      'aria-invalid',
+      'true',
+    )
+    expect(sendButton()).toBeDisabled()
 
-    await fireEvent.update(
-      screen.getByLabelText('Patient price for line 1'),
-      '12.10',
-    )
-    expect(screen.getByTestId('min-0').classList.contains('negative')).toBe(
-      false,
-    )
-    expect(sendButton()).toHaveProperty('disabled', false)
+    await fill(user, 'Patient price for line 1', '12.10')
+    expect(screen.getByTestId('min-0')).not.toHaveClass('negative')
+    expect(sendButton()).toBeEnabled()
   })
 
   it('links Margin % and Patient price both ways without overwriting the typed field', async () => {
+    const user = userEvent.setup()
     await renderBuilder()
-    await addProduct('Vitamin D3')
+    await addProduct(user, 'Vitamin D3')
 
     // 40% margin on $12.00 cost: 1200 * 10000 / 6000 = $20.00.
-    await fireEvent.update(screen.getByLabelText('Margin % for line 1'), '40')
-    expect(inputValue('Patient price for line 1')).toBe('20.00')
-    expect(inputValue('Margin % for line 1')).toBe('40')
+    await fill(user, 'Margin % for line 1', '40')
+    expect(screen.getByLabelText('Patient price for line 1')).toHaveValue(
+      '20.00',
+    )
+    expect(screen.getByLabelText('Margin % for line 1')).toHaveValue('40')
 
     // $30.00 price: (3000 - 1200) / 3000 = 60.00%.
-    await fireEvent.update(
-      screen.getByLabelText('Patient price for line 1'),
-      '30',
-    )
-    expect(inputValue('Margin % for line 1')).toBe('60.00')
-    expect(inputValue('Patient price for line 1')).toBe('30')
+    await fill(user, 'Patient price for line 1', '30')
+    expect(screen.getByLabelText('Margin % for line 1')).toHaveValue('60.00')
+    expect(screen.getByLabelText('Patient price for line 1')).toHaveValue('30')
   })
 
   it('saves incomplete lines as a draft and restores them on reload', async () => {
+    const user = userEvent.setup()
     vi.mocked(api.createOrder).mockResolvedValue(draftDetail([]))
     const saved = draftDetail([
       {
@@ -234,50 +224,53 @@ describe('OrderBuilderView', () => {
     ])
     vi.mocked(api.replaceOrderLines).mockResolvedValue(saved)
     vi.mocked(api.getOrder).mockResolvedValue(saved)
-    const first = await renderBuilder()
+    const view = await renderBuilder()
 
     // Added with a quantity but no price yet: incomplete, but saveable.
-    await addProduct('Vitamin D3', { qty: '2', price: '' })
-    expect(sendButton()).toHaveProperty('disabled', true)
+    await addProduct(user, 'Vitamin D3', { qty: '2', price: '' })
+    expect(sendButton()).toBeDisabled()
 
     const save = screen.getByRole('button', { name: 'Save draft' })
-    expect(save).toHaveProperty('disabled', false)
-    await fireEvent.click(save)
+    expect(save).toBeEnabled()
+    await user.click(save)
 
-    expect(await screen.findByText('Draft saved.')).toBeTruthy()
+    expect(await screen.findByText('Draft saved.')).toBeInTheDocument()
     expect(api.replaceOrderLines).toHaveBeenCalledWith(99, [
       { productId: 1, quantity: 2, unitPriceCents: null },
     ])
 
     // Reload the builder for the saved draft: both incomplete lines come back.
-    first.unmount()
+    view.unmount()
     await renderBuilder('99')
-    expect(screen.getByTestId('product-0').textContent).toBe('Vitamin D3')
-    expect(inputValue('Quantity for line 1')).toBe('2')
-    expect(inputValue('Patient price for line 1')).toBe('')
-    expect(screen.getByText('No product (remove this line)')).toBeTruthy()
-    expect(inputValue('Patient price for line 2')).toBe('25.00')
-    expect(sendButton()).toHaveProperty('disabled', true)
+    expect(screen.getByTestId('product-0')).toHaveTextContent('Vitamin D3')
+    expect(screen.getByLabelText('Quantity for line 1')).toHaveValue('2')
+    expect(screen.getByLabelText('Patient price for line 1')).toHaveValue('')
+    expect(
+      screen.getByText('No product (remove this line)'),
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText('Patient price for line 2')).toHaveValue(
+      '25.00',
+    )
+    expect(sendButton()).toBeDisabled()
   })
 
   it('keeps Send disabled until every line is complete and at its minimum', async () => {
+    const user = userEvent.setup()
     await renderBuilder()
-    expect(sendButton()).toHaveProperty('disabled', true)
+    expect(sendButton()).toBeDisabled()
 
-    await addProduct('Vitamin D3', { price: '20' })
-    expect(sendButton()).toHaveProperty('disabled', false)
+    await addProduct(user, 'Vitamin D3', { price: '20' })
+    expect(sendButton()).toBeEnabled()
 
-    await addProduct('Magnesium', { price: '' })
-    expect(sendButton()).toHaveProperty('disabled', true)
+    await addProduct(user, 'Magnesium', { price: '' })
+    expect(sendButton()).toBeDisabled()
 
-    await fireEvent.update(
-      screen.getByLabelText('Patient price for line 2'),
-      '20',
-    )
-    expect(sendButton()).toHaveProperty('disabled', false)
+    await fill(user, 'Patient price for line 2', '20')
+    expect(sendButton()).toBeEnabled()
   })
 
   it('places a server field error next to the offending input', async () => {
+    const user = userEvent.setup()
     vi.mocked(api.createOrder).mockResolvedValue(draftDetail([]))
     vi.mocked(api.replaceOrderLines).mockRejectedValue(
       new api.ApiRequestError(
@@ -288,17 +281,19 @@ describe('OrderBuilderView', () => {
       ),
     )
     await renderBuilder()
-    await addProduct('Vitamin D3', { price: '20' })
+    await addProduct(user, 'Vitamin D3', { price: '20' })
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Save draft' }))
+    await user.click(screen.getByRole('button', { name: 'Save draft' }))
 
-    expect(await screen.findByText('Only 3 left')).toBeTruthy()
-    expect(
-      screen.getByLabelText('Quantity for line 1').getAttribute('aria-invalid'),
-    ).toBe('true')
+    expect(await screen.findByText('Only 3 left')).toBeInTheDocument()
+    expect(screen.getByLabelText('Quantity for line 1')).toHaveAttribute(
+      'aria-invalid',
+      'true',
+    )
   })
 
   it('shows a field-less EMPTY_ORDER error in the general banner', async () => {
+    const user = userEvent.setup()
     vi.mocked(api.createOrder).mockResolvedValue(draftDetail([]))
     vi.mocked(api.replaceOrderLines).mockResolvedValue(draftDetail([]))
     vi.mocked(api.sendOrder).mockRejectedValue(
@@ -308,28 +303,37 @@ describe('OrderBuilderView', () => {
         'An order needs at least one line',
       ),
     )
-    const { container } = await renderBuilder()
-    await addProduct('Vitamin D3', { price: '20' })
+    await renderBuilder()
+    await addProduct(user, 'Vitamin D3', { price: '20' })
 
-    await fireEvent.click(sendButton())
+    await user.click(sendButton())
 
+    // One general banner, and no field marked invalid.
     const alert = await screen.findByRole('alert')
-    expect(alert.textContent).toContain('An order needs at least one line')
-    expect(container.querySelector('.field-error')).toBeNull()
+    expect(alert).toHaveTextContent('An order needs at least one line')
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    ;[
+      'Quantity for line 1',
+      'Margin % for line 1',
+      'Patient price for line 1',
+    ].forEach((label) =>
+      expect(screen.getByLabelText(label)).not.toHaveAttribute(
+        'aria-invalid',
+        'true',
+      ),
+    )
   })
 })
 
 describe('Add-product modal', () => {
   it('searches products on the server, debounced', async () => {
+    const user = userEvent.setup()
     await renderBuilder()
-    await openAddProduct()
-    expect(document.activeElement).toBe(
-      screen.getByLabelText('Search products'),
-    )
+    await openAddProduct(user)
+    const search = screen.getByRole('searchbox', { name: 'Search products' })
+    await vi.waitFor(() => expect(search).toHaveFocus())
 
-    const search = screen.getByLabelText('Search products')
-    await fireEvent.update(search, 'm')
-    await fireEvent.update(search, 'mag')
+    await user.type(search, 'mag')
 
     await vi.waitFor(() =>
       expect(api.searchProducts).toHaveBeenLastCalledWith({
@@ -343,107 +347,116 @@ describe('Add-product modal', () => {
       expect.objectContaining({ q: 'm' }),
     )
     await vi.waitFor(() =>
-      expect(within(dialogElement()).queryByText('Vitamin D3')).toBeNull(),
+      expect(
+        within(dialog()).queryByText('Vitamin D3'),
+      ).not.toBeInTheDocument(),
     )
-    expect(within(dialogElement()).getByText('Magnesium')).toBeTruthy()
+    expect(within(dialog()).getByText('Magnesium')).toBeInTheDocument()
   })
 
   it('disables products already on the order and out-of-stock products', async () => {
+    const user = userEvent.setup()
     await renderBuilder()
-    await addProduct('Vitamin D3')
-    await openAddProduct()
+    await addProduct(user, 'Vitamin D3')
+    await openAddProduct(user)
 
-    await within(dialogElement()).findByTestId('product-status-1')
-    const added = productRow(1)
-    expect(added.classList.contains('row-unavailable')).toBe(true)
-    expect(added.textContent).toContain('Already added')
-    const outOfStock = productRow(3)
-    expect(outOfStock.classList.contains('row-unavailable')).toBe(true)
-    expect(outOfStock.textContent).toContain('Out of stock')
+    await within(dialog()).findByText('Already added')
+    const added = productRow('Vitamin D3')
+    expect(added).toHaveClass('row-unavailable')
+    expect(added).toHaveTextContent('Already added')
+    const outOfStock = productRow('Zinc')
+    expect(outOfStock).toHaveClass('row-unavailable')
+    expect(outOfStock).toHaveTextContent('Out of stock')
 
-    await fireEvent.click(added)
-    await fireEvent.keyDown(outOfStock, { key: 'Enter', code: 'Enter' })
+    await user.click(added)
+    outOfStock.focus()
+    await user.keyboard('{Enter}')
     expect(
       screen.getByRole('heading', { name: /choose a product/ }),
-    ).toBeTruthy()
+    ).toBeInTheDocument()
   })
 
   it('goes to step 2 on a row, and Back keeps the search', async () => {
+    const user = userEvent.setup()
     await renderBuilder()
-    await openAddProduct()
-    await fireEvent.update(screen.getByLabelText('Search products'), 'mag')
+    await openAddProduct(user)
+    await user.type(
+      screen.getByRole('searchbox', { name: 'Search products' }),
+      'mag',
+    )
     await vi.waitFor(() =>
-      expect(within(dialogElement()).queryByText('Vitamin D3')).toBeNull(),
+      expect(
+        within(dialog()).queryByText('Vitamin D3'),
+      ).not.toBeInTheDocument(),
     )
 
-    const row = productRow(2)
-    await fireEvent.keyDown(row, { key: 'Enter', code: 'Enter' })
+    productRow('Magnesium').focus()
+    await user.keyboard('{Enter}')
     expect(
       await screen.findByRole('heading', { name: 'Add Magnesium' }),
-    ).toBeTruthy()
-    expect(document.activeElement).toBe(screen.getByLabelText('Qty'))
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText('Qty')).toHaveFocus()
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Back' }))
-    expect(inputValue('Search products')).toBe('mag')
-    expect(within(dialogElement()).queryByText('Vitamin D3')).toBeNull()
-    expect(within(dialogElement()).getByText('Magnesium')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Back' }))
+    expect(
+      screen.getByRole('searchbox', { name: 'Search products' }),
+    ).toHaveValue('mag')
+    expect(within(dialog()).queryByText('Vitamin D3')).not.toBeInTheDocument()
+    expect(within(dialog()).getByText('Magnesium')).toBeInTheDocument()
   })
 
   it('appends the line, closes, and focuses the new Qty input', async () => {
+    const user = userEvent.setup()
     await renderBuilder()
-    await addProduct('Vitamin D3', { qty: '3', margin: '40' })
+    await addProduct(user, 'Vitamin D3', { qty: '3', margin: '40' })
 
     await expectDialogClosed()
-    expect(screen.getByTestId('product-0').textContent).toBe('Vitamin D3')
-    expect(inputValue('Quantity for line 1')).toBe('3')
-    expect(inputValue('Patient price for line 1')).toBe('20.00')
+    expect(screen.getByTestId('product-0')).toHaveTextContent('Vitamin D3')
+    expect(screen.getByLabelText('Quantity for line 1')).toHaveValue('3')
+    expect(screen.getByLabelText('Patient price for line 1')).toHaveValue(
+      '20.00',
+    )
     await vi.waitFor(() =>
-      expect(document.activeElement).toBe(
-        screen.getByLabelText('Quantity for line 1'),
-      ),
+      expect(screen.getByLabelText('Quantity for line 1')).toHaveFocus(),
     )
   })
 
   it('links Margin % and price in step 2 and blocks a below-minimum price', async () => {
+    const user = userEvent.setup()
     await renderBuilder()
-    await openAddProduct()
-    await chooseProduct('Vitamin D3')
+    await openAddProduct(user)
+    await chooseProduct(user, 'Vitamin D3')
 
-    await fireEvent.update(screen.getByLabelText('Margin %'), '40')
-    expect(inputValue('Patient price (each)')).toBe('20.00')
+    await fill(user, 'Margin %', '40')
+    expect(screen.getByLabelText('Patient price (each)')).toHaveValue('20.00')
 
-    await fireEvent.update(
-      screen.getByLabelText('Patient price (each)'),
-      '12.05',
-    )
-    expect(inputValue('Margin %')).toBe('0.41')
-    await fireEvent.click(screen.getByRole('button', { name: 'Add to order' }))
+    await fill(user, 'Patient price (each)', '12.05')
+    expect(screen.getByLabelText('Margin %')).toHaveValue('0.41')
+    await user.click(screen.getByRole('button', { name: 'Add to order' }))
 
-    expect(screen.getByText('Price must be at least $12.10')).toBeTruthy()
-    expect(dialogElement()).toBeTruthy()
-    expect(screen.queryByTestId('product-0')).toBeNull()
+    expect(
+      screen.getByText('Price must be at least $12.10'),
+    ).toBeInTheDocument()
+    expect(dialog()).toBeInTheDocument()
+    expect(screen.queryByTestId('product-0')).not.toBeInTheDocument()
   })
 
   it('closes on Escape and returns focus to Add line', async () => {
+    const user = userEvent.setup()
     await renderBuilder()
-    await openAddProduct()
+    await openAddProduct(user)
     // Escape is live once the dialog has finished opening and focused search.
     await vi.waitFor(() =>
-      expect(document.activeElement).toBe(
-        screen.getByLabelText('Search products'),
-      ),
+      expect(
+        screen.getByRole('searchbox', { name: 'Search products' }),
+      ).toHaveFocus(),
     )
 
-    await fireEvent.keyDown(screen.getByLabelText('Search products'), {
-      key: 'Escape',
-      code: 'Escape',
-    })
+    await user.keyboard('{Escape}')
 
     await expectDialogClosed()
     await vi.waitFor(() =>
-      expect(document.activeElement).toBe(
-        screen.getByRole('button', { name: 'Add line' }),
-      ),
+      expect(screen.getByRole('button', { name: 'Add line' })).toHaveFocus(),
     )
   })
 })
@@ -456,10 +469,11 @@ describe('OrderBuilderView patient and stock', () => {
       screen.getByRole('heading', {
         name: 'New order for Jordan Lee · DOB 03/14/1984',
       }),
-    ).toBeTruthy()
+    ).toBeInTheDocument()
   })
 
   it('caps Qty on a reloaded line by the live stock from the API', async () => {
+    const user = userEvent.setup()
     vi.mocked(api.getOrder).mockResolvedValue(
       draftDetail([
         {
@@ -478,38 +492,44 @@ describe('OrderBuilderView patient and stock', () => {
     )
     await renderBuilder('99')
 
-    expect(screen.getByText(/3 in stock/)).toBeTruthy()
-    expect(screen.queryByText(/stock checked on send/)).toBeNull()
-    expect(sendButton()).toHaveProperty('disabled', false)
+    expect(screen.getByText(/3 in stock/)).toBeInTheDocument()
+    expect(screen.queryByText(/stock checked on send/)).not.toBeInTheDocument()
+    expect(sendButton()).toBeEnabled()
 
-    await fireEvent.update(screen.getByLabelText('Quantity for line 1'), '4')
-    expect(screen.getByText('Only 3 in stock')).toBeTruthy()
-    expect(sendButton()).toHaveProperty('disabled', true)
+    await fill(user, 'Quantity for line 1', '4')
+    expect(screen.getByText('Only 3 in stock')).toBeInTheDocument()
+    expect(sendButton()).toBeDisabled()
   })
 
   it('keeps price and margin as text inputs holding integer cents (no InputNumber)', async () => {
+    const user = userEvent.setup()
     vi.mocked(api.createOrder).mockResolvedValue(draftDetail([]))
     vi.mocked(api.replaceOrderLines).mockResolvedValue(draftDetail([]))
-    const { container } = await renderBuilder()
-    await openAddProduct()
-    await chooseProduct('Vitamin D3')
+    await renderBuilder()
+    await openAddProduct(user)
+    await chooseProduct(user, 'Vitamin D3')
 
-    // Step 2 of the modal: plain text inputs, no PrimeVue InputNumber.
-    expect(document.querySelector('.p-inputnumber')).toBeNull()
-    const modalPrice = screen.getByLabelText('Patient price (each)')
-    expect(modalPrice.getAttribute('type') ?? 'text').toBe('text')
-    await fireEvent.update(modalPrice, '12.50')
-    expect(inputValue('Patient price (each)')).toBe('12.50')
-    await fireEvent.click(screen.getByRole('button', { name: 'Add to order' }))
+    // InputNumber renders a spinbutton; money and percent fields must be plain textboxes.
+    expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('textbox', { name: 'Patient price (each)' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('textbox', { name: 'Margin %' }),
+    ).toBeInTheDocument()
+    await fill(user, 'Patient price (each)', '12.50')
+    expect(screen.getByLabelText('Patient price (each)')).toHaveValue('12.50')
+    await user.click(screen.getByRole('button', { name: 'Add to order' }))
 
-    const price = screen.getByLabelText('Patient price for line 1')
-    const margin = screen.getByLabelText('Margin % for line 1')
-    expect(container.querySelector('.p-inputnumber')).toBeNull()
-    expect(price.getAttribute('type') ?? 'text').toBe('text')
-    expect(margin.getAttribute('type') ?? 'text').toBe('text')
-    expect(inputValue('Patient price for line 1')).toBe('12.50')
+    expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('textbox', { name: 'Patient price for line 1' }),
+    ).toHaveValue('12.50')
+    expect(
+      screen.getByRole('textbox', { name: 'Margin % for line 1' }),
+    ).toBeInTheDocument()
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Save draft' }))
+    await user.click(screen.getByRole('button', { name: 'Save draft' }))
     await vi.waitFor(() =>
       expect(api.replaceOrderLines).toHaveBeenCalledWith(99, [
         { productId: 1, quantity: 1, unitPriceCents: 1250 },
@@ -518,41 +538,46 @@ describe('OrderBuilderView patient and stock', () => {
   })
 
   it('prefills Patient price with the minimum and derives Margin %', async () => {
+    const user = userEvent.setup()
     await renderBuilder()
-    await openAddProduct()
-    await chooseProduct('Vitamin D3')
+    await openAddProduct(user)
+    await chooseProduct(user, 'Vitamin D3')
 
     // Minimum for a $12.00 cost is $12.10; (1210 - 1200) / 1210 = 0.83%.
-    expect(inputValue('Patient price (each)')).toBe('12.10')
-    expect(inputValue('Margin %')).toBe('0.83')
+    expect(screen.getByLabelText('Patient price (each)')).toHaveValue('12.10')
+    expect(screen.getByLabelText('Margin %')).toHaveValue('0.83')
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Add to order' }))
-    expect(inputValue('Patient price for line 1')).toBe('12.10')
-    expect(sendButton()).toHaveProperty('disabled', false)
+    await user.click(screen.getByRole('button', { name: 'Add to order' }))
+    expect(screen.getByLabelText('Patient price for line 1')).toHaveValue(
+      '12.10',
+    )
+    expect(sendButton()).toBeEnabled()
   })
 
   it('shows the line processing fee as plain text, in step 2 and in the table', async () => {
-    const { container } = await renderBuilder()
-    await openAddProduct()
-    await chooseProduct('Vitamin D3')
+    const user = userEvent.setup()
+    await renderBuilder()
+    await openAddProduct(user)
+    await chooseProduct(user, 'Vitamin D3')
 
-    await fireEvent.update(screen.getByLabelText('Qty'), '3')
-    await fireEvent.update(screen.getByLabelText('Patient price (each)'), '20')
+    await fill(user, 'Qty', '3')
+    await fill(user, 'Patient price (each)', '20')
 
-    // 75 bps of the $60.00 line, half up: 45 cents. Plain text, not a control.
-    const fee = screen.getByLabelText('Processing fee (0.75%)')
-    expect(fee.tagName).toBe('OUTPUT')
-    expect(fee.textContent).toBe('$0.45')
-    expect(screen.queryByRole('textbox', { name: /Processing fee/ })).toBeNull()
-    await fireEvent.update(screen.getByLabelText('Patient price (each)'), '')
-    expect(fee.textContent).toBe('')
-    await fireEvent.update(screen.getByLabelText('Patient price (each)'), '20')
+    // 75 bps of the $60.00 line, half up: 45 cents. A labelled <output>, not a control.
+    const fee = screen.getByRole('status', { name: 'Processing fee (0.75%)' })
+    expect(fee).toHaveTextContent('$0.45')
+    expect(
+      screen.queryByRole('textbox', { name: /Processing fee/ }),
+    ).not.toBeInTheDocument()
+    await fill(user, 'Patient price (each)', '')
+    expect(fee).toBeEmptyDOMElement()
+    await fill(user, 'Patient price (each)', '20')
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Add to order' }))
-    expect(screen.getByTestId('fee-0').textContent?.trim()).toBe('$0.45')
+    await user.click(screen.getByRole('button', { name: 'Add to order' }))
+    expect(screen.getByTestId('fee-0')).toHaveTextContent('$0.45')
     expect(
       screen.getByRole('columnheader', { name: 'Processing fee (0.75%)' }),
-    ).toBeTruthy()
-    expect(container.textContent).not.toMatch(/Platform fee/i)
+    ).toBeInTheDocument()
+    expect(document.body).not.toHaveTextContent(/Platform fee/i)
   })
 })

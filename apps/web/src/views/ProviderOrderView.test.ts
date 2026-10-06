@@ -75,15 +75,19 @@ const paid: ProviderOrderDetailDto = {
 describe('ProviderOrderView', () => {
   it('labels the fee "Processing fee" in the split and ledger, and checks the total', async () => {
     vi.mocked(api.getOrder).mockResolvedValue(paid)
-    const { container } = await renderWithRouter(ProviderOrderView, {
+    await renderWithRouter(ProviderOrderView, {
       path: '/orders/42',
       props: { orderId: '42' },
     })
     await screen.findByText('Total of entries')
 
-    expect(screen.getByRole('cell', { name: 'Processing fee' })).toBeTruthy()
-    expect(screen.getByText(/Equals amount paid/)).toBeTruthy()
-    expect(container.textContent).toMatch(/Processing fee \(0\.75%\)/)
-    expect(container.textContent).not.toMatch(/Platform fee/i)
+    expect(
+      screen.getByRole('cell', { name: 'Processing fee' }),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/Equals amount paid/)).toBeInTheDocument()
+    expect(
+      screen.getByRole('rowheader', { name: /^Processing fee \(0\.75%\)/ }),
+    ).toBeInTheDocument()
+    expect(document.body).not.toHaveTextContent(/Platform fee/i)
   })
 })

@@ -1,5 +1,6 @@
 import type { PatientOrderSummaryDto } from '@supplement-orders/domain'
-import { fireEvent, screen } from '@testing-library/vue'
+import { screen } from '@testing-library/vue'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
@@ -36,9 +37,10 @@ beforeEach(() => {
 
 describe('MyOrdersView', () => {
   it('opens the order when any cell of its row is clicked', async () => {
+    const user = userEvent.setup()
     const { router } = await renderWithRouter(MyOrdersView)
 
-    await fireEvent.click(await screen.findByText('Dr. Owen Brooks'))
+    await user.click(await screen.findByText('Dr. Owen Brooks'))
 
     await vi.waitFor(() =>
       expect(router.currentRoute.value.path).toBe('/my-orders/12'),
@@ -46,13 +48,15 @@ describe('MyOrdersView', () => {
   })
 
   it('opens the order when Enter is pressed on a focused row', async () => {
+    const user = userEvent.setup()
     const { router } = await renderWithRouter(MyOrdersView)
-    const row = (await screen.findByText('Dr. Maya Rivera')).closest('tr')
-    if (!row) throw new Error('row not found')
+    const row = await screen.findByRole('row', { name: /Dr. Maya Rivera/ })
 
-    expect(row.tabIndex).toBe(0)
-    row.focus()
-    await fireEvent.keyDown(row, { key: 'Enter', code: 'Enter' })
+    // The first row is the table's single tab stop; arrow keys move between rows.
+    expect(row).toHaveAttribute('tabindex', '0')
+    await user.tab()
+    expect(row).toHaveFocus()
+    await user.keyboard('{Enter}')
 
     await vi.waitFor(() =>
       expect(router.currentRoute.value.path).toBe('/my-orders/11'),

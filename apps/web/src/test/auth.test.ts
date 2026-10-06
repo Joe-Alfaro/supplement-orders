@@ -1,5 +1,6 @@
 import type { UserDto } from '@supplement-orders/domain'
-import { fireEvent, render, screen } from '@testing-library/vue'
+import userEvent from '@testing-library/user-event'
+import { render, screen } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory } from 'vue-router'
 import * as api from '../api'
@@ -36,7 +37,8 @@ const users: UserDto[] = [
   },
 ]
 
-async function renderApp(path: string) {
+/** Mounts the whole app at `path` with the real router guards; returns the router. */
+async function startApp(path: string) {
   const router = createAppRouter(createMemoryHistory())
   await router.push(path)
   await router.isReady()
@@ -58,23 +60,25 @@ beforeEach(() => {
 
 describe('stub login', () => {
   it('redirects signed-out navigation to /login with no header', async () => {
-    const router = await renderApp('/patients')
+    const router = await startApp('/patients')
 
     expect(router.currentRoute.value.path).toBe('/login')
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeTruthy()
-    expect(screen.getByText(/Authentication is stubbed/)).toBeTruthy()
-    expect(screen.queryByText(/Signed in as/)).toBeNull()
+    expect(
+      await screen.findByRole('heading', { name: 'Sign in' }),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/Authentication is stubbed/)).toBeInTheDocument()
+    expect(screen.queryByText(/Signed in as/)).not.toBeInTheDocument()
   })
 
   it('signs in, stores the user, and lands on the persona home', async () => {
-    const router = await renderApp('/login')
+    const user = userEvent.setup()
+    const router = await startApp('/login')
 
-    // PrimeVue Select: open the combobox, then pick the option (on mousedown).
-    await fireEvent.click(await screen.findByRole('combobox', { name: 'User' }))
-    await fireEvent.mouseDown(
+    await user.click(await screen.findByRole('combobox', { name: 'User' }))
+    await user.click(
       await screen.findByRole('option', { name: 'Jordan Lee (Patient)' }),
     )
-    await fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+    await user.click(screen.getByRole('button', { name: 'Sign in' }))
 
     await vi.waitFor(() =>
       expect(router.currentRoute.value.path).toBe('/my-orders'),
@@ -82,22 +86,21 @@ describe('stub login', () => {
     expect(localStorage.getItem('supplementOrders.userId')).toBe('2')
     expect(
       await screen.findByText(/Signed in as Jordan Lee \(Patient\)/),
-    ).toBeTruthy()
+    ).toBeInTheDocument()
   })
 
   it('signs out, clearing the stored user', async () => {
+    const user = userEvent.setup()
     useCurrentUser().signIn(1)
-    const router = await renderApp('/')
+    const router = await startApp('/')
     expect(router.currentRoute.value.path).toBe('/patients')
 
-    await fireEvent.click(
-      await screen.findByRole('button', { name: 'Sign out' }),
-    )
+    await user.click(await screen.findByRole('button', { name: 'Sign out' }))
 
     await vi.waitFor(() =>
       expect(router.currentRoute.value.path).toBe('/login'),
     )
     expect(localStorage.getItem('supplementOrders.userId')).toBeNull()
-    expect(screen.queryByText(/Signed in as/)).toBeNull()
+    expect(screen.queryByText(/Signed in as/)).not.toBeInTheDocument()
   })
 })
