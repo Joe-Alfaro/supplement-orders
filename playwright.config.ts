@@ -1,7 +1,10 @@
 import { defineConfig } from '@playwright/test'
 
-// One shared supplement_orders_e2e database, reset once in globalSetup. Specs must not run
-// in parallel or they would see each other's orders, stock, and dashboard totals.
+// One shared supplement_orders_e2e database, created, migrated and reset to the small seed by
+// the API server's own command before it starts, so the health check below only
+// passes once the database exists (Codex audit L2: Playwright starts webServer
+// before globalSetup). Specs must not run in parallel or they would see each
+// other's orders, stock, and dashboard totals.
 const retries = process.env.CI ? 2 : 0
 
 export default defineConfig({
@@ -11,7 +14,6 @@ export default defineConfig({
   retries,
   timeout: 90_000,
   expect: { timeout: 10_000 },
-  globalSetup: './e2e/global-setup.ts',
   use: {
     baseURL: 'http://localhost:5174',
     headless: true,
@@ -28,7 +30,7 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: 'npm run e2e:api',
+      command: 'npm run e2e:db && npm run e2e:api',
       url: 'http://localhost:3100/api/health',
       reuseExistingServer: false,
       timeout: 120_000,
