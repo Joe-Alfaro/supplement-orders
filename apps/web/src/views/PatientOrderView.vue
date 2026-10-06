@@ -2,6 +2,7 @@
 import type { PatientOrderDetailDto } from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import Checkbox from 'primevue/checkbox'
+import Message from 'primevue/message'
 import { onMounted, ref } from 'vue'
 import { ApiRequestError, handleApiError, getOrder, payOrder } from '../api'
 import {
@@ -70,6 +71,17 @@ async function pay() {
       <dt>Ship to</dt>
       <dd>{{ order.patientAddress }}</dd>
     </dl>
+
+    <!-- Informational, not an error: polite status instead of Message's assertive alert. -->
+    <Message
+      v-if="order.status === 'cancelled'"
+      severity="warn"
+      class="banner"
+      role="status"
+      aria-live="polite"
+    >
+      This order was cancelled by your provider.
+    </Message>
 
     <h2>Items</h2>
     <LinesTable :lines="order.lines" />

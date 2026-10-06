@@ -1,5 +1,5 @@
 import type { PatientOrderSummaryDto } from '@supplement-orders/domain'
-import { screen } from '@testing-library/vue'
+import { screen, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
@@ -65,5 +65,25 @@ describe('MyOrdersView', () => {
     await vi.waitFor(() =>
       expect(router.currentRoute.value.path).toBe('/my-orders/11'),
     )
+  })
+
+  it('lists a cancelled order with a Cancelled tag', async () => {
+    vi.mocked(api.listOrders).mockResolvedValue([
+      order(11, 'Dr. Maya Rivera'),
+      {
+        ...order(12, 'Dr. Owen Brooks'),
+        status: 'cancelled',
+        cancelledAt: '2026-10-06T09:30:00.000Z',
+      },
+    ])
+    await renderWithRouter(MyOrdersView)
+
+    const row = await screen.findByRole('row', { name: /Dr. Owen Brooks/ })
+    expect(within(row).getByText('Cancelled')).toBeInTheDocument()
+    expect(
+      within(screen.getByRole('row', { name: /Dr. Maya Rivera/ })).getByText(
+        'Awaiting payment',
+      ),
+    ).toBeInTheDocument()
   })
 })
