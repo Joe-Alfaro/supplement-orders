@@ -80,8 +80,30 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 **Cancel shares pay's row lock**
 
-- **Decision:** a provider may cancel a `draft` or `pending_payment` order. Cancel takes the same `FOR UPDATE` lock as pay, so exactly one of a racing cancel and pay wins and the other gets a 409. A test runs six concurrent pairs.
+- **Decision:** cancel takes the same `FOR UPDATE` lock as pay, so exactly one of a racing cancel and pay wins and the other gets a 409. A test runs six concurrent pairs. (Which orders can be cancelled changed in revision 8; see the next section.)
 - **Tradeoff:** cancelling a paid order (a refund) is not supported.
+
+## Order lifecycle (revision 8)
+
+**Reversed: cancel drafts -> delete drafts, cancel only orders awaiting payment**
+
+- **First decision (revision 6):** a provider could cancel a `draft` or a `pending_payment` order.
+- **Final decision:** a draft is deleted outright (`DELETE /api/orders/:id`, behind a confirmation), and Cancel applies only to orders awaiting payment.
+- **Why it changed:** product owner feedback after using the app. A hard delete is safe for a draft: it was never sent, so it has no payment, ledger rows or patient-facing history, and nothing references it.
+- **Alternative:** a soft delete with a `deleted_at` column, which keeps more audit history. A draft has no financial or patient-facing history worth keeping.
+- **Tradeoff:** deleting can't be undone. Delete takes the order row lock, so it can't race a send: whichever commits first wins, and the other gets a 409 or 404.
+
+**Reopen a cancelled order as a draft**
+
+- **Decision:** `POST /api/orders/:id/reopen` moves `cancelled` back to `draft`. It clears `sentAt`, `cancelledAt` and the stored totals, keeps the lines, and takes the provider to the builder. The patient no longer sees the order until it's sent again. Stock isn't touched, because only payment moves stock.
+- **Why:** product owner request. Keeping the lines means a cancelled order can be corrected and re-sent without rebuilding it.
+- **Alternative:** allow reopening paid orders. That would need refunds, which are out of scope.
+- **Tradeoff:** an order's history is overwritten in place: after a reopen, the earlier send and cancel times are gone. A full status history would need an events table.
+
+**Human-readable 409 messages**
+
+- **Decision:** wrong-status errors say what happened in the UI's own words, for example "This order is paid; only orders awaiting payment can be cancelled." The status names come from one table, `ORDER_STATUS_LABELS`, in the domain package, which the UI's status tags also use.
+- **Why:** the UI shows these messages in its error banner, for example when an order changed status in another tab. Raw codes like `pending_payment` would read as jargon there.
 
 ## Identity and auth
 
@@ -127,6 +149,32 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 - **Decision:** inputs inside table rows are named with `aria-labelledby`, pointing at the column header plus the row's product name (for example "Qty Magnesium Glycinate 400 mg (90 caps)"), not with visually hidden labels.
 - **Why:** every word of the accessible name is visible on screen (WCAG 2.5.3, label in name), without repeating a label in every row.
 
+**Orders tab with a multi-select status filter**
+
+- **Decision:** a top-level Orders tab lists the provider's orders, with a multi-select Status filter and a select-all box. The default is all statuses, most recent activity first. An empty selection also means all statuses, with the placeholder "All statuses". `GET /api/orders` takes a comma list of statuses.
+- **Why:** before this, a provider could only find an order through its patient or the dashboard's awaiting-payment table. The product owner wanted, for example, everything except Paid: select all, then uncheck Paid. A single-select can't express that.
+- **History:** the first version defaulted to Awaiting payment only. The product owner changed the default to all statuses (revision 8d).
+- **Alternative:** treat an empty selection as "show nothing". That's more literal, but an empty table with no explanation is confusing.
+- **Tradeoff:** a small asymmetry (no boxes checked shows everything), which the placeholder makes explicit. The Patients list's latest-order-status filter stays single-select because nobody asked for more.
+
+**Dashboard links instead of dashboard tables**
+
+- **Decision:** the dashboard keeps its three tiles and the inventory, and replaces its awaiting-payment and paid-orders tables with "See paid orders →" and "See orders awaiting payment →" links into the Orders tab with that filter applied.
+- **Why:** once the Orders tab existed, the dashboard tables duplicated it. One list is the single source of truth.
+- **Tradeoff:** the dashboard loses its at-a-glance list of pending orders; it's one click away. The dashboard API still returns the unused paid-orders list, left in place to avoid contract-test churn during integration.
+
+**All list state in the URL**
+
+- **Decision:** filters, search text and page for Orders, Patients and the inventory live in query parameters. Defaults are omitted, a filter change resets the page, typing updates the URL with `router.replace`, and filter and page changes use `router.push`.
+- **Why:** links, reloads, bookmarks and Back/Forward restore exactly the same view, and the dashboard links are just URLs.
+- **Alternative:** component state only, which is simpler but loses the view on reload. A store library, which the app doesn't otherwise need.
+- **Tradeoff:** every list view has to parse and validate its query parameters.
+
+**Centered content column**
+
+- **Decision:** page content is centered in a column with a 1200px max width; the header bar stays full width with its contents aligned to the column. Wide tables scroll inside the column.
+- **Why:** on wide windows everything hugged the left edge.
+
 ## Testing and process
 
 **Cross-model, test-first development**
@@ -152,23 +200,53 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 - **Decision:** ESLint encodes the code style rules: no `for` loops, no `any`, no `var`, `prefer-const`, no nested ternaries, plus the Testing Library rules.
 - **Why:** several agents wrote code in parallel. Lint enforces the rules mechanically instead of relying on each agent remembering them.
 
+## Deployment
+
+**Railway, one service plus Postgres**
+
+- **Decision:** deploy to Railway as a single Node service that serves both the API and the built SPA, plus a Railway Postgres service. Node 22 LTS, built with Railpack. Deploys run `railway up` from `main`.
+- **Why:** one deployable, one origin, no CORS, matching the architecture's single-service plan. Railway Postgres supports the `pg_trgm` extension the search migration needs.
+- **Alternatives:** separate static hosting for the SPA (two deploys and CORS); Neon for Postgres (also supports `pg_trgm`, but one more account and provider).
+- **Tradeoff:** Railway's repo auto-deploy supports only GitHub and this repository is on GitLab, so deploys are manual. Railway has deprecated Config as Code, so `railway.json` is a record and the settings live on the service; recreating the service means applying them again.
+
+**Simulated gateway failure off in production**
+
+- **Decision:** `NODE_ENV=production` on the deployed service, which disables the "Simulate gateway failure (dev only)" control.
+- **Why:** a public URL shouldn't expose a test hook. The decline and rollback path is demonstrated locally and covered by tests.
+- **Tradeoff:** the rollback can't be shown on the live demo.
+
+**Full demo seed, loaded only into an empty database**
+
+- **Decision:** the pre-deploy step runs migrations, then `db:seed:if-empty`, which loads the full demo seed (named users plus 300 products and 250 patients) only when there are no users. `db:seed` stays the destructive local reset.
+- **Why:** the demo needs enough data for search and pagination to mean something, and redeploying must never wipe what visitors or the demo created.
+- **Tradeoff:** the live data drifts as people use the demo; resetting it is a deliberate manual step.
+
+**Stubbed auth on a public URL (accepted risk)**
+
+- **Decision:** the public demo uses the same stub login: anyone with the URL can sign in as any seeded user.
+- **Why:** real auth is out of scope for the brief, and all the data is fake. The README and the login screen both say auth is stubbed.
+- **Tradeoff:** visitors can create, pay or cancel orders as anyone, so the live data isn't trustworthy and the dashboard totals can change between visits.
+
 ## What we cut
 
-- Refunds and cancelling paid orders.
+- Refunds, cancelling paid orders, and reopening paid orders.
 - Provider payouts. The ledger records what's owed; nothing moves money to providers.
 - Real payments, auth, email, shipping, tax.
 - Date-range filters, CSV export and charts on the dashboard. A platform-wide (admin) revenue view.
 - Inventory management. Stock only goes down on payment; there's no restocking path in the app.
 - A database-level guard against ledger updates or deletes.
-- Deployment. The plan is written down (single Node service plus managed Postgres) but not executed.
-- Dark mode, responsive layout work, internationalization.
+- Automated deploys. Deploys run `railway up` by hand because Railway's auto-deploy supports only GitHub.
+- Order status history. Reopen overwrites the earlier send and cancel times.
+- Dark mode, responsive layout work beyond the centered column, internationalization.
 
 ## What we'd do next
 
-1. Deploy: serve the built SPA from the API process, run on a managed Postgres with `pg_trgm` (for example Neon), set `NODE_ENV=production`.
+1. Deploy from CI (a GitHub mirror or a CI job with a Railway token) instead of `railway up` by hand.
 2. Payment reconciliation for a charge whose transaction never committed, or move to an outbox and webhook flow.
 3. Refunds as negative ledger entries, and a payout report per provider.
 4. Real authentication and role-based access behind the existing `Auth` interface, with audit logging on PHI reads.
 5. A database trigger that makes `ledger_entries` append-only and checks each payment's entries sum to its amount.
 6. Rate limiting, structured logging with order and payment ids, and alerting on ledger imbalance or post-charge rollback.
 7. Date filters on the dashboard and a platform-level GMV and fee report.
+8. Remove the unused paid-orders list from the dashboard API and the unused `lower(name)` indexes.
+9. An order events table, so reopen and cancel keep a full status history.
