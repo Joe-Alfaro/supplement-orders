@@ -1,6 +1,6 @@
 import {
   parseDateOfBirthQuery,
-  type ListQuery,
+  type ListPatientsQuery,
   type PatientDto,
   type PatientPageDto,
 } from '@supplement-orders/domain'
@@ -34,10 +34,12 @@ function patient(
 }
 
 /** A fake GET /api/patients with 312 patients in total. */
-function patientPage(query: ListQuery): PatientPageDto {
+function patientPage(query: ListPatientsQuery): PatientPageDto {
   const offset = query.offset ?? 0
   const limit = query.limit ?? 25
-  if (query.q === 'nobody') return { items: [], total: 0, offset, limit }
+  if (query.q === 'nobody' || query.latestStatus === 'cancelled') {
+    return { items: [], total: 0, offset, limit }
+  }
   const twins = [
     patient(901, 'Avery Abbott', '1984-03-12'),
     patient(902, 'Avery Abbott', '1991-11-30'),
@@ -196,4 +198,65 @@ describe('PatientsView', () => {
       expect(screen.getByText('03/12/1984')).toBeInTheDocument()
     },
   )
+
+  it('filters by latest order status on the server and keeps it in the URL', async () => {
+    const user = userEvent.setup()
+    const { router } = await renderWithRouter(PatientsView, {
+      path: '/patients?q=lee',
+    })
+    await screen.findByText('Showing 1–25 of 312')
+
+    const filter = screen.getByRole('combobox', { name: 'Latest order status' })
+    expect(filter).toHaveTextContent('Any')
+    await user.click(filter)
+    await user.click(await screen.findByRole('option', { name: 'Paid' }))
+
+    // Combined with the search, back on the first page.
+    await vi.waitFor(() =>
+      expect(api.searchPatients).toHaveBeenLastCalledWith({
+        q: 'lee',
+        offset: 0,
+        limit: 25,
+        latestStatus: 'paid',
+      }),
+    )
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.query).toEqual({
+        q: 'lee',
+        status: 'paid',
+      }),
+    )
+  })
+
+  it('starts from ?status= in the URL', async () => {
+    await renderWithRouter(PatientsView, { path: '/patients?status=none' })
+
+    expect(
+      await screen.findByRole('combobox', { name: 'Latest order status' }),
+    ).toHaveTextContent('No orders')
+    expect(api.searchPatients).toHaveBeenCalledWith({
+      q: '',
+      offset: 0,
+      limit: 25,
+      latestStatus: 'none',
+    })
+  })
+
+  it('shows a filter-specific empty state and clears filters', async () => {
+    const user = userEvent.setup()
+    const { router } = await renderWithRouter(PatientsView, {
+      path: '/patients?status=cancelled',
+    })
+
+    expect(
+      await screen.findByText('No patients whose latest order is cancelled.'),
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }))
+
+    expect(await screen.findByText('Showing 1–25 of 312')).toBeInTheDocument()
+    expect(
+      screen.getByRole('combobox', { name: 'Latest order status' }),
+    ).toHaveTextContent('Any')
+    await vi.waitFor(() => expect(router.currentRoute.value.query).toEqual({}))
+  })
 })

@@ -3,6 +3,9 @@ import type {
   CreateOrderRequest,
   DashboardDto,
   ListOrdersQuery,
+  ListPatientsQuery,
+  OrderListStatusFilter,
+  ProviderOrderListPageDto,
   ListQuery,
   OrderDetailDto,
   OrderLineInput,
@@ -38,8 +41,27 @@ export function searchProducts(query: ListQuery = {}) {
   return request<ProductPageDto>('GET', `/products${listQueryString(query)}`)
 }
 
-export function searchPatients(query: ListQuery = {}) {
-  return request<PatientPageDto>('GET', `/patients${listQueryString(query)}`)
+export function searchPatients(query: ListPatientsQuery = {}) {
+  const search = listQueryString(query)
+  const filter = query.latestStatus
+    ? `${search ? '&' : '?'}latestStatus=${query.latestStatus}`
+    : ''
+  return request<PatientPageDto>('GET', `/patients${search}${filter}`)
+}
+
+/** GET /api/orders?status= (provider): one page of orders with that status, or `all`. */
+export function listProviderOrders(
+  query: { status: OrderListStatusFilter } & Pick<
+    ListOrdersQuery,
+    'offset' | 'limit'
+  >,
+) {
+  const search = listQueryString(query)
+  const params = search ? `&${search.slice(1)}` : ''
+  return request<ProviderOrderListPageDto>(
+    'GET',
+    `/orders?status=${query.status}${params}`,
+  )
 }
 
 export function getPatient(patientId: number) {
