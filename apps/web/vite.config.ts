@@ -19,5 +19,8 @@ export default defineConfig(({ mode }) => ({
     environment: 'jsdom',
     include: ['src/**/*.test.ts'],
     setupFiles: ['src/test/setup.ts'],
+    // userEvent typing through PrimeVue inputs is slow when the machine is busy
+    // (parallel sessions); 5s timed out under load though no assertion failed.
+    testTimeout: 15_000,
   },
 }))

@@ -101,9 +101,13 @@ function draftDetail(
 
 // Vitamin D3 costs $12.00, so its minimum price is 1200 + ceil(75 * 1200 / 9925) = $12.10.
 
-/** Replaces a field's text the way a user would: clear it, then type. */
-async function fill(user: UserEvent, label: string, value: string) {
-  const field = screen.getByLabelText(label)
+/**
+ * Replaces a text field's value the way a user would: clear it, then type.
+ * Fields are found by exact accessible name; in-row inputs are named by their
+ * column header plus the row's product, e.g. "Qty Vitamin D3".
+ */
+async function fill(user: UserEvent, name: string, value: string) {
+  const field = screen.getByRole('textbox', { name })
   await user.clear(field)
   if (value !== '') await user.type(field, value)
 }
@@ -164,7 +168,7 @@ describe('OrderBuilderView', () => {
     await addProduct(user, 'Vitamin D3')
 
     expect(screen.getByTestId('product-0')).toHaveTextContent('Vitamin D3')
-    await fill(user, 'Patient price for line 1', '12.05')
+    await fill(user, 'Patient price (each) Vitamin D3', '12.05')
     expect(
       screen.getByRole('table', { name: 'Order lines' }),
     ).toBeInTheDocument()
@@ -172,13 +176,12 @@ describe('OrderBuilderView', () => {
     const hint = screen.getByTestId('min-0')
     expect(hint).toHaveTextContent('Min $12.10')
     expect(hint).toHaveClass('negative')
-    expect(screen.getByLabelText('Patient price for line 1')).toHaveAttribute(
-      'aria-invalid',
-      'true',
-    )
+    expect(
+      screen.getByRole('textbox', { name: 'Patient price (each) Vitamin D3' }),
+    ).toHaveAttribute('aria-invalid', 'true')
     expect(sendButton()).toBeDisabled()
 
-    await fill(user, 'Patient price for line 1', '12.10')
+    await fill(user, 'Patient price (each) Vitamin D3', '12.10')
     expect(screen.getByTestId('min-0')).not.toHaveClass('negative')
     expect(sendButton()).toBeEnabled()
   })
@@ -189,16 +192,22 @@ describe('OrderBuilderView', () => {
     await addProduct(user, 'Omega-3')
 
     // 300% net markup on a $10.00 cost is $40.30 (contract reference value).
-    await fill(user, 'Markup % for line 1', '300')
-    expect(screen.getByLabelText('Patient price for line 1')).toHaveValue(
-      '40.30',
-    )
-    expect(screen.getByLabelText('Markup % for line 1')).toHaveValue('300')
+    await fill(user, 'Markup % Omega-3', '300')
+    expect(
+      screen.getByRole('textbox', { name: 'Patient price (each) Omega-3' }),
+    ).toHaveValue('40.30')
+    expect(
+      screen.getByRole('textbox', { name: 'Markup % Omega-3' }),
+    ).toHaveValue('300')
 
     // $40.00 on $10.00: (9925 * 4000 - 10000 * 1000) / 1000 = 297.00%.
-    await fill(user, 'Patient price for line 1', '40')
-    expect(screen.getByLabelText('Markup % for line 1')).toHaveValue('297.00')
-    expect(screen.getByLabelText('Patient price for line 1')).toHaveValue('40')
+    await fill(user, 'Patient price (each) Omega-3', '40')
+    expect(
+      screen.getByRole('textbox', { name: 'Markup % Omega-3' }),
+    ).toHaveValue('297.00')
+    expect(
+      screen.getByRole('textbox', { name: 'Patient price (each) Omega-3' }),
+    ).toHaveValue('40')
   })
 
   it('saves incomplete lines as a draft and restores them on reload', async () => {
@@ -251,14 +260,20 @@ describe('OrderBuilderView', () => {
     view.unmount()
     await renderBuilder('99')
     expect(screen.getByTestId('product-0')).toHaveTextContent('Vitamin D3')
-    expect(screen.getByLabelText('Quantity for line 1')).toHaveValue('2')
-    expect(screen.getByLabelText('Patient price for line 1')).toHaveValue('')
+    expect(screen.getByRole('textbox', { name: 'Qty Vitamin D3' })).toHaveValue(
+      '2',
+    )
+    expect(
+      screen.getByRole('textbox', { name: 'Patient price (each) Vitamin D3' }),
+    ).toHaveValue('')
     expect(
       screen.getByText('No product (remove this line)'),
     ).toBeInTheDocument()
-    expect(screen.getByLabelText('Patient price for line 2')).toHaveValue(
-      '25.00',
-    )
+    expect(
+      screen.getByRole('textbox', {
+        name: 'Patient price (each) No product (remove this line)',
+      }),
+    ).toHaveValue('25.00')
     expect(sendButton()).toBeDisabled()
   })
 
@@ -273,7 +288,7 @@ describe('OrderBuilderView', () => {
     await addProduct(user, 'Magnesium', { price: '' })
     expect(sendButton()).toBeDisabled()
 
-    await fill(user, 'Patient price for line 2', '20')
+    await fill(user, 'Patient price (each) Magnesium', '20')
     expect(sendButton()).toBeEnabled()
   })
 
@@ -294,10 +309,9 @@ describe('OrderBuilderView', () => {
     await user.click(screen.getByRole('button', { name: 'Save draft' }))
 
     expect(await screen.findByText('Only 3 left')).toBeInTheDocument()
-    expect(screen.getByLabelText('Quantity for line 1')).toHaveAttribute(
-      'aria-invalid',
-      'true',
-    )
+    expect(
+      screen.getByRole('textbox', { name: 'Qty Vitamin D3' }),
+    ).toHaveAttribute('aria-invalid', 'true')
   })
 
   it('shows a field-less EMPTY_ORDER error in the general banner', async () => {
@@ -321,11 +335,11 @@ describe('OrderBuilderView', () => {
     expect(alert).toHaveTextContent('An order needs at least one line')
     expect(screen.getAllByRole('alert')).toHaveLength(1)
     ;[
-      'Quantity for line 1',
-      'Markup % for line 1',
-      'Patient price for line 1',
+      'Qty Vitamin D3',
+      'Markup % Vitamin D3',
+      'Patient price (each) Vitamin D3',
     ].forEach((label) =>
-      expect(screen.getByLabelText(label)).not.toHaveAttribute(
+      expect(screen.getByRole('textbox', { name: label })).not.toHaveAttribute(
         'aria-invalid',
         'true',
       ),
@@ -406,7 +420,7 @@ describe('Add-product modal', () => {
     expect(
       await screen.findByRole('heading', { name: 'Add Magnesium' }),
     ).toBeInTheDocument()
-    expect(screen.getByLabelText('Qty')).toHaveFocus()
+    expect(screen.getByRole('textbox', { name: 'Qty' })).toHaveFocus()
 
     await user.click(screen.getByRole('button', { name: 'Back' }))
     expect(
@@ -423,12 +437,16 @@ describe('Add-product modal', () => {
 
     await expectDialogClosed()
     expect(screen.getByTestId('product-0')).toHaveTextContent('Omega-3')
-    expect(screen.getByLabelText('Quantity for line 1')).toHaveValue('3')
-    expect(screen.getByLabelText('Patient price for line 1')).toHaveValue(
-      '40.30',
+    expect(screen.getByRole('textbox', { name: 'Qty Omega-3' })).toHaveValue(
+      '3',
     )
+    expect(
+      screen.getByRole('textbox', { name: 'Patient price (each) Omega-3' }),
+    ).toHaveValue('40.30')
     await vi.waitFor(() =>
-      expect(screen.getByLabelText('Quantity for line 1')).toHaveFocus(),
+      expect(
+        screen.getByRole('textbox', { name: 'Qty Omega-3' }),
+      ).toHaveFocus(),
     )
   })
 
@@ -439,11 +457,15 @@ describe('Add-product modal', () => {
     await chooseProduct(user, 'Omega-3')
 
     await fill(user, 'Markup %', '300')
-    expect(screen.getByLabelText('Patient price (each)')).toHaveValue('40.30')
+    expect(
+      screen.getByRole('textbox', { name: 'Patient price (each)' }),
+    ).toHaveValue('40.30')
 
     // $10.05 is below the $10.08 minimum: markup -0.25% (half up toward +infinity).
     await fill(user, 'Patient price (each)', '10.05')
-    expect(screen.getByLabelText('Markup %')).toHaveValue('-0.25')
+    expect(screen.getByRole('textbox', { name: 'Markup %' })).toHaveValue(
+      '-0.25',
+    )
     await user.click(screen.getByRole('button', { name: 'Add to order' }))
 
     expect(
@@ -470,6 +492,31 @@ describe('Add-product modal', () => {
     await vi.waitFor(() =>
       expect(screen.getByRole('button', { name: 'Add line' })).toHaveFocus(),
     )
+  })
+})
+
+describe('OrderBuilderView in-row input names', () => {
+  it('names each in-row input by its visible column header and product', async () => {
+    const user = userEvent.setup()
+    await renderBuilder()
+    await addProduct(user, 'Magnesium')
+
+    // Every word of the accessible name is on screen: the <th> plus the product cell.
+    expect(screen.getByRole('columnheader', { name: 'Qty' })).toBeVisible()
+    expect(screen.getByTestId('product-0')).toHaveTextContent('Magnesium')
+    expect(
+      screen.getByRole('textbox', { name: /^Qty Magnesium/ }),
+    ).toHaveAccessibleName('Qty Magnesium')
+    expect(
+      screen.getByRole('textbox', { name: /^Markup % Magnesium/ }),
+    ).toHaveAccessibleName('Markup % Magnesium')
+    expect(
+      screen.getByRole('textbox', {
+        name: /^Patient price \(each\) Magnesium/,
+      }),
+    ).toHaveAccessibleName('Patient price (each) Magnesium')
+    // No visually hidden "… for line N" labels remain.
+    expect(screen.queryByLabelText(/for line \d/)).not.toBeInTheDocument()
   })
 })
 
@@ -508,7 +555,7 @@ describe('OrderBuilderView patient and stock', () => {
     expect(screen.queryByText(/stock checked on send/)).not.toBeInTheDocument()
     expect(sendButton()).toBeEnabled()
 
-    await fill(user, 'Quantity for line 1', '4')
+    await fill(user, 'Qty Vitamin D3', '4')
     expect(screen.getByText('Only 3 in stock')).toBeInTheDocument()
     expect(sendButton()).toBeDisabled()
   })
@@ -530,15 +577,17 @@ describe('OrderBuilderView patient and stock', () => {
       screen.getByRole('textbox', { name: 'Markup %' }),
     ).toBeInTheDocument()
     await fill(user, 'Patient price (each)', '12.50')
-    expect(screen.getByLabelText('Patient price (each)')).toHaveValue('12.50')
+    expect(
+      screen.getByRole('textbox', { name: 'Patient price (each)' }),
+    ).toHaveValue('12.50')
     await user.click(screen.getByRole('button', { name: 'Add to order' }))
 
     expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument()
     expect(
-      screen.getByRole('textbox', { name: 'Patient price for line 1' }),
+      screen.getByRole('textbox', { name: 'Patient price (each) Vitamin D3' }),
     ).toHaveValue('12.50')
     expect(
-      screen.getByRole('textbox', { name: 'Markup % for line 1' }),
+      screen.getByRole('textbox', { name: 'Markup % Vitamin D3' }),
     ).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Save draft' }))
@@ -556,17 +605,23 @@ describe('OrderBuilderView patient and stock', () => {
     await chooseProduct(user, 'B-Complex')
 
     // Minimum for a $8.50 cost is $8.57, a net markup of 0.07% (contract values).
-    expect(screen.getByLabelText('Patient price (each)')).toHaveValue('8.57')
-    expect(screen.getByLabelText('Markup %')).toHaveValue('0.07')
+    expect(
+      screen.getByRole('textbox', { name: 'Patient price (each)' }),
+    ).toHaveValue('8.57')
+    expect(screen.getByRole('textbox', { name: 'Markup %' })).toHaveValue(
+      '0.07',
+    )
 
     // 0% markup means the minimum price.
     await fill(user, 'Markup %', '0')
-    expect(screen.getByLabelText('Patient price (each)')).toHaveValue('8.57')
+    expect(
+      screen.getByRole('textbox', { name: 'Patient price (each)' }),
+    ).toHaveValue('8.57')
 
     await user.click(screen.getByRole('button', { name: 'Add to order' }))
-    expect(screen.getByLabelText('Patient price for line 1')).toHaveValue(
-      '8.57',
-    )
+    expect(
+      screen.getByRole('textbox', { name: 'Patient price (each) B-Complex' }),
+    ).toHaveValue('8.57')
     expect(sendButton()).toBeEnabled()
   })
 
@@ -575,13 +630,14 @@ describe('OrderBuilderView patient and stock', () => {
     await renderBuilder()
     await addProduct(user, 'Omega-3')
 
-    await fill(user, 'Markup % for line 1', '300')
+    await fill(user, 'Markup % Omega-3', '300')
     await user.tab()
-    expect(screen.getByLabelText('Markup % for line 1')).toHaveValue('300.00')
-    expect(screen.getByLabelText('Markup % for line 1')).not.toHaveAttribute(
-      'aria-invalid',
-      'true',
-    )
+    expect(
+      screen.getByRole('textbox', { name: 'Markup % Omega-3' }),
+    ).toHaveValue('300.00')
+    expect(
+      screen.getByRole('textbox', { name: 'Markup % Omega-3' }),
+    ).not.toHaveAttribute('aria-invalid', 'true')
     expect(sendButton()).toBeEnabled()
   })
 
@@ -591,7 +647,7 @@ describe('OrderBuilderView patient and stock', () => {
     await openAddProduct(user)
     await chooseProduct(user, 'Sample Pack')
 
-    const markup = screen.getByLabelText('Markup %')
+    const markup = screen.getByRole('textbox', { name: 'Markup %' })
     expect(markup).toBeDisabled()
     expect(markup).toHaveValue('')
     expect(markup).toHaveAttribute('placeholder', '—')
@@ -602,14 +658,15 @@ describe('OrderBuilderView patient and stock', () => {
     expect(markup).toHaveValue('')
     await user.click(screen.getByRole('button', { name: 'Add to order' }))
 
-    expect(screen.getByLabelText('Markup % for line 1')).toBeDisabled()
-    expect(screen.getByLabelText('Markup % for line 1')).toHaveAttribute(
-      'placeholder',
-      '—',
-    )
-    expect(screen.getByLabelText('Patient price for line 1')).toHaveValue(
-      '5.00',
-    )
+    expect(
+      screen.getByRole('textbox', { name: 'Markup % Sample Pack' }),
+    ).toBeDisabled()
+    expect(
+      screen.getByRole('textbox', { name: 'Markup % Sample Pack' }),
+    ).toHaveAttribute('placeholder', '—')
+    expect(
+      screen.getByRole('textbox', { name: 'Patient price (each) Sample Pack' }),
+    ).toHaveValue('5.00')
     expect(sendButton()).toBeEnabled()
   })
 
