@@ -102,7 +102,7 @@ interface AddProductOptions {
 /**
  * Add line -> search by SKU fragment -> step 2. The patient price is read
  * from the field and must be at least the minimum shown. The processing fee
- * must equal 75 bps of that price times the quantity, rounded half up.
+ * must equal 75 bps of that price times the quantity, rounded up.
  * Quantity other than 1 is typed before adding.
  */
 export async function addProduct(
@@ -136,6 +136,9 @@ export async function addProduct(
     const typedMarkup = options.markupPercent
     const markup = dialog.getByLabel('Markup %')
     await expect(markup).toBeVisible()
+    const wholesale = dollarsToCents(textAfter(facts, 'Wholesale cost'))
+    const displayedFee = dollarsToCents(await shownFee(fee))
+    expect(prefilled).toBe(wholesale + displayedFee)
     const feeBefore = await shownFee(fee)
     await markup.fill(typedMarkup)
     await expect(price).not.toHaveValue(prefilledInput)
@@ -190,7 +193,7 @@ async function shownFee(fee: Locator): Promise<string> {
 
 /**
  * The fee text must be 75 bps of the displayed unit price times quantity,
- * rounded half up, and the unit price must stay at or above the minimum.
+ * rounded up, and the unit price must stay at or above the minimum.
  */
 async function expectFeeForPrice(
   dialog: Locator,

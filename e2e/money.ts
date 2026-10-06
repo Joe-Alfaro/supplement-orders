@@ -68,9 +68,9 @@ export function percentToBps(displayed: string): number {
   return bps
 }
 
-/** 75 bps of an amount, rounded half up, in integer cents. */
+/** 75 bps of an amount, rounded up, in integer cents. */
 export function platformFeeCents(amountCents: number): number {
-  return Math.floor((amountCents * 75 + 5_000) / 10_000)
+  return Math.floor((amountCents * 75 + 9_999) / 10_000)
 }
 
 /** The line after an exact label in a block of text, such as a dialog or tile. */
