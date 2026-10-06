@@ -38,7 +38,7 @@ Captured from the live demo at 1440x900, signed in as Dr. Maya Rivera.
 
 ## Quickstart
 
-Prerequisites: Node 22 or later (`engines` in `package.json`), npm, and Docker. Node 22.13+ LTS or Node 24 is recommended: it was developed on Node 23 with npm 10.9, where `npm install` warns that some transitive dependencies want `^22.13` or `>=24`. The tests pass on Node 23 regardless.
+Prerequisites: Node 22 LTS, 22.13 or later (`engines` in `package.json` is `>=22.13 <23`, which also pins Railway to Node 22), npm, and Docker. Parts of the app were developed on Node 23 with npm 10.9; npm warns about the engines range there, but the tests pass.
 
 ```sh
 npm install
