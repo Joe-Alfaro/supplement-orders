@@ -238,9 +238,14 @@ interface OrderSummaryBase {
   createdAt: string
   sentAt: string | null
   paidAt: string | null
+  /** Set when a provider cancelled the order (from draft or pending_payment). */
+  cancelledAt: string | null
 }
 
 /**
+ * Patients see their sent orders: pending_payment, paid, and cancelled after
+ * sending. Drafts, including drafts cancelled before sending, are never shown to them.
+ *
  * GET /api/orders returns ProviderOrderSummaryDto[] for a provider (own orders, optional
  * patientId filter) and PatientOrderSummaryDto[] for a patient (own non-draft orders).
  * Sent orders use the split snapshotted on send. Drafts are priced live from their
@@ -270,6 +275,7 @@ const summaryShape = {
   createdAt: timestamp,
   sentAt: timestamp.nullable(),
   paidAt: timestamp.nullable(),
+  cancelledAt: timestamp.nullable(),
 }
 
 export const providerOrderSummaryDtoSchema: z.ZodType<ProviderOrderSummaryDto> =
@@ -288,7 +294,7 @@ export const patientOrderSummaryDtoSchema: z.ZodType<PatientOrderSummaryDto> =
 
 /**
  * Returned by POST /api/orders (201), PUT /api/orders/:id/lines, POST /api/orders/:id/send,
- * and GET /api/orders/:id when the caller is the order's provider.
+ * POST /api/orders/:id/cancel, and GET /api/orders/:id when the caller is the order's provider.
  * `payment` and `ledger` are populated once paid; ledger is empty before that.
  */
 export interface ProviderOrderDetailDto extends ProviderOrderSummaryDto {
@@ -381,3 +387,33 @@ export type PatientPageDto = Page<PatientDto>
 
 export const productPageDtoSchema = pageSchema(productDtoSchema)
 export const patientPageDtoSchema = pageSchema(patientDtoSchema)
+
+/**
+ * One row of GET /api/orders?status=pending_payment (provider only, own orders,
+ * oldest sentAt first, then id). Days waiting is left to the client, computed
+ * from `sentAt` in the viewer's timezone.
+ */
+export interface AwaitingPaymentOrderDto {
+  id: number
+  patientId: number
+  patientName: string
+  /** `YYYY-MM-DD` */
+  patientDateOfBirth: string
+  totalCents: number
+  sentAt: string
+}
+
+export const awaitingPaymentOrderDtoSchema: z.ZodType<AwaitingPaymentOrderDto> =
+  z.object({
+    id,
+    patientId: id,
+    patientName: z.string(),
+    patientDateOfBirth: isoDate,
+    totalCents: cents,
+    sentAt: timestamp,
+  })
+
+export type AwaitingPaymentPageDto = Page<AwaitingPaymentOrderDto>
+export const awaitingPaymentPageDtoSchema = pageSchema(
+  awaitingPaymentOrderDtoSchema,
+)

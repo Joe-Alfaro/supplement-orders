@@ -53,6 +53,7 @@ async function selectOrders(db: Db, where: SQL | undefined) {
       createdAt: orders.createdAt,
       sentAt: orders.sentAt,
       paidAt: orders.paidAt,
+      cancelledAt: orders.cancelledAt,
     })
     .from(orders)
     .innerJoin(patients, eq(patients.id, orders.patientId))
@@ -137,6 +138,7 @@ function summaryBase(order: OrderRow) {
     createdAt: order.createdAt.toISOString(),
     sentAt: iso(order.sentAt),
     paidAt: iso(order.paidAt),
+    cancelledAt: iso(order.cancelledAt),
   }
 }
 

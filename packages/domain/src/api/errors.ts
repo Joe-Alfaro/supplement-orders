@@ -8,7 +8,8 @@ import { z } from 'zod'
  * - 401 UNAUTHENTICATED: missing or unknown X-User-Id
  * - 403 FORBIDDEN: wrong persona, or the resource belongs to someone else
  * - 404 NOT_FOUND: the resource does not exist
- * - 409 ORDER_NOT_DRAFT / ORDER_NOT_PAYABLE: the order is in the wrong status
+ * - 409 ORDER_NOT_DRAFT / ORDER_NOT_PAYABLE / ORDER_NOT_CANCELLABLE: the order is in
+ *   the wrong status (cancel accepts only draft and pending_payment orders)
  * - 422 split codes, INCOMPLETE_LINE, DUPLICATE_PRODUCT, UNKNOWN_PRODUCT, INSUFFICIENT_STOCK:
  *   business rule failed. INCOMPLETE_LINE (send only) names the missing part,
  *   e.g. `lines.1.productId` or `lines.0.unitPriceCents`. EMPTY_ORDER has no field.
@@ -22,6 +23,7 @@ export const API_ERROR_CODES = [
   'NOT_FOUND',
   'ORDER_NOT_DRAFT',
   'ORDER_NOT_PAYABLE',
+  'ORDER_NOT_CANCELLABLE',
   'EMPTY_ORDER',
   'INVALID_QUANTITY',
   'INVALID_AMOUNT',
