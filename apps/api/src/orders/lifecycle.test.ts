@@ -156,6 +156,56 @@ describe('revision 8: delete draft and reopen cancelled', () => {
     })
   })
 
+  it('words every status conflict with human labels, never raw status values', async () => {
+    const pending = await createSentOrder(ctx)
+    const paid = await createSentOrder(ctx)
+    await pay(ctx, paid)
+    const draft = await createDraft(ctx)
+    const cancelled = await createSentOrder(ctx)
+    await cancel(cancelled)
+
+    const cases = [
+      [
+        remove(pending),
+        'This order is awaiting payment; only drafts can be deleted.',
+      ],
+      [send(paid), 'This order is paid; only drafts can be sent.'],
+      [
+        ctx.request
+          .put(`/api/orders/${cancelled}/lines`)
+          .set(provider())
+          .send({ lines: [] }),
+        'This order is cancelled; only drafts can be edited.',
+      ],
+      [
+        reopen(draft),
+        'This order is a draft; only cancelled orders can be reopened.',
+      ],
+      [
+        cancel(paid),
+        'This order is paid; only orders awaiting payment can be cancelled.',
+      ],
+      [
+        cancel(draft),
+        'This order is a draft; only orders awaiting payment can be cancelled.',
+      ],
+      [pay(ctx, cancelled), "This order is cancelled and can't be paid."],
+    ] as const
+
+    const results = await Promise.all(
+      cases.map(async ([request, message]) => [
+        (await request).body.error.message,
+        message,
+      ]),
+    )
+
+    results.forEach(([actual, expected]) => {
+      expect(actual).toBe(expected)
+      // Exact text above pins the wording; this catches any raw enum such as pending_payment.
+      expect(actual).not.toContain('_')
+    })
+  })
+
   describe('POST /api/orders/:id/reopen', () => {
     it('turns a cancelled order back into a draft, keeping its lines', async () => {
       const orderId = await createSentOrder(ctx)
