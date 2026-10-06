@@ -14,6 +14,10 @@ import { z } from 'zod'
  * - 422 split codes, INCOMPLETE_LINE, DUPLICATE_PRODUCT, UNKNOWN_PRODUCT, INSUFFICIENT_STOCK:
  *   business rule failed. INCOMPLETE_LINE (send only) names the missing part,
  *   e.g. `lines.1.productId` or `lines.0.unitPriceCents`. EMPTY_ORDER has no field.
+ * - 409 ORDER_CHANGED: pay's expectedRevision/expectedTotalCents no longer match the order
+ * - 409 PAYMENT_NEEDS_RECONCILIATION: a charge succeeded but its payment was not recorded;
+ *   cancel, reopen, delete and line edits are blocked until a retried pay completes it
+ * - 409 IDEMPOTENCY_KEY_REUSED: the gateway refused a known key with a different amount
  * - 402 PAYMENT_FAILED: the gateway declined; nothing was persisted
  * - 500 INTERNAL: unexpected failure; nothing was persisted
  */
@@ -26,6 +30,9 @@ export const API_ERROR_CODES = [
   'ORDER_NOT_PAYABLE',
   'ORDER_NOT_CANCELLABLE',
   'ORDER_NOT_REOPENABLE',
+  'ORDER_CHANGED',
+  'PAYMENT_NEEDS_RECONCILIATION',
+  'IDEMPOTENCY_KEY_REUSED',
   'EMPTY_ORDER',
   'INVALID_QUANTITY',
   'INVALID_AMOUNT',
