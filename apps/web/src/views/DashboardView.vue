@@ -81,6 +81,11 @@ function onInventoryPage(event: DataTablePageEvent) {
         selection-mode="single"
         :meta-key-selection="false"
         :table-props="{ 'aria-label': 'Awaiting payment' }"
+        :pt="{
+          pcPaginator: {
+            paginatorContainer: { 'aria-label': 'Awaiting payment pages' },
+          },
+        }"
         @page="onAwaitingPage"
         @row-click="openAwaitingOrder"
       >
@@ -216,6 +221,11 @@ function onInventoryPage(event: DataTablePageEvent) {
         paginator-template="PrevPageLink NextPageLink"
         :loading="inventory.loading.value"
         :table-props="{ 'aria-label': 'Inventory' }"
+        :pt="{
+          pcPaginator: {
+            paginatorContainer: { 'aria-label': 'Inventory pages' },
+          },
+        }"
         @page="onInventoryPage"
       >
         <template #paginatorstart>

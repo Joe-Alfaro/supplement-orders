@@ -228,6 +228,14 @@ describe('DashboardView awaiting payment', () => {
     expect(
       await within(section).findByText('Showing 1–25 of 30'),
     ).toBeInTheDocument()
+    // Two paginators on one page: each navigation landmark needs its own name.
+    await screen.findByText('Vitamin D3')
+    expect(within(section).getByRole('navigation')).toHaveAccessibleName(
+      'Awaiting payment pages',
+    )
+    expect(
+      screen.getByRole('navigation', { name: 'Inventory pages' }),
+    ).toBeInTheDocument()
 
     await user.click(within(section).getByRole('button', { name: 'Next Page' }))
 
