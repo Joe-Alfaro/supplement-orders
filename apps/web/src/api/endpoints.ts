@@ -4,7 +4,7 @@ import type {
   DashboardDto,
   ListOrdersQuery,
   ListPatientsQuery,
-  OrderListStatusFilter,
+  OrderStatus,
   ProviderOrderListPageDto,
   ListQuery,
   OrderDetailDto,
@@ -49,18 +49,22 @@ export function searchPatients(query: ListPatientsQuery = {}) {
   return request<PatientPageDto>('GET', `/patients${search}${filter}`)
 }
 
-/** GET /api/orders?status= (provider): one page of orders with that status, or `all`. */
+/**
+ * GET /api/orders?status= (provider): one page of orders whose status is any of
+ * `statuses` (sent as a comma list). An empty list means every status (`all`).
+ */
 export function listProviderOrders(
-  query: { status: OrderListStatusFilter } & Pick<
+  query: { statuses: readonly OrderStatus[] } & Pick<
     ListOrdersQuery,
     'offset' | 'limit'
   >,
 ) {
+  const status = query.statuses.length ? query.statuses.join(',') : 'all'
   const search = listQueryString(query)
   const params = search ? `&${search.slice(1)}` : ''
   return request<ProviderOrderListPageDto>(
     'GET',
-    `/orders?status=${query.status}${params}`,
+    `/orders?status=${status}${params}`,
   )
 }
 

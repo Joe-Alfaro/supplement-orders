@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
-  ORDER_LIST_STATUS_FILTERS,
-  type OrderListStatusFilter,
+  ORDER_STATUSES,
+  type OrderStatus,
   type ProviderOrderListItemDto,
 } from '@supplement-orders/domain'
 import Column from 'primevue/column'
@@ -9,7 +9,7 @@ import DataTable, {
   type DataTablePageEvent,
   type DataTableRowClickEvent,
 } from 'primevue/datatable'
-import Select from 'primevue/select'
+import MultiSelect from 'primevue/multiselect'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listProviderOrders } from '../api'
@@ -21,59 +21,97 @@ import { usePagedSearch } from '../search'
 const route = useRoute()
 const router = useRouter()
 
-const DEFAULT_STATUS: OrderListStatusFilter = 'pending_payment'
-
-const FILTERS: Record<
-  OrderListStatusFilter,
+const STATUSES: Record<
+  OrderStatus,
   { label: string; dateHeader: string; empty: string }
 > = {
+  draft: { label: 'Draft', dateHeader: 'Created', empty: 'No draft orders.' },
   pending_payment: {
     label: 'Awaiting payment',
     dateHeader: 'Sent',
     empty: 'No orders awaiting payment.',
   },
-  draft: { label: 'Draft', dateHeader: 'Created', empty: 'No draft orders.' },
   paid: { label: 'Paid', dateHeader: 'Paid', empty: 'No paid orders.' },
   cancelled: {
     label: 'Cancelled',
     dateHeader: 'Cancelled',
     empty: 'No cancelled orders.',
   },
-  all: { label: 'All statuses', dateHeader: 'Date', empty: 'No orders yet.' },
 }
 
-// Awaiting payment first: it's the default and the list that needs action.
-const statusOptions = (
-  [
-    'pending_payment',
-    'draft',
-    'paid',
-    'cancelled',
-    'all',
-  ] as OrderListStatusFilter[]
-).map((value) => ({ value, label: FILTERS[value].label }))
+/** Canonical order for options, the URL and the API. */
+const ORDER: OrderStatus[] = ['draft', 'pending_payment', 'paid', 'cancelled']
+const DEFAULT_SELECTION: OrderStatus[] = ['pending_payment']
 
-function statusFromUrl(value: unknown): OrderListStatusFilter {
-  return ORDER_LIST_STATUS_FILTERS.find((s) => s === value) ?? DEFAULT_STATUS
+const statusOptions = ORDER.map((value) => ({
+  value,
+  label: STATUSES[value].label,
+}))
+
+function canonical(statuses: readonly OrderStatus[]) {
+  return ORDER.filter((status) => statuses.includes(status))
 }
 
-/** The URL wins; the default only applies when it doesn't name a status. */
-const status = ref<OrderListStatusFilter>(statusFromUrl(route.query.status))
+/**
+ * ?status= is a comma list; absent means the default, `all` means no filter
+ * (an empty selection). Unknown values are ignored.
+ */
+function selectionFromUrl(value: unknown): OrderStatus[] {
+  if (typeof value !== 'string') return [...DEFAULT_SELECTION]
+  if (value === 'all') return []
+  const parts = value.split(',')
+  const statuses = ORDER_STATUSES.filter((status) => parts.includes(status))
+  return statuses.length ? canonical(statuses) : [...DEFAULT_SELECTION]
+}
+
+// PrimeVue names the select-all box after its state ("All items unselected");
+// name it for what it does instead. Each option row also renders its own
+// checkbox <input>, which axe flags as unlabelled and nested inside an
+// interactive option; the option already exposes aria-selected, so that
+// checkbox is decorative: hidden from assistive tech and not focusable.
+const multiSelectPt = {
+  ...accessibleSelectPt,
+  pcHeaderCheckbox: { input: { 'aria-label': 'Select all statuses' } },
+  pcOptionCheckbox: {
+    // The whole checkbox is click-through so the click lands on the option row,
+    // which persists; a click on the check icon (removed on uncheck) would read
+    // as an outside click and close the list.
+    root: { style: { pointerEvents: 'none' } },
+    input: { 'aria-hidden': 'true', disabled: true },
+  },
+}
+
+/** The selected statuses; empty means all statuses. */
+const selected = ref<OrderStatus[]>(selectionFromUrl(route.query.status))
 
 const orders = usePagedSearch((listQuery) =>
   listProviderOrders({
-    status: status.value,
+    statuses: canonical(selected.value),
     offset: listQuery.offset,
     limit: listQuery.limit,
   }),
 )
 const { items, page, loading, error, offset, total } = orders
-const filter = computed(() => FILTERS[status.value])
+
+const single = computed(() =>
+  selected.value.length === 1 ? selected.value[0] : undefined,
+)
+const dateHeader = computed(() =>
+  single.value ? STATUSES[single.value].dateHeader : 'Date',
+)
+const emptyMessage = computed(() => {
+  if (single.value) return STATUSES[single.value].empty
+  if (selected.value.length === 0 || selected.value.length === ORDER.length) {
+    return 'No orders yet.'
+  }
+  return 'No orders with the selected statuses.'
+})
 
 onMounted(orders.load)
 
-watch(status, (value) => {
-  router.replace({ query: { status: value } })
+watch(selected, (statuses) => {
+  const status = statuses.length ? canonical(statuses).join(',') : 'all'
+  router.replace({ query: { status } })
   orders.restart()
 })
 
@@ -99,22 +137,25 @@ function onPage(event: DataTablePageEvent) {
   <div class="filters">
     <div class="field filter">
       <label id="order-status-label" for="order-status">Status</label>
-      <Select
-        v-model="status"
+      <MultiSelect
+        v-model="selected"
         input-id="order-status"
         aria-labelledby="order-status-label"
         :options="statusOptions"
         option-label="label"
         option-value="value"
+        placeholder="All statuses"
+        :show-toggle-all="true"
+        :max-selected-labels="4"
         append-to="self"
-        :pt="accessibleSelectPt"
+        :pt="multiSelectPt"
       />
     </div>
   </div>
   <ErrorBanner v-if="error" :message="error" retryable @retry="orders.load" />
   <p v-else-if="loading && !page">Loading…</p>
   <template v-else-if="page">
-    <p v-if="items.length === 0" role="status">{{ filter.empty }}</p>
+    <p v-if="items.length === 0" role="status">{{ emptyMessage }}</p>
     <DataTable
       v-else
       :value="items"
@@ -154,7 +195,7 @@ function onPage(event: DataTablePageEvent) {
           <MoneyText v-if="data.totalCents !== null" :cents="data.totalCents" />
         </template>
       </Column>
-      <Column :header="filter.dateHeader">
+      <Column :header="dateHeader">
         <template #body="{ data }">
           <span v-if="relevantDate(data)">{{
             formatDate(relevantDate(data) ?? '')
