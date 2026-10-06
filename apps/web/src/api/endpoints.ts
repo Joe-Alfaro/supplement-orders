@@ -87,6 +87,16 @@ export function cancelOrder(orderId: number) {
   return request<ProviderOrderDetailDto>('POST', `/orders/${orderId}/cancel`)
 }
 
+/** Draft only, permanently (revision 8); 409 for any other status. */
+export function deleteOrder(orderId: number) {
+  return request<void>('DELETE', `/orders/${orderId}`)
+}
+
+/** Cancelled only: back to draft with its lines kept (revision 8); 409 otherwise. */
+export function reopenOrder(orderId: number) {
+  return request<ProviderOrderDetailDto>('POST', `/orders/${orderId}/reopen`)
+}
+
 export function getOrder(orderId: number) {
   return request<OrderDetailDto>('GET', `/orders/${orderId}`)
 }

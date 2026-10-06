@@ -4,11 +4,18 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
+import { clearNoticeUnlessOn, notice } from '../user'
 import ProviderOrderView from './ProviderOrderView.vue'
 
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>()
-  return { ...actual, getOrder: vi.fn(), cancelOrder: vi.fn() }
+  return {
+    ...actual,
+    getOrder: vi.fn(),
+    cancelOrder: vi.fn(),
+    deleteOrder: vi.fn(),
+    reopenOrder: vi.fn(),
+  }
 })
 
 const paid: ProviderOrderDetailDto = {
@@ -118,54 +125,82 @@ const cancelled: ProviderOrderDetailDto = {
   cancelledAt: '2026-10-06T09:30:00.000Z',
 }
 
+const ACTIONS = ['Delete draft', 'Cancel order', 'Reopen as draft']
+
 async function openOrder(order: ProviderOrderDetailDto) {
   vi.mocked(api.getOrder).mockResolvedValue(order)
-  await renderWithRouter(ProviderOrderView, {
+  const { router } = await renderWithRouter(ProviderOrderView, {
     path: `/orders/${order.id}`,
     props: { orderId: String(order.id) },
   })
   await screen.findByRole('heading', { name: /Order #42/ })
+  return { router }
 }
 
-function confirmDialog() {
-  return screen.findByRole('alertdialog', { name: 'Cancel order' })
+function confirmDialog(name: string) {
+  return screen.findByRole('alertdialog', { name })
+}
+
+function expectNoDialog(name: string) {
+  return vi.waitFor(() =>
+    expect(screen.queryByRole('alertdialog', { name })).not.toBeInTheDocument(),
+  )
+}
+
+async function confirmAction(action: string) {
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: action }))
+  const dialog = await confirmDialog(action)
+  await user.click(within(dialog).getByRole('button', { name: action }))
+}
+
+function conflict(message: string) {
+  return new api.ApiRequestError(409, 'ORDER_NOT_DRAFT', message)
 }
 
 beforeEach(() => {
   vi.mocked(api.getOrder).mockReset()
   vi.mocked(api.cancelOrder).mockReset()
+  vi.mocked(api.deleteOrder).mockReset()
+  vi.mocked(api.reopenOrder).mockReset()
+  clearNoticeUnlessOn('__reset__')
+})
+
+describe('ProviderOrderView actions by status', () => {
+  it.each([
+    ['draft', draft, 'Delete draft'],
+    ['pending_payment', pending, 'Cancel order'],
+    ['cancelled', cancelled, 'Reopen as draft'],
+  ])("offers only %s's action", async (_status, order, action) => {
+    await openOrder(order)
+
+    expect(screen.getByRole('button', { name: action })).toBeInTheDocument()
+    ACTIONS.filter((other) => other !== action).forEach((other) => {
+      expect(
+        screen.queryByRole('button', { name: other }),
+      ).not.toBeInTheDocument()
+    })
+  })
+
+  it('offers no action on a paid order', async () => {
+    await openOrder(paid)
+
+    ACTIONS.forEach((action) => {
+      expect(
+        screen.queryByRole('button', { name: action }),
+      ).not.toBeInTheDocument()
+    })
+  })
 })
 
 describe('ProviderOrderView cancel', () => {
-  it.each([
-    ['draft', draft],
-    ['pending_payment', pending],
-  ])('offers Cancel order on a %s order', async (_status, order) => {
-    await openOrder(order)
-
-    expect(
-      screen.getByRole('button', { name: 'Cancel order' }),
-    ).toBeInTheDocument()
-  })
-
-  it.each([
-    ['paid', paid],
-    ['cancelled', cancelled],
-  ])('has no Cancel order on a %s order', async (_status, order) => {
-    await openOrder(order)
-
-    expect(
-      screen.queryByRole('button', { name: 'Cancel order' }),
-    ).not.toBeInTheDocument()
-  })
-
-  it('confirms, cancels once, then shows Cancelled with no actions', async () => {
+  it('confirms, cancels once, then shows Cancelled with only Reopen left', async () => {
     const user = userEvent.setup()
     vi.mocked(api.cancelOrder).mockResolvedValue(cancelled)
     await openOrder(pending)
 
     await user.click(screen.getByRole('button', { name: 'Cancel order' }))
-    const dialog = await confirmDialog()
+    const dialog = await confirmDialog('Cancel order')
     expect(dialog).toHaveTextContent(
       'Cancel order #42 for Jordan Lee? The patient will no longer be able to pay it.',
     )
@@ -181,6 +216,7 @@ describe('ProviderOrderView cancel', () => {
     expect(api.cancelOrder).toHaveBeenCalledTimes(1)
     expect(api.cancelOrder).toHaveBeenCalledWith(42)
     expect(screen.getByText('Cancelled at')).toBeInTheDocument()
+    await expectNoDialog('Cancel order')
     expect(
       screen.queryByRole('button', { name: 'Cancel order' }),
     ).not.toBeInTheDocument()
@@ -188,30 +224,8 @@ describe('ProviderOrderView cancel', () => {
       screen.queryByText('Waiting for patient payment.'),
     ).not.toBeInTheDocument()
     expect(
-      screen.queryByRole('alertdialog', { name: 'Cancel order' }),
-    ).not.toBeInTheDocument()
-  })
-
-  it('hides Edit draft once a draft is cancelled', async () => {
-    const user = userEvent.setup()
-    vi.mocked(api.cancelOrder).mockResolvedValue({
-      ...cancelled,
-      sentAt: null,
-    })
-    await openOrder(draft)
-    expect(screen.getByRole('link', { name: 'Edit draft' })).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: 'Cancel order' }))
-    await user.click(
-      within(await confirmDialog()).getByRole('button', {
-        name: 'Cancel order',
-      }),
-    )
-
-    expect(await screen.findByText('Cancelled')).toBeInTheDocument()
-    expect(
-      screen.queryByRole('link', { name: 'Edit draft' }),
-    ).not.toBeInTheDocument()
+      screen.getByRole('button', { name: 'Reopen as draft' }),
+    ).toBeInTheDocument()
   })
 
   it('does nothing on Keep order', async () => {
@@ -220,14 +234,12 @@ describe('ProviderOrderView cancel', () => {
 
     await user.click(screen.getByRole('button', { name: 'Cancel order' }))
     await user.click(
-      within(await confirmDialog()).getByRole('button', { name: 'Keep order' }),
+      within(await confirmDialog('Cancel order')).getByRole('button', {
+        name: 'Keep order',
+      }),
     )
 
-    await vi.waitFor(() =>
-      expect(
-        screen.queryByRole('alertdialog', { name: 'Cancel order' }),
-      ).not.toBeInTheDocument(),
-    )
+    await expectNoDialog('Cancel order')
     expect(api.cancelOrder).not.toHaveBeenCalled()
     expect(screen.getByText('Awaiting payment')).toBeInTheDocument()
     expect(
@@ -236,7 +248,6 @@ describe('ProviderOrderView cancel', () => {
   })
 
   it('shows a 409 in the error banner and re-fetches the order', async () => {
-    const user = userEvent.setup()
     const paidMeanwhile = 'This order was paid and can no longer be cancelled'
     vi.mocked(api.cancelOrder).mockRejectedValue(
       new api.ApiRequestError(409, 'ORDER_NOT_CANCELLABLE', paidMeanwhile),
@@ -244,12 +255,7 @@ describe('ProviderOrderView cancel', () => {
     await openOrder(pending)
     vi.mocked(api.getOrder).mockResolvedValue(paid)
 
-    await user.click(screen.getByRole('button', { name: 'Cancel order' }))
-    await user.click(
-      within(await confirmDialog()).getByRole('button', {
-        name: 'Cancel order',
-      }),
-    )
+    await confirmAction('Cancel order')
 
     expect(await screen.findByText(paidMeanwhile)).toBeInTheDocument()
     expect(await screen.findByText('Total of entries')).toBeInTheDocument()
@@ -258,5 +264,130 @@ describe('ProviderOrderView cancel', () => {
     expect(
       screen.queryByRole('button', { name: 'Cancel order' }),
     ).not.toBeInTheDocument()
+  })
+})
+
+describe('ProviderOrderView delete draft', () => {
+  it('confirms, deletes once, and returns to the patient with a notice', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.deleteOrder).mockResolvedValue(undefined)
+    const { router } = await openOrder(draft)
+
+    await user.click(screen.getByRole('button', { name: 'Delete draft' }))
+    const dialog = await confirmDialog('Delete draft')
+    expect(dialog).toHaveTextContent(
+      "Delete draft order #42 for Jordan Lee? This can't be undone.",
+    )
+    expect(
+      within(dialog).getByRole('button', { name: 'Keep draft' }),
+    ).toHaveFocus()
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Delete draft' }),
+    )
+
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.path).toBe('/patients/7'),
+    )
+    expect(api.deleteOrder).toHaveBeenCalledTimes(1)
+    expect(api.deleteOrder).toHaveBeenCalledWith(42)
+    // The notice renders in App's header region, outside this view.
+    expect(notice.value).toEqual({
+      message: 'Draft deleted',
+      path: '/patients/7',
+    })
+  })
+
+  it('does nothing on Keep draft', async () => {
+    const user = userEvent.setup()
+    const { router } = await openOrder(draft)
+
+    await user.click(screen.getByRole('button', { name: 'Delete draft' }))
+    await user.click(
+      within(await confirmDialog('Delete draft')).getByRole('button', {
+        name: 'Keep draft',
+      }),
+    )
+
+    await expectNoDialog('Delete draft')
+    expect(api.deleteOrder).not.toHaveBeenCalled()
+    expect(router.currentRoute.value.path).toBe('/orders/42')
+    expect(screen.getByRole('link', { name: 'Edit draft' })).toBeInTheDocument()
+  })
+
+  it('shows a 409 in the error banner and re-fetches the order', async () => {
+    const sentMeanwhile = 'Only a draft can be deleted'
+    vi.mocked(api.deleteOrder).mockRejectedValue(conflict(sentMeanwhile))
+    const { router } = await openOrder(draft)
+    vi.mocked(api.getOrder).mockResolvedValue(pending)
+
+    await confirmAction('Delete draft')
+
+    expect(await screen.findByText(sentMeanwhile)).toBeInTheDocument()
+    expect(
+      await screen.findByRole('button', { name: 'Cancel order' }),
+    ).toBeInTheDocument()
+    expect(api.getOrder).toHaveBeenCalledTimes(2)
+    expect(router.currentRoute.value.path).toBe('/orders/42')
+    expect(notice.value).toBeNull()
+  })
+})
+
+describe('ProviderOrderView reopen', () => {
+  it('confirms, reopens once, and opens the builder for that order', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.reopenOrder).mockResolvedValue({
+      ...draft,
+      cancelledAt: null,
+    })
+    const { router } = await openOrder(cancelled)
+
+    await user.click(screen.getByRole('button', { name: 'Reopen as draft' }))
+    const dialog = await confirmDialog('Reopen as draft')
+    expect(dialog).toHaveTextContent(
+      'Reopen order #42 as a draft? You can edit it and send it again.',
+    )
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Reopen as draft' }),
+    )
+
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.fullPath).toBe(
+        '/patients/7/orders/new?orderId=42',
+      ),
+    )
+    expect(api.reopenOrder).toHaveBeenCalledTimes(1)
+    expect(api.reopenOrder).toHaveBeenCalledWith(42)
+  })
+
+  it('does nothing on Keep cancelled', async () => {
+    const user = userEvent.setup()
+    const { router } = await openOrder(cancelled)
+
+    await user.click(screen.getByRole('button', { name: 'Reopen as draft' }))
+    await user.click(
+      within(await confirmDialog('Reopen as draft')).getByRole('button', {
+        name: 'Keep cancelled',
+      }),
+    )
+
+    await expectNoDialog('Reopen as draft')
+    expect(api.reopenOrder).not.toHaveBeenCalled()
+    expect(router.currentRoute.value.path).toBe('/orders/42')
+  })
+
+  it('shows a 409 in the error banner and re-fetches the order', async () => {
+    const reopenedElsewhere = 'Only a cancelled order can be reopened'
+    vi.mocked(api.reopenOrder).mockRejectedValue(conflict(reopenedElsewhere))
+    const { router } = await openOrder(cancelled)
+    vi.mocked(api.getOrder).mockResolvedValue(draft)
+
+    await confirmAction('Reopen as draft')
+
+    expect(await screen.findByText(reopenedElsewhere)).toBeInTheDocument()
+    expect(
+      await screen.findByRole('button', { name: 'Delete draft' }),
+    ).toBeInTheDocument()
+    expect(api.getOrder).toHaveBeenCalledTimes(2)
+    expect(router.currentRoute.value.path).toBe('/orders/42')
   })
 })
