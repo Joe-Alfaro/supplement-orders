@@ -312,14 +312,36 @@ async function addProduct(user: UserEvent, name: string, price?: string) {
   await screen.findByLabelText('Patient price for line 1')
 }
 
-// axe scans the render container. These tests reach each state through screen
-// queries and user-event, and do not query through the container.
+// PrimeVue Dialog teleports to document.body. A Select list does too, unless
+// the component appends it to itself (the login picker does). Any dialog or
+// listbox outside the render container is scanned on its own element, with the
+// same axe rules.
+async function scanUncontained(container: Element, role: 'dialog' | 'listbox') {
+  const outside = screen
+    .queryAllByRole(role)
+    .filter((node) => !container.contains(node))
+  await outside.reduce(async (previous, node) => {
+    await previous
+    await expectNoAxeViolations(node)
+  }, Promise.resolve())
+}
+
+async function expectAccessible(container: Element) {
+  await expectNoAxeViolations(container)
+  await scanUncontained(container, 'dialog')
+  await scanUncontained(container, 'listbox')
+}
+
 describe('accessibility', () => {
   it('login', async () => {
+    const user = userEvent.setup()
     const { container } = await renderWithRouter(LoginView, { path: '/login' })
     await screen.findByRole('heading', { name: 'Sign in' })
-    await screen.findByRole('option', { name: /Dr. Maya Rivera/ })
-    await expectNoAxeViolations(container)
+    await user.click(await screen.findByRole('combobox', { name: 'User' }))
+    expect(
+      await screen.findByRole('option', { name: /Dr. Maya Rivera/ }),
+    ).toBeInTheDocument()
+    await expectAccessible(container)
   })
 
   it('patient list results', async () => {
@@ -327,7 +349,7 @@ describe('accessibility', () => {
       path: '/patients',
     })
     await screen.findByText('Jordan Lee')
-    await expectNoAxeViolations(container)
+    await expectAccessible(container)
   })
 
   it('patient list no matches', async () => {
@@ -341,7 +363,7 @@ describe('accessibility', () => {
       'nobody',
     )
     await screen.findByText(/No patients match "nobody"/)
-    await expectNoAxeViolations(container)
+    await expectAccessible(container)
   })
 
   it('patient detail', async () => {
@@ -351,13 +373,13 @@ describe('accessibility', () => {
     })
     await screen.findByRole('heading', { name: 'Jordan Lee' })
     await screen.findByRole('heading', { name: 'Orders' })
-    await expectNoAxeViolations(container)
+    await expectAccessible(container)
   })
 
   it('order builder empty', async () => {
     const { container } = await renderBuilder()
     await screen.findByText('No lines yet. Add a product to start.')
-    await expectNoAxeViolations(container)
+    await expectAccessible(container)
   })
 
   it('order builder with complete lines', async () => {
@@ -365,7 +387,7 @@ describe('accessibility', () => {
     const user = userEvent.setup()
     await addProduct(user, 'Vitamin D3', '20.00')
     await screen.findByText('Patient pays')
-    await expectNoAxeViolations(container)
+    await expectAccessible(container)
   })
 
   it('order builder below-minimum price', async () => {
@@ -377,7 +399,7 @@ describe('accessibility', () => {
     await vi.waitFor(() => {
       expect(price).toBeInvalid()
     })
-    await expectNoAxeViolations(container)
+    await expectAccessible(container)
   })
 
   it('order builder general error banner', async () => {
@@ -391,7 +413,7 @@ describe('accessibility', () => {
     await user.click(screen.getByRole('button', { name: 'Save draft' }))
     await screen.findByRole('alert')
     await screen.findByText('Could not save the draft')
-    await expectNoAxeViolations(container)
+    await expectAccessible(container)
   })
 
   it('add-product modal step 1 with disabled rows', async () => {
@@ -404,7 +426,8 @@ describe('accessibility', () => {
     })
     await screen.findByText('Already added')
     await screen.findByText('Out of stock')
-    await expectNoAxeViolations(container)
+    await expectNoAxeViolations(screen.getByRole('dialog'))
+    await expectAccessible(container)
   })
 
   it('add-product modal step 2 validation error', async () => {
@@ -421,7 +444,8 @@ describe('accessibility', () => {
     expect(
       screen.queryByLabelText('Patient price for line 1'),
     ).not.toBeInTheDocument()
-    await expectNoAxeViolations(container)
+    await expectNoAxeViolations(screen.getByRole('dialog'))
+    await expectAccessible(container)
   })
 
   it('provider order detail paid with ledger', async () => {
@@ -432,7 +456,7 @@ describe('accessibility', () => {
     await screen.findByRole('heading', { name: /Order #7/ })
     await screen.findByRole('heading', { name: 'Ledger' })
     await screen.findByText('fake_ch_123')
-    await expectNoAxeViolations(container)
+    await expectAccessible(container)
   })
 
   it('dashboard stat tiles, paid orders, and inventory search', async () => {
@@ -452,7 +476,7 @@ describe('accessibility', () => {
       })
     })
     await screen.findByText('Vitamin D3')
-    await expectNoAxeViolations(container)
+    await expectAccessible(container)
   })
 
   it('patient my orders', async () => {
@@ -462,7 +486,7 @@ describe('accessibility', () => {
     })
     await screen.findByRole('heading', { name: 'My orders' })
     await screen.findByText('Dr. Maya Rivera')
-    await expectNoAxeViolations(container)
+    await expectAccessible(container)
   })
 
   it('patient pay pending', async () => {
@@ -472,7 +496,7 @@ describe('accessibility', () => {
       props: { orderId: '42' },
     })
     await screen.findByRole('button', { name: 'Pay $120.00' })
-    await expectNoAxeViolations(container)
+    await expectAccessible(container)
   })
 
   it('patient pay failed payment message', async () => {
@@ -491,7 +515,7 @@ describe('accessibility', () => {
     )
     await user.click(screen.getByRole('button', { name: 'Pay $120.00' }))
     await screen.findByText(/Card declined/)
-    await expectNoAxeViolations(container)
+    await expectAccessible(container)
   })
 
   it('patient pay paid receipt', async () => {
@@ -502,6 +526,6 @@ describe('accessibility', () => {
     })
     await screen.findByRole('heading', { name: 'Receipt' })
     await screen.findByText('fake_ch_123')
-    await expectNoAxeViolations(container)
+    await expectAccessible(container)
   })
 })

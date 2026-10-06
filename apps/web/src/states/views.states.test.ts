@@ -672,6 +672,8 @@ describe('PatientOrderView states', () => {
   })
 })
 
+// renderApp returns the router, not Testing Library's render result.
+/* eslint-disable testing-library/render-result-naming-convention */
 describe('persona and unknown user', () => {
   it('sends a patient away from a provider route with a notice', async () => {
     useCurrentUser().signIn(2)
@@ -717,3 +719,4 @@ describe('persona and unknown user', () => {
     expect(screen.queryByText(/Signed in as/)).not.toBeInTheDocument()
   })
 })
+/* eslint-enable testing-library/render-result-naming-convention */
