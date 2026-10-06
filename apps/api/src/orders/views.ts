@@ -1,6 +1,6 @@
 import {
   computeSplit,
-  marginBpsFromPrice,
+  markupBpsFromPrice,
   minUnitPriceCents,
   SplitValidationError,
   type LedgerEntryDto,
@@ -176,10 +176,10 @@ function providerLine(l: LineRow): ProviderOrderLineDto {
     lineTotalCents:
       l.unitPriceCents === null ? null : l.quantity * l.unitPriceCents,
     unitCogsCents: l.unitCogsCents,
-    marginBps:
+    markupBps:
       l.unitCogsCents === null || l.unitPriceCents === null
         ? null
-        : marginBpsFromPrice(l.unitCogsCents, l.unitPriceCents),
+        : markupBpsFromPrice(l.unitCogsCents, l.unitPriceCents),
     stockQuantity: l.stockQuantity,
     minUnitPriceCents: hasProduct
       ? minUnitPriceCents(l.unitCogsCents ?? 0)

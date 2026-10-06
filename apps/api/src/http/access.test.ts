@@ -1,8 +1,10 @@
+import { providerOrderDetailDtoSchema } from '@supplement-orders/domain'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
   createInternalTestContext,
   type InternalTestContext,
 } from '../testing/harness'
+import { products } from '../db/schema'
 import { as, createDraft, createSentOrder, pay } from '../testing/flows'
 
 describe('auth, persona and ownership', () => {
@@ -188,7 +190,7 @@ describe('validation errors', () => {
       unitCogsCents: a!.cogsCents,
       unitPriceCents: null,
       lineTotalCents: null,
-      marginBps: null,
+      markupBps: null,
     })
     expect(res.body.lines[0].minUnitPriceCents).toBeGreaterThan(a!.cogsCents)
     expect(res.body.lines[1]).toMatchObject({
@@ -196,11 +198,41 @@ describe('validation errors', () => {
       productName: null,
       unitCogsCents: null,
       minUnitPriceCents: null,
-      marginBps: null,
+      markupBps: null,
     })
-    expect(res.body.lines[2].marginBps).toBe(0)
+    // Priced at cost: the 0.75% fee makes the net markup -75 bps.
+    expect(res.body.lines[2].markupBps).toBe(-75)
     // An incomplete draft would fail send, so it has no split.
     expect(res.body.split).toBeNull()
+  })
+
+  it('reports uncapped net markup, and null markup at zero cost', async () => {
+    const [a] = ctx.seed.products
+    const [free] = await ctx.db
+      .insert(products)
+      .values({
+        sku: 'SAMPLE-0',
+        name: 'Free sample',
+        cogsCents: 0,
+        stockQuantity: 10,
+      })
+      .returning({ id: products.id })
+    const orderId = await createDraft(ctx, [])
+
+    const res = await putLines(orderId, [
+      { productId: a!.id, quantity: 1, unitPriceCents: a!.cogsCents * 14 },
+      { productId: free!.id, quantity: 1, unitPriceCents: 500 },
+    ])
+
+    expect(res.status).toBe(200)
+    // (9925 * 14c - 10000c) / c = 128950 bps, i.e. 1289.5%: well past any cap.
+    expect(res.body.lines[0].markupBps).toBe(128_950)
+    expect(res.body.lines[1]).toMatchObject({
+      unitCogsCents: 0,
+      markupBps: null,
+      minUnitPriceCents: 0,
+    })
+    expect(providerOrderDetailDtoSchema.safeParse(res.body).success).toBe(true)
   })
 
   it('saves a draft priced below its minimum but refuses to send it', async () => {

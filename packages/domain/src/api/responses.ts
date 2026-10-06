@@ -174,10 +174,11 @@ export interface ProviderOrderLineDto {
   /** Wholesale cost snapshot, taken on save and refreshed on send. Null without a product. */
   unitCogsCents: number | null
   /**
-   * marginBpsFromPrice(unitCogsCents, unitPriceCents); null unless both are set.
-   * Negative when a draft is priced below cost.
+   * Net markup on wholesale cost, markupBpsFromPrice(unitCogsCents, unitPriceCents).
+   * Uncapped (30000 = 300%). Negative when priced below cost plus the fee. Null
+   * without a product or a price, and when the wholesale cost is 0 (undefined markup).
    */
-  marginBps: number | null
+  markupBps: number | null
   /** minUnitPriceCents(unitCogsCents); null without a product. */
   minUnitPriceCents: number | null
   /** The product's current stock (live, not a snapshot); null without a product. */
@@ -193,7 +194,7 @@ export const providerOrderLineDtoSchema: z.ZodType<ProviderOrderLineDto> =
     unitPriceCents: cents.nullable(),
     lineTotalCents: cents.nullable(),
     unitCogsCents: cents.nullable(),
-    marginBps: z.int().max(10000).nullable(),
+    markupBps: z.int().nullable(),
     minUnitPriceCents: cents.nullable(),
     stockQuantity: z.int().nonnegative().nullable(),
   })
