@@ -184,7 +184,7 @@ function expectProviderDetail(body: unknown): ProviderOrderDetailDto {
 }
 
 function platformFeeCents(subtotalCents: number): number {
-  return Math.floor((subtotalCents * 75 + 5_000) / 10_000)
+  return Math.floor((subtotalCents * 75 + 9_999) / 10_000)
 }
 
 function ceilUnitFeeCents(priceCents: number): number {
