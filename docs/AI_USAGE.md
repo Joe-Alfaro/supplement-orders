@@ -19,7 +19,7 @@ Before the orchestrator existed, I worked with an earlier, separate AI session t
 4. **Dispute.** The orchestrator decides whether the test, the implementation or the contract is wrong, logs the ruling, and the owning side makes the change. Grok fixes Grok's tests. The exceptions were all orchestrator-approved: two type-only and formatting-only fixes to Grok's domain tests (no expected value, input or test count changed), and one stale fee value in Grok's split tests after the rounding change.
 5. **Integrate.** The orchestrator merges branches, often in a throwaway worktree first to check that the combination is green, then re-runs lint, typecheck, unit tests, build, and later the Playwright suite before accepting.
 
-The same loop ran for each product revision after the first build: the fee model (revision 2), search and pagination (3), date-of-birth identification (3b), net margin (4, cancelled), markup (5), cancel and the remaining open items (6), and fee rounding (7). The PrimeVue migration went through it too.
+The same loop ran for each product revision after the first build: the fee model (revision 2), search and pagination (3), date-of-birth identification (3b), net margin (4, cancelled), markup (5), cancel and the remaining open items (6), fee rounding (7), and the order lifecycle and Orders tab (8 through 8e). The PrimeVue migration went through it too. For revision 8, Grok's lifecycle contract tests were red against the API until delete, reopen and the new order list landed.
 
 ## What worked
 
@@ -39,6 +39,10 @@ A single model writing both sides would have settled both questions silently, on
 **Asking instead of implementing literally.** When I asked for prices to be "calculated from cost plus 75 bps", the agent asked a clarifying question rather than doing it, because a price of exactly cost plus the fee would leave the provider no margin, which the brief requires. That question is what led me to restate the business model correctly (next section).
 
 **Encoding preferences as lint.** My code style preferences (no `for` loops, no `any`, no nested ternaries, Testing Library conventions) were turned into ESLint rules at scaffold time. With several agents writing in parallel, lint enforces them mechanically instead of relying on each agent remembering them.
+
+**Cross-model review of the docs.** These docs were written by a Claude worker, then fact-checked by a Grok worker against the code and fresh test runs, without editing them: 118 claims checked, 13 wrong or misleading. All were precision problems, such as missing `>= 0` checks on the order totals, a never-sent pay returning 404 rather than 409, and per-line fees that can exceed the order fee by more than a cent. The orchestrator then reviewed the AI usage write-up against the decision log and caught three history errors the code couldn't reveal (see below). All were corrected before the docs were merged.
+
+**Deploy preparation found two real problems before they reached production.** First, Railway passes service variables to the build, so with `NODE_ENV=production` set, `npm ci` would have skipped dev dependencies, including Vite, and the build would have failed. Second, Express's `sendFile` refuses paths that contain a dotfile directory, so the SPA fallback returned a 500 when the app ran from a worktree under a hidden directory. Railway's `/app` path wouldn't have hit that, but it was fixed with a regression test anyway.
 
 ## What didn't go as expected, and how we corrected
 
@@ -68,6 +72,16 @@ A single model writing both sides would have settled both questions silently, on
 
 **Version pin.** The scaffold worker installed the latest Vitest, which crashed npm 10.9's dependency resolver even in an empty project. It bisected the problem, confirmed that npm 11 doesn't have it, and pinned Vitest 3 and Vite 7 rather than asking me to change my npm version.
 
+**A feature looked missing because the dev server was stale.** While reviewing the app after revisions 6 and 7 were integrated, I reported that I couldn't find how to cancel an order awaiting payment. The feature was already on `main`. The dev server I was using was still running from an older worker's worktree that predated cancel, and the orchestrator hadn't restarted it after integrating. That was the orchestrator's process miss. It now restarts the dev servers from `main` after every integration, or tells me which branch is running.
+
+**The docs embellished an anecdote.** The first version of this write-up included a story that a follow-up instruction had pointed a test back at an old label to make it pass, and that the orchestrator had it reverted. That didn't happen. What did happen is that the Playwright spec was left red on a missing label until the UI landed, and the orchestrator approved keeping it red. The same review found two other history errors: the planning documents were written in an earlier AI session before the orchestrator existed, not by the orchestrator, and only the domain and HTTP contract tests were written without seeing an implementation. The UI tests were black-box tests against a UI that already existed. The Grok fact-check couldn't catch these, because they're about history rather than code. The lesson: an AI-written account of an AI-assisted process needs the same independent check as the code, including a check against the primary record.
+
+**An unvetted package install.** While working on the deployment, the deploy worker installed an npm package named `railway` to inspect its types. It wasn't a vetted dependency. The orchestrator had it reverted before anything was committed.
+
+**The orchestrator's knowledge of Railway was out of date.** The deploy worker reported that Railway no longer applies Config as Code (`railway.json`) to new services. The orchestrator doubted it and asked for evidence. The worker produced three pieces: Railway's documentation ("New services cannot opt into Config as Code"), a deprecation warning from the Railway CLI, and the deployment's recorded config showing the pre-deploy command and health check as unset. The settings were applied to the service directly instead, and `railway.json` is kept as a record. Asking for evidence was right; the doubt itself came from stale training knowledge. A related deploy-time fix: `npm ci` in the build failed with EBUSY because Railpack mounts a cache inside `node_modules`, and Railpack's own install step already includes dev dependencies, so the build command became just `npm run build`.
+
+**A flaky end-to-end test, still open.** `cancel.spec.ts` failed once when a click on the dashboard's "See orders awaiting payment →" link didn't navigate, then passed on re-run. The test author is repeating it to find out whether the test needs a better readiness wait or the link has a real bug. It isn't resolved at the time of writing.
+
 ## Lessons
 
 - **Write the contract before splitting work across models.** Without a shared spec, two models test and build against different guesses. With one, their disagreements point at exactly the parts of the spec that were ambiguous.
@@ -75,4 +89,6 @@ A single model writing both sides would have settled both questions silently, on
 - **Brute-check money rules before dispatching them.** Every rounding rule that survived was checked over hundreds of thousands of cases before a worker saw it. The one inconsistency that shipped came from checking two rules separately instead of checking the relationship between them.
 - **Confirm the user's mental model of a number before formalizing it.** Margin versus markup cost a whole revision. One question up front ("do you think in markup on cost or margin on price?") would have saved it.
 - **Diagnose agent infrastructure from transcripts, not by retrying.** Most of the time lost to tooling was spent nudging workers that were blocked on something visible in their logs.
+- **Restart what the human is looking at.** After integrating, the running dev server has to come from the integrated branch, or the product owner reviews stale code and reports phantom bugs.
+- **Ask agents for evidence, and accept it when it comes.** Doubting the Config as Code claim was right. Holding on to the doubt after the evidence arrived would have been wrong, because the model's knowledge of a fast-moving platform was out of date.
 - **The human still has to look at the screen.** The two most consequential corrections, the fee model and the rounding mismatch, came from me looking at the running app, not from any test.
