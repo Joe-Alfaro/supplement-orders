@@ -48,13 +48,17 @@ import type { InternalTestContext } from '../testing/harness'
 // order is 409 ORDER_NOT_REOPENABLE. Cancel plus reopen does not change stock.
 //
 // GET /api/orders?status= is provider-only and returns a page of
-// ProviderOrderListItemDto. pending_payment is oldest sentAt first, then id.
-// Every other filter, including all, is most recent activity first (latest of
-// paidAt, cancelledAt, sentAt, createdAt), then id descending. totalCents and
-// sentAt are null for drafts and for orders cancelled before sending. A bad
-// status, offset, or limit is 400 naming that field. Without status, the
-// provider array and the patient array are unchanged. A patient who passes
-// status is 403.
+// ProviderOrderListItemDto. status is a comma-separated set of draft,
+// pending_payment, paid, and cancelled, or exactly all (revision 8b).
+// Duplicates are ignored. An empty value, an unknown member, an empty item,
+// or all mixed with a status is 400 on status. Exactly pending_payment (one
+// status after de-duplicating) is oldest sentAt first, then id. Every other
+// selection, including all and any multi-status set, is most recent activity
+// first (latest of paidAt, cancelledAt, sentAt, createdAt), then id
+// descending. totalCents and sentAt are null for drafts and for orders
+// cancelled before sending. A bad offset or limit is 400 naming that field.
+// Without status, the provider array and the patient array are unchanged. A
+// patient who passes status is 403.
 //
 // GET /api/patients?latestStatus= keeps patients whose most recently created
 // order (created_at, not updated_at) has that status. none means no orders. It
@@ -1239,6 +1243,83 @@ describe('GET /api/orders?status=', () => {
     expect(idsOf(defaults)).toEqual(expected)
   })
 
+  it('filters a status set, ignores duplicates, and sorts every other set by activity', async () => {
+    const paidRecent = await placePaid()
+    const pendingEarly = await placePayableOrder()
+    const pendingLate = await placePayableOrder()
+    const cancelledMid = await cancelOrder(
+      (await placePayableOrder()).detail.id,
+    )
+    const draftOlder = await savePricedDraft()
+    const draftNewer = await savePricedDraft()
+
+    await stampOrder(paidRecent.detail.id, {
+      createdAt: JAN,
+      sentAt: JAN_SENT,
+      paidAt: SEP,
+    })
+    await stampOrder(pendingEarly.detail.id, { createdAt: JAN, sentAt: JAN })
+    await stampOrder(pendingLate.detail.id, { createdAt: JAN, sentAt: MAY })
+    await stampOrder(cancelledMid.id, {
+      createdAt: JAN,
+      sentAt: JAN_SENT,
+      cancelledAt: JUL,
+    })
+    await stampOrder(draftOlder.id, { createdAt: FEB })
+    await stampOrder(draftNewer.id, { createdAt: JUN })
+
+    // Activity is September paid, July cancelled, June draft, May pending,
+    // February draft, January pending. Oldest sent is the reverse of that
+    // for the two pending orders.
+    const awaitingOldest = [pendingEarly.detail.id, pendingLate.detail.id]
+    const exceptPaid = [
+      cancelledMid.id,
+      draftNewer.id,
+      pendingLate.detail.id,
+      draftOlder.id,
+      pendingEarly.detail.id,
+    ]
+
+    async function pageIds(status: string): Promise<number[]> {
+      const page = await getOrderPage({ status, limit: '100' })
+      expect(page.total).toBe(page.items.length)
+      return idsOf(page)
+    }
+
+    expect(await pageIds('pending_payment')).toEqual(awaitingOldest)
+    // Repeating the only status must not turn it into a multi-status set.
+    // A multi-status set would list the May pending order first.
+    expect(await pageIds('pending_payment,pending_payment')).toEqual(
+      awaitingOldest,
+    )
+    expect(await pageIds('paid,paid')).toEqual([paidRecent.detail.id])
+
+    const exceptPaidPage = await getOrderPage({
+      status: 'draft,pending_payment,cancelled',
+      limit: '100',
+    })
+    expect(exceptPaidPage.total).toBe(exceptPaid.length)
+    expect(idsOf(exceptPaidPage)).toEqual(exceptPaid)
+    expect(idsOf(exceptPaidPage)).not.toContain(paidRecent.detail.id)
+    expect(exceptPaidPage.items.map((item) => item.status)).not.toContain(
+      'paid',
+    )
+    expect(
+      await pageIds('cancelled,draft,pending_payment,draft,cancelled'),
+    ).toEqual(exceptPaid)
+
+    expect(await pageIds('draft,pending_payment')).toEqual([
+      draftNewer.id,
+      pendingLate.detail.id,
+      draftOlder.id,
+      pendingEarly.detail.id,
+    ])
+    expect(await pageIds('paid,cancelled')).toEqual([
+      paidRecent.detail.id,
+      cancelledMid.id,
+    ])
+  })
+
   it('stays inside the provider and honours patientId', async () => {
     const own = await placePayableOrder()
     const foreignPatientId = await otherProviderPatientId()
@@ -1287,6 +1368,12 @@ describe('GET /api/orders?status=', () => {
     [{ status: 'shipped' }, 'status'],
     [{ status: 'PAID' }, 'status'],
     [{ status: '' }, 'status'],
+    [{ status: 'draft,shipped' }, 'status'],
+    [{ status: 'paid,PAID' }, 'status'],
+    [{ status: 'draft,' }, 'status'],
+    [{ status: ',draft' }, 'status'],
+    [{ status: 'all,paid' }, 'status'],
+    [{ status: 'pending_payment,all' }, 'status'],
     [{ status: 'pending_payment', offset: '-1' }, 'offset'],
     [{ status: 'pending_payment', offset: '1.5' }, 'offset'],
     [{ status: 'all', limit: '0' }, 'limit'],
@@ -1295,6 +1382,14 @@ describe('GET /api/orders?status=', () => {
   ])('rejects %j on %s', async (query, field) => {
     const response = await getOrders(query, context().seed.providerUserId)
     expectError(response, 400, 'VALIDATION_ERROR', field)
+  })
+
+  it('rejects a patient who passes a status list', async () => {
+    const response = await getOrders(
+      { status: 'draft,pending_payment,cancelled' },
+      context().seed.patientUserId,
+    )
+    expectError(response, 403, 'FORBIDDEN')
   })
 })
 
