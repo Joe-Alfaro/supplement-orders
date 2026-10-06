@@ -58,8 +58,12 @@ describe('GET /api/orders?status=pending_payment', () => {
       patientId: ctx.seed.patientId,
       patientName: 'Jordan Lee',
       patientDateOfBirth: '1984-03-14',
+      status: 'pending_payment',
       totalCents: expect.any(Number),
+      createdAt: expect.any(String),
       sentAt: '2026-10-01T09:00:00.000Z',
+      paidAt: null,
+      cancelledAt: null,
     })
   })
 
@@ -102,8 +106,8 @@ describe('GET /api/orders?status=pending_payment', () => {
   it('rejects other status values and bad paging with a field', async () => {
     const results = await Promise.all(
       [
-        '?status=paid',
-        '?status=cancelled',
+        '?status=shipped',
+        '?status=PAID',
         '?status=pending_payment&limit=101',
       ].map((q) =>
         ctx.request.get(`/api/orders${q}`).set(as(ctx.seed.providerUserId)),

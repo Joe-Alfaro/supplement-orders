@@ -149,8 +149,12 @@ const AWAITING_KEYS = [
   'patientId',
   'patientName',
   'patientDateOfBirth',
+  'status',
   'totalCents',
+  'createdAt',
   'sentAt',
+  'paidAt',
+  'cancelledAt',
 ]
 
 const DASHBOARD_KEYS = [
@@ -336,7 +340,11 @@ function expectAwaitingPage(body: unknown): AwaitingPaymentPageDto {
   })
   const page = awaitingPaymentPageDtoSchema.parse(body)
   page.items.forEach((item) => {
-    expectIsoTimestamp(item.sentAt)
+    expect(item.status).toBe('pending_payment')
+    expect(item.paidAt).toBeNull()
+    expect(item.cancelledAt).toBeNull()
+    expectIsoTimestamp(item.createdAt)
+    expectIsoTimestamp(requireSentAt(item))
   })
   return page
 }
@@ -369,13 +377,20 @@ function expectDashboard(body: unknown): DashboardDto {
   return dashboard
 }
 
+function requireSentAt(item: AwaitingPaymentOrderDto): string {
+  if (item.sentAt === null) {
+    throw new Error('awaiting order is missing sentAt')
+  }
+  return item.sentAt
+}
+
 function expectOldestFirst(items: readonly AwaitingPaymentOrderDto[]): void {
   items.slice(1).forEach((item, index) => {
     const previous = items[index]
     if (previous === undefined) {
       throw new Error('missing the previous awaiting order')
     }
-    const bySent = previous.sentAt.localeCompare(item.sentAt)
+    const bySent = requireSentAt(previous).localeCompare(requireSentAt(item))
     expect(bySent).toBeLessThanOrEqual(0)
     if (bySent === 0) {
       expect(previous.id).toBeLessThan(item.id)
@@ -454,8 +469,12 @@ function awaitingRow(detail: ProviderOrderDetailDto): AwaitingPaymentOrderDto {
     patientId: detail.patientId,
     patientName: detail.patientName,
     patientDateOfBirth: detail.patientDateOfBirth,
+    status: 'pending_payment',
     totalCents: split.totalCents,
+    createdAt: detail.createdAt,
     sentAt: detail.sentAt,
+    paidAt: null,
+    cancelledAt: null,
   }
 }
 
@@ -1073,9 +1092,9 @@ describe('GET /api/orders?status=pending_payment', () => {
   })
 
   it.each<[Record<string, string>, string]>([
-    [{ status: 'paid' }, 'status'],
-    [{ status: 'cancelled' }, 'status'],
-    [{ status: 'draft' }, 'status'],
+    [{ status: 'shipped' }, 'status'],
+    [{ status: 'PAID' }, 'status'],
+    [{ status: '' }, 'status'],
     [{ status: 'pending_payment', offset: '-1' }, 'offset'],
     [{ status: 'pending_payment', offset: '1.5' }, 'offset'],
     [{ status: 'pending_payment', limit: '0' }, 'limit'],
