@@ -146,7 +146,11 @@ export function ordersRouter(ctx: AppContext) {
     const user = requireRole(await auth.getCurrentUser(req), 'patient')
     const orderId = parseId(req.params.id)
     const body = parseOrThrow(payOrderRequestSchema, req.body ?? {})
-    await payOrder(ctx, user, orderId, body.simulateFailure === true)
+    await payOrder(ctx, user, orderId, {
+      expectedRevision: body.expectedRevision,
+      expectedTotalCents: body.expectedTotalCents,
+      simulateFailure: body.simulateFailure === true,
+    })
     res.json(await loadPatientOrderDetail(db, orderId))
   })
 

@@ -135,8 +135,11 @@ describe('GET /api/orders?status=pending_payment', () => {
       .set(as(ctx.seed.providerUserId))
 
     expect(dashboard.body.gmvCents).toBe(paid.body.totalCents)
-    expect(
-      dashboard.body.paidOrders.map((o: { orderId: number }) => o.orderId),
-    ).toEqual([paidId])
+    const paidList = await ctx.request
+      .get('/api/orders?status=paid')
+      .set(as(ctx.seed.providerUserId))
+    expect(paidList.body.items.map((o: { id: number }) => o.id)).toEqual([
+      paidId,
+    ])
   })
 })

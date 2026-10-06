@@ -56,11 +56,36 @@ export async function createSentOrder(
   return orderId
 }
 
-export function pay(ctx: TestContext, orderId: number, body: object = {}) {
+/**
+ * The quote the patient is looking at, read the way the pay screen reads it.
+ * Falls back to a placeholder quote when the patient can't see the order, so
+ * tests of 403/404 paths still send a well-formed body.
+ */
+export async function patientQuote(ctx: TestContext, orderId: number) {
+  const res = await ctx.request
+    .get(`/api/orders/${orderId}`)
+    .set(as(ctx.seed.patientUserId))
+  if (res.status !== 200) return { expectedRevision: 1, expectedTotalCents: 0 }
+  return {
+    expectedRevision: res.body.revision as number,
+    expectedTotalCents: res.body.totalCents as number,
+  }
+}
+
+/**
+ * Pays as the patient with the quote they currently see (revision 9). Fields in
+ * `body` override it, e.g. a stale expectedTotalCents or simulateFailure.
+ */
+export async function pay(
+  ctx: TestContext,
+  orderId: number,
+  body: object = {},
+) {
+  const quote = await patientQuote(ctx, orderId)
   return ctx.request
     .post(`/api/orders/${orderId}/pay`)
     .set(as(ctx.seed.patientUserId))
-    .send(body)
+    .send({ ...quote, ...body })
 }
 
 /** Everything the pay transaction may touch, read straight from the database. */

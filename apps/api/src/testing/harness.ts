@@ -101,8 +101,7 @@ export async function createInternalTestContext(
     payHooks,
     async reset() {
       ctx.seed = await reseed()
-      gateway.failNextCharges = false
-      gateway.charges.length = 0
+      gateway.reset()
       notifier.sent.length = 0
       notifier.cancelled.length = 0
       delete payHooks.afterLedgerInsert
