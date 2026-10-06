@@ -5,16 +5,16 @@ import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
 import { onMounted, watch } from 'vue'
-import { useRoute, useRouter, type LocationQuery } from 'vue-router'
+import { useRoute, type LocationQuery } from 'vue-router'
 import { getDashboard, searchProducts } from '../api'
 import { ErrorBanner, MoneyText, PageSummary, StatTile } from '../components'
-import { PAGE_SIZE, usePagedSearch } from '../search'
+import { PAGE_SIZE, useListUrl, usePagedSearch } from '../search'
 import { useResource } from '../useResource'
 
 const route = useRoute()
-const router = useRouter()
-// Leaving for another route also changes the query; only react on this page.
-const dashboardPath = route.path
+// URL writes only while still on this page; leaving cancels pending debounces.
+const listUrl = useListUrl()
+const dashboardPath = listUrl.listPath
 
 interface InventoryUrlState {
   q: string
@@ -46,6 +46,8 @@ const inventory = usePagedSearch(searchProducts, {
   initialOffset: initial.offset,
 })
 
+listUrl.onLeave(inventory.cancel)
+
 function inventoryState(): InventoryUrlState {
   return { q: inventory.activeQuery.value, offset: inventory.offset.value }
 }
@@ -63,7 +65,7 @@ onMounted(() => {
 // Typing (debounced) replaces the URL, so Back doesn't step through keystrokes.
 watch(inventory.activeQuery, () => {
   const state = inventoryState()
-  if (!urlMatches(state)) router.replace({ query: inventoryToUrl(state) })
+  if (!urlMatches(state)) listUrl.replaceQuery(inventoryToUrl(state))
 })
 
 // Back/Forward (or a link) changed the URL: show what it says.
@@ -81,7 +83,7 @@ watch(
 // Page changes push, so Back returns to the previous page.
 function onInventoryPage(event: DataTablePageEvent) {
   inventory.goTo(event.first)
-  router.push({ query: inventoryToUrl(inventoryState()) })
+  listUrl.pushQuery(inventoryToUrl(inventoryState()))
 }
 </script>
 
