@@ -4,11 +4,11 @@ export {
   computePlatformFee,
   computeSplit,
   formatCents,
-  marginBpsFromPrice,
+  markupBpsFromPrice,
   minUnitPriceCents,
   parseDollarsToCents,
   PLATFORM_FEE_BPS,
-  priceFromMarginBps,
+  priceFromMarkupBps,
   SplitValidationError,
 } from '@supplement-orders/domain'
 export type { OrderSplit, ParseResult, SplitLine } from '@supplement-orders/domain'

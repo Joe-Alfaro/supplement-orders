@@ -144,7 +144,7 @@ const providerOrder: ProviderOrderDetailDto = {
       unitPriceCents: 2000,
       lineTotalCents: 2000,
       unitCogsCents: 1200,
-      marginBps: 4000,
+      markupBps: 4000,
       minUnitPriceCents: 1210,
       stockQuantity: 9,
     },

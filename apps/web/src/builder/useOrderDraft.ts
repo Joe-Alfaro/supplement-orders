@@ -195,7 +195,7 @@ export function useOrderDraft() {
       quantityInput: String(line.quantity),
       priceInput:
         line.unitPriceCents === null ? '' : centsToInput(line.unitPriceCents),
-      marginInput: line.marginBps === null ? '' : formatBps(line.marginBps),
+      marginInput: line.markupBps === null ? '' : formatBps(line.markupBps),
     }))
   }
 

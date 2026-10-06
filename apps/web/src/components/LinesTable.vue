@@ -41,8 +41,8 @@ defineProps<Props>()
     </Column>
     <Column v-if="showCosts" header="Margin %">
       <template #body="{ data }">
-        <span v-if="data.marginBps !== null"
-          >{{ formatBps(data.marginBps) }}%</span
+        <span v-if="data.markupBps !== null"
+          >{{ formatBps(data.markupBps) }}%</span
         >
         <span v-else>—</span>
       </template>

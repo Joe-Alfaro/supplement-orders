@@ -2,11 +2,11 @@ import {
   computePlatformFee,
   formatBps,
   formatCents,
-  marginBpsFromPrice,
+  markupBpsFromPrice,
   minUnitPriceCents,
   parseDollarsToCents,
   parsePercentToBps,
-  priceFromMarginBps,
+  priceFromMarkupBps,
 } from '../money'
 
 // Pure pricing helpers shared by the lines table and the Add-product modal, so
@@ -79,14 +79,16 @@ function parseQuantity(input: string, stock: number | null) {
 export function marginInputFromPrice(cogsCents: number, priceInput: string) {
   const price = parsePrice(priceInput)
   if (price.cents === null) return null
-  return formatBps(marginBpsFromPrice(cogsCents, price.cents))
+  // Revision 5 compile fix: the linked field now carries markup; null at zero cost.
+  const bps = markupBpsFromPrice(cogsCents, price.cents)
+  return bps === null ? null : formatBps(bps)
 }
 
 /** New price text for a typed margin, or null when it can't be derived. */
 export function priceInputFromMargin(cogsCents: number, marginInput: string) {
   const margin = parsePercentToBps(marginInput)
   if (!margin.ok) return null
-  return centsToInput(priceFromMarginBps(cogsCents, margin.bps))
+  return centsToInput(priceFromMarkupBps(cogsCents, margin.bps))
 }
 
 export function normalizedPriceInput(input: string) {
