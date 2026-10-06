@@ -328,17 +328,13 @@ function addToOrder() {
           >
         </div>
         <div class="field">
+          <!-- Read-only by nature: plain text in a labelled <output>, not a control. -->
           <label for="add-product-fee">{{ feeLabel }}</label>
-          <InputText
-            id="add-product-fee"
-            class="price"
-            readonly
-            :model-value="
-              pricing.lineFeeCents === null
-                ? ''
-                : formatCents(pricing.lineFeeCents)
-            "
-          />
+          <output id="add-product-fee" class="fee-value" aria-live="polite">{{
+            pricing.lineFeeCents === null
+              ? ''
+              : formatCents(pricing.lineFeeCents)
+          }}</output>
         </div>
         <div class="field">
           <label for="add-product-price">Patient price (each)</label>

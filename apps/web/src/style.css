@@ -133,6 +133,14 @@ main {
   align-items: flex-start;
 }
 
+.fee-value {
+  /* Lines up with the neighbouring inputs' text without looking editable. */
+  display: block;
+  min-height: 2.5rem;
+  padding: 0.5rem 0;
+  font-variant-numeric: tabular-nums;
+}
+
 .checkbox-field {
   display: flex;
   gap: 0.5rem;

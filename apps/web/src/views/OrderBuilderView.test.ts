@@ -531,7 +531,7 @@ describe('OrderBuilderView patient and stock', () => {
     expect(sendButton()).toHaveProperty('disabled', false)
   })
 
-  it('shows the line processing fee read-only, in step 2 and in the table', async () => {
+  it('shows the line processing fee as plain text, in step 2 and in the table', async () => {
     const { container } = await renderBuilder()
     await openAddProduct()
     await chooseProduct('Vitamin D3')
@@ -539,12 +539,13 @@ describe('OrderBuilderView patient and stock', () => {
     await fireEvent.update(screen.getByLabelText('Qty'), '3')
     await fireEvent.update(screen.getByLabelText('Patient price (each)'), '20')
 
-    // 75 bps of the $60.00 line, half up: 45 cents.
+    // 75 bps of the $60.00 line, half up: 45 cents. Plain text, not a control.
     const fee = screen.getByLabelText('Processing fee (0.75%)')
-    expect(inputValue('Processing fee (0.75%)')).toBe('$0.45')
-    expect(fee.hasAttribute('readonly')).toBe(true)
+    expect(fee.tagName).toBe('OUTPUT')
+    expect(fee.textContent).toBe('$0.45')
+    expect(screen.queryByRole('textbox', { name: /Processing fee/ })).toBeNull()
     await fireEvent.update(screen.getByLabelText('Patient price (each)'), '')
-    expect(inputValue('Processing fee (0.75%)')).toBe('')
+    expect(fee.textContent).toBe('')
     await fireEvent.update(screen.getByLabelText('Patient price (each)'), '20')
 
     await fireEvent.click(screen.getByRole('button', { name: 'Add to order' }))
