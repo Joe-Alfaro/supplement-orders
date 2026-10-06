@@ -89,14 +89,14 @@ When the patient pays, the API writes three ledger entries (`cogs`, `provider_ma
 
 Public demo: _URL to be added after the first deploy_
 
-The app runs on [Railway](https://railway.com) as one service plus a Railway Postgres service. The API serves the built web app, so there is one origin and no CORS. [`railway.json`](railway.json) holds the build and deploy settings:
+The app runs on [Railway](https://railway.com) as one service plus a Railway Postgres service. The API serves the built web app, so there is one origin and no CORS. [`railway.json`](railway.json) records the build and deploy settings. Railway no longer reads that file for new services (Config as Code is deprecated), so the same values are set on the service itself:
 
-| Step       | Command                                          | Notes                                                                                                     |
-| ---------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| Build      | `npm ci --include=dev && npm run build`          | Railpack, Node 22 from `engines`. Dev dependencies are included because Vite is one and `NODE_ENV` is set |
-| Pre-deploy | `npm run db:migrate && npm run db:seed:if-empty` | Runs before each release. Migrations are idempotent; the seed only runs on an empty database              |
-| Start      | `npm start`                                      | API under `tsx`, serving `apps/web/dist` with history fallback                                            |
-| Health     | `GET /api/health`                                | Returns 503 when the database is unreachable. Restart policy: on failure                                  |
+| Step       | Command                                          | Notes                                                                                                                      |
+| ---------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Build      | `npm run build`                                  | Railpack, Node 22 from `engines`. Railpack's install step includes dev dependencies (Vite) even with `NODE_ENV=production` |
+| Pre-deploy | `npm run db:migrate && npm run db:seed:if-empty` | Runs before each release. Migrations are idempotent; the seed only runs on an empty database                               |
+| Start      | `npm start`                                      | API under `tsx`, serving `apps/web/dist` with history fallback                                                             |
+| Health     | `GET /api/health`                                | Returns 503 when the database is unreachable. Restart policy: on failure                                                   |
 
 Service variables:
 
