@@ -10,7 +10,7 @@ import { useRouter } from 'vue-router'
 import {
   ApiRequestError,
   createOrder,
-  errorMessage,
+  handleApiError,
   getOrder,
   getPatient,
   replaceOrderLines,
@@ -67,7 +67,7 @@ async function load() {
       draft.loadFromServer(existing.lines)
     }
   } catch (err) {
-    loadError.value = errorMessage(err)
+    loadError.value = handleApiError(err)
   } finally {
     loading.value = false
   }
@@ -93,7 +93,7 @@ function handleError(err: unknown) {
     banner.value = 'The server rejected a line. See the highlighted field.'
     return
   }
-  banner.value = errorMessage(err)
+  banner.value = handleApiError(err)
 }
 
 async function run(action: () => Promise<void>) {

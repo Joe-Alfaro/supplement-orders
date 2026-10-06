@@ -56,6 +56,35 @@ export async function request<T>(
   return (await response.json()) as T
 }
 
+const unauthenticatedListeners = new Set<() => void>()
+
+/** Subscribe to "the server no longer recognizes this user" (any 401). */
+export function onUnauthenticated(listener: () => void) {
+  unauthenticatedListeners.add(listener)
+  return () => {
+    unauthenticatedListeners.delete(listener)
+  }
+}
+
+function isUnauthenticated(err: unknown) {
+  return (
+    err instanceof ApiRequestError &&
+    (err.status === 401 || err.code === 'UNAUTHENTICATED')
+  )
+}
+
+/**
+ * The single place request failures are handled: a 401 from any endpoint ends
+ * the session (listeners sign out and return to /login). Returns the message
+ * for the screen's error banner.
+ */
+export function handleApiError(err: unknown) {
+  if (isUnauthenticated(err)) {
+    unauthenticatedListeners.forEach((listener) => listener())
+  }
+  return errorMessage(err)
+}
+
 export function errorMessage(err: unknown) {
   if (err instanceof Error) return err.message
   return 'Something went wrong'

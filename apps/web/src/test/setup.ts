@@ -1,3 +1,4 @@
+// jest-dom matchers (toBeDisabled, toHaveValue, ...) on Vitest's expect, with types.
 import '@testing-library/jest-dom/vitest'
 import { cleanup } from '@testing-library/vue'
 import { afterEach } from 'vitest'

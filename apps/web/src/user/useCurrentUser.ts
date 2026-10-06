@@ -1,6 +1,7 @@
 import type { Role, UserDto } from '@supplement-orders/domain'
 import { computed, ref } from 'vue'
-import { errorMessage, listUsers } from '../api'
+import { handleApiError, listUsers, onUnauthenticated } from '../api'
+import { showNotice } from './notice'
 import { readStoredUserId, writeStoredUserId } from './storage'
 
 // Module-level state: the current user is the app's only cross-screen client state.
@@ -20,7 +21,7 @@ async function loadUsers() {
     // Forget a stored id that no longer matches a seeded user.
     if (selectedUserId.value !== null && !currentUser.value) signOut()
   } catch (err) {
-    loadError.value = errorMessage(err)
+    loadError.value = handleApiError(err)
     pendingLoad = null
   }
 }
@@ -40,6 +41,14 @@ function signOut() {
   selectedUserId.value = null
   writeStoredUserId(null)
 }
+
+// Any 401 means the stored user is no longer valid: sign out with a notice.
+// App.vue sends a signed-out user to /login.
+onUnauthenticated(() => {
+  if (selectedUserId.value === null) return
+  signOut()
+  showNotice('Your session has ended. Please sign in again.', '/login')
+})
 
 export function homePathFor(role: Role) {
   return role === 'provider' ? '/patients' : '/my-orders'

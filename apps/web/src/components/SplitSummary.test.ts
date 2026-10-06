@@ -4,10 +4,8 @@ import { computeSplit } from '../money'
 import SplitSummary from './SplitSummary.vue'
 
 function rowValue(label: string | RegExp) {
-  const header = screen.getByRole('rowheader', { name: label })
-  const row = header.closest('tr')
-  if (!row) throw new Error(`No row for ${label}`)
-  return within(row).getByRole('cell').textContent
+  const row = screen.getByRole('row', { name: label })
+  return within(row).getByRole('cell')
 }
 
 describe('SplitSummary', () => {
@@ -19,23 +17,21 @@ describe('SplitSummary', () => {
     ])
     render(SplitSummary, { props: { split } })
 
-    expect(rowValue('Patient pays')).toBe('$120.00')
-    expect(rowValue('Wholesale cost')).toBe('$70.00')
-    expect(rowValue(/^Processing fee \(0\.75%\)/)).toBe('$0.90')
+    expect(rowValue(/^Patient pays/)).toHaveTextContent('$120.00')
+    expect(rowValue(/^Wholesale cost/)).toHaveTextContent('$70.00')
+    expect(rowValue(/^Processing fee \(0\.75%\)/)).toHaveTextContent('$0.90')
     expect(
-      screen.getByRole('rowheader', { name: /Processing fee/ }).textContent,
-    ).toContain('calculated on the order total')
-    expect(rowValue('Your margin')).toBe('$49.10')
+      screen.getByRole('rowheader', { name: /Processing fee/ }),
+    ).toHaveTextContent('calculated on the order total')
+    expect(rowValue(/^Your margin/)).toHaveTextContent('$49.10')
     expect(
-      screen
-        .getAllByRole('row')
-        .map((row) =>
-          row.querySelector('th')?.textContent?.replace(/\s+/g, ' ').trim(),
-        ),
+      screen.getAllByRole('rowheader').map((header) => header.textContent),
     ).toEqual([
       'Patient pays',
       'Wholesale cost',
-      'Processing fee (0.75%) calculated on the order total',
+      expect.stringMatching(
+        /^\s*Processing fee \(0\.75%\)\s+calculated on the order total\s*$/,
+      ),
       'Your margin',
     ])
   })

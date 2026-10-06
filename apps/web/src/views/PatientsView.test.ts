@@ -4,7 +4,8 @@ import {
   type PatientDto,
   type PatientPageDto,
 } from '@supplement-orders/domain'
-import { fireEvent, screen } from '@testing-library/vue'
+import { screen } from '@testing-library/vue'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
@@ -64,14 +65,18 @@ beforeEach(() => {
 
 describe('PatientsView', () => {
   it('searches on the server (debounced) and keeps q in the URL', async () => {
+    const user = userEvent.setup()
     const { router } = await renderWithRouter(PatientsView, {
       path: '/patients',
     })
-    expect(await screen.findByText('Showing 1–25 of 312')).toBeTruthy()
+    expect(await screen.findByText('Showing 1–25 of 312')).toBeInTheDocument()
 
-    const search = screen.getByLabelText('Search by name or date of birth')
-    await fireEvent.update(search, 'l')
-    await fireEvent.update(search, 'lee')
+    await user.type(
+      screen.getByRole('searchbox', {
+        name: 'Search by name or date of birth',
+      }),
+      'lee',
+    )
 
     await vi.waitFor(() =>
       expect(api.searchPatients).toHaveBeenLastCalledWith({
@@ -80,44 +85,55 @@ describe('PatientsView', () => {
         limit: 25,
       }),
     )
+    // Only the settled query went out, not each keystroke.
     expect(api.searchPatients).not.toHaveBeenCalledWith(
       expect.objectContaining({ q: 'l' }),
     )
     await vi.waitFor(() =>
       expect(router.currentRoute.value.query.q).toBe('lee'),
     )
-    expect(await screen.findByText('lee 1')).toBeTruthy()
+    expect(await screen.findByText('lee 1')).toBeInTheDocument()
   })
 
   it('starts from q in the URL and pages with Previous/Next', async () => {
+    const user = userEvent.setup()
     await renderWithRouter(PatientsView, { path: '/patients?q=lee' })
-    expect(await screen.findByDisplayValue('lee')).toBeTruthy()
+    expect(
+      await screen.findByRole('searchbox', {
+        name: 'Search by name or date of birth',
+      }),
+    ).toHaveValue('lee')
     expect(api.searchPatients).toHaveBeenCalledWith({
       q: 'lee',
       offset: 0,
       limit: 25,
     })
 
-    const previous = screen.getByRole('button', { name: 'Previous Page' })
-    expect(previous).toHaveProperty('disabled', true)
-    await fireEvent.click(screen.getByRole('button', { name: 'Next Page' }))
+    const previous = await screen.findByRole('button', {
+      name: 'Previous Page',
+    })
+    expect(previous).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Next Page' }))
 
-    expect(await screen.findByText('Showing 26–50 of 312')).toBeTruthy()
+    expect(await screen.findByText('Showing 26–50 of 312')).toBeInTheDocument()
     expect(api.searchPatients).toHaveBeenLastCalledWith({
       q: 'lee',
       offset: 25,
       limit: 25,
     })
-    expect(previous).toHaveProperty('disabled', false)
+    expect(screen.getByRole('button', { name: 'Previous Page' })).toBeEnabled()
   })
 
   it('shows a no-match message with Clear search', async () => {
+    const user = userEvent.setup()
     await renderWithRouter(PatientsView, { path: '/patients?q=nobody' })
 
-    expect(await screen.findByText(/No patients match "nobody"/)).toBeTruthy()
-    await fireEvent.click(screen.getByRole('button', { name: 'Clear search' }))
+    expect(
+      await screen.findByText(/No patients match "nobody"/),
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Clear search' }))
 
-    expect(await screen.findByText('Showing 1–25 of 312')).toBeTruthy()
+    expect(await screen.findByText('Showing 1–25 of 312')).toBeInTheDocument()
     expect(api.searchPatients).toHaveBeenLastCalledWith({
       q: '',
       offset: 0,
@@ -126,17 +142,17 @@ describe('PatientsView', () => {
   })
 
   it('opens a patient from anywhere on the row, or with Enter', async () => {
+    const user = userEvent.setup()
     const { router } = await renderWithRouter(PatientsView, {
       path: '/patients',
     })
-    await fireEvent.click(await screen.findByText('01/04/1980'))
+    await user.click(await screen.findByText('01/04/1980'))
     await vi.waitFor(() =>
       expect(router.currentRoute.value.path).toBe('/patients/3'),
     )
 
-    const row = screen.getByText('Patient 5').closest('tr')
-    if (!row) throw new Error('row not found')
-    await fireEvent.keyDown(row, { key: 'Enter', code: 'Enter' })
+    screen.getByRole('row', { name: /Patient 5/ }).focus()
+    await user.keyboard('{Enter}')
     await vi.waitFor(() =>
       expect(router.currentRoute.value.path).toBe('/patients/5'),
     )
@@ -145,23 +161,25 @@ describe('PatientsView', () => {
   it('shows DOB so same-name patients can be told apart', async () => {
     await renderWithRouter(PatientsView, { path: '/patients?q=Avery Abbott' })
 
-    const rows = await screen.findAllByText('Avery Abbott')
-    expect(rows).toHaveLength(2)
+    expect(await screen.findAllByText('Avery Abbott')).toHaveLength(2)
     expect(
       screen.getByRole('columnheader', { name: 'Date of birth' }),
-    ).toBeTruthy()
-    expect(screen.getByText('03/12/1984')).toBeTruthy()
-    expect(screen.getByText('11/30/1991')).toBeTruthy()
+    ).toBeInTheDocument()
+    expect(screen.getByText('03/12/1984')).toBeInTheDocument()
+    expect(screen.getByText('11/30/1991')).toBeInTheDocument()
   })
 
   it.each(['03/12/1984', '1984-03-12'])(
     'finds the patient by DOB typed as %s',
     async (dob) => {
+      const user = userEvent.setup()
       await renderWithRouter(PatientsView, { path: '/patients' })
       await screen.findByText('Showing 1–25 of 312')
 
-      await fireEvent.update(
-        screen.getByLabelText('Search by name or date of birth'),
+      await user.type(
+        screen.getByRole('searchbox', {
+          name: 'Search by name or date of birth',
+        }),
         dob,
       )
 
@@ -172,9 +190,9 @@ describe('PatientsView', () => {
           limit: 25,
         }),
       )
-      expect(await screen.findByText('Showing 1–1 of 1')).toBeTruthy()
-      expect(screen.getByText('Avery Abbott')).toBeTruthy()
-      expect(screen.getByText('03/12/1984')).toBeTruthy()
+      expect(await screen.findByText('Showing 1–1 of 1')).toBeInTheDocument()
+      expect(screen.getByText('Avery Abbott')).toBeInTheDocument()
+      expect(screen.getByText('03/12/1984')).toBeInTheDocument()
     },
   )
 })
