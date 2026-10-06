@@ -526,6 +526,15 @@ describe('DashboardView states', () => {
     return renderWithRouter(DashboardView, { path: '/dashboard' })
   }
 
+  function expectOrderLinks(): void {
+    expect(
+      screen.getByRole('link', { name: 'See paid orders →' }),
+    ).toHaveAttribute('href', '/orders?status=paid')
+    expect(
+      screen.getByRole('link', { name: 'See orders awaiting payment →' }),
+    ).toHaveAttribute('href', '/orders?status=pending_payment')
+  }
+
   it('shows Loading… for sales and for inventory while each is pending', async () => {
     const salesPending = deferred<DashboardDto>()
     const inventoryPending = deferred<ProductPageDto>()
@@ -561,7 +570,9 @@ describe('DashboardView states', () => {
     await retry()
 
     expect(await screen.findByText('GMV')).toBeInTheDocument()
-    expect(screen.getByText('Jordan Lee')).toBeInTheDocument()
+    expect(screen.getByText('Your margin earned')).toBeInTheDocument()
+    expect(screen.getByText('Processing fees')).toBeInTheDocument()
+    expectOrderLinks()
     expectBannerGone(message)
     expect(api.getDashboard).toHaveBeenCalledTimes(2)
   })
@@ -586,7 +597,10 @@ describe('DashboardView states', () => {
     vi.mocked(api.getDashboard).mockResolvedValue(emptyDashboard)
     vi.mocked(api.searchProducts).mockResolvedValue(noProducts)
     await renderDashboard()
-    expect(await screen.findByText('No paid orders yet.')).toBeInTheDocument()
+    expect(await screen.findByText('GMV')).toBeInTheDocument()
+    expect(screen.getByText('Your margin earned')).toBeInTheDocument()
+    expect(screen.getByText('Processing fees')).toBeInTheDocument()
+    expectOrderLinks()
     expect(screen.getByText('No products.')).toBeInTheDocument()
   })
 })

@@ -468,12 +468,17 @@ describe('accessibility', () => {
     await expectAccessible(container)
   })
 
-  it('dashboard stat tiles, paid orders, and inventory search', async () => {
+  it('dashboard stat tiles, order links, and inventory search', async () => {
     const { container } = await renderWithRouter(DashboardView, {
       path: '/dashboard',
     })
     await screen.findByText('GMV')
-    await screen.findByText('Jordan Lee')
+    expect(
+      screen.getByRole('link', { name: 'See paid orders →' }),
+    ).toHaveAttribute('href', '/orders?status=paid')
+    expect(
+      screen.getByRole('link', { name: 'See orders awaiting payment →' }),
+    ).toHaveAttribute('href', '/orders?status=pending_payment')
     await screen.findByText('Vitamin D3')
     const user = userEvent.setup()
     await user.type(screen.getByLabelText('Search products'), 'Vitamin')
