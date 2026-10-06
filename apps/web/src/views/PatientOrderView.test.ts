@@ -22,6 +22,7 @@ const pending: PatientOrderDetailDto = {
   createdAt: '2026-10-05T12:00:00.000Z',
   sentAt: '2026-10-05T12:05:00.000Z',
   paidAt: null,
+  cancelledAt: null,
   patientAddress: '214 Alder St, Portland, OR 97205',
   totalCents: 12000,
   lines: [
@@ -47,6 +48,12 @@ const paid: PatientOrderDetailDto = {
     reference: 'fake_ch_123',
     createdAt: '2026-10-05T12:10:00.000Z',
   },
+}
+
+const cancelled: PatientOrderDetailDto = {
+  ...pending,
+  status: 'cancelled',
+  cancelledAt: '2026-10-06T09:30:00.000Z',
 }
 
 function deferred<T>() {
@@ -118,9 +125,32 @@ describe('PatientOrderView', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('shows a cancelled order with its lines and total but no Pay button', async () => {
+    vi.mocked(api.getOrder).mockResolvedValue(cancelled)
+    await renderWithRouter(PatientOrderView, {
+      path: '/my-orders/42',
+      props: { orderId: '42' },
+    })
+
+    expect(
+      await screen.findByText('This order was cancelled by your provider.'),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Cancelled')).toBeInTheDocument()
+    expect(screen.getByText('Vitamin D3')).toBeInTheDocument()
+    expect(screen.getByRole('rowheader', { name: 'Total' })).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /Pay/ }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('checkbox', { name: /Simulate gateway failure/ }),
+    ).not.toBeInTheDocument()
+    expect(api.payOrder).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['pending', pending],
     ['paid', paid],
+    ['cancelled', cancelled],
   ])(
     'never renders wholesale cost, COGS, margin, markup, or any fee (%s)',
     async (_label, order) => {
