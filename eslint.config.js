@@ -69,20 +69,5 @@ export default tseslint.config(
       'testing-library/prefer-screen-queries': 'error',
     },
   },
-  {
-    // TODO(grok): convert to user-event. Grok owns these suites and will
-    // convert them, then remove this override.
-    files: [
-      'apps/web/src/a11y/**/*.test.ts',
-      'apps/web/src/states/**/*.test.ts',
-    ],
-    rules: {
-      'testing-library/prefer-user-event': 'off',
-      'testing-library/no-container': 'off',
-      'testing-library/no-node-access': 'off',
-      'testing-library/prefer-screen-queries': 'off',
-      'testing-library/render-result-naming-convention': 'off',
-    },
-  },
   prettier,
 )

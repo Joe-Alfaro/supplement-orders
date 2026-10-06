@@ -35,6 +35,10 @@ const products: ProductDto[] = [
   },
   { id: 2, sku: 'MAG', name: 'Magnesium', cogsCents: 1500, stockQuantity: 5 },
   { id: 3, sku: 'ZINC', name: 'Zinc', cogsCents: 500, stockQuantity: 0 },
+  // Costs taken from the revision 5 contract's reference values.
+  { id: 4, sku: 'OMEGA', name: 'Omega-3', cogsCents: 1000, stockQuantity: 20 },
+  { id: 5, sku: 'BCOMP', name: 'B-Complex', cogsCents: 850, stockQuantity: 20 },
+  { id: 6, sku: 'SAMPLE', name: 'Sample Pack', cogsCents: 0, stockQuantity: 5 },
 ]
 
 /** A fake GET /api/products: substring match on name or SKU, one page. */
@@ -132,12 +136,12 @@ async function chooseProduct(user: UserEvent, name: string) {
 async function addProduct(
   user: UserEvent,
   name: string,
-  fields: { qty?: string; margin?: string; price?: string } = {},
+  fields: { qty?: string; markup?: string; price?: string } = {},
 ) {
   await openAddProduct(user)
   await chooseProduct(user, name)
   if (fields.qty) await fill(user, 'Qty', fields.qty)
-  if (fields.margin) await fill(user, 'Margin %', fields.margin)
+  if (fields.markup) await fill(user, 'Markup %', fields.markup)
   // Step 2 prefills the minimum price; pass price: '' to leave the line incomplete.
   if (fields.price !== undefined) {
     await fill(user, 'Patient price (each)', fields.price)
@@ -178,22 +182,22 @@ describe('OrderBuilderView', () => {
     expect(sendButton()).toBeEnabled()
   })
 
-  it('links Margin % and Patient price both ways without overwriting the typed field', async () => {
+  it('links Markup % and Patient price both ways without overwriting the typed field', async () => {
     const user = userEvent.setup()
     await renderBuilder()
-    await addProduct(user, 'Vitamin D3')
+    await addProduct(user, 'Omega-3')
 
-    // 40% margin on $12.00 cost: 1200 * 10000 / 6000 = $20.00.
-    await fill(user, 'Margin % for line 1', '40')
+    // 300% net markup on a $10.00 cost is $40.30 (contract reference value).
+    await fill(user, 'Markup % for line 1', '300')
     expect(screen.getByLabelText('Patient price for line 1')).toHaveValue(
-      '20.00',
+      '40.30',
     )
-    expect(screen.getByLabelText('Margin % for line 1')).toHaveValue('40')
+    expect(screen.getByLabelText('Markup % for line 1')).toHaveValue('300')
 
-    // $30.00 price: (3000 - 1200) / 3000 = 60.00%.
-    await fill(user, 'Patient price for line 1', '30')
-    expect(screen.getByLabelText('Margin % for line 1')).toHaveValue('60.00')
-    expect(screen.getByLabelText('Patient price for line 1')).toHaveValue('30')
+    // $40.00 on $10.00: (9925 * 4000 - 10000 * 1000) / 1000 = 297.00%.
+    await fill(user, 'Patient price for line 1', '40')
+    expect(screen.getByLabelText('Markup % for line 1')).toHaveValue('297.00')
+    expect(screen.getByLabelText('Patient price for line 1')).toHaveValue('40')
   })
 
   it('saves incomplete lines as a draft and restores them on reload', async () => {
@@ -208,7 +212,7 @@ describe('OrderBuilderView', () => {
         unitPriceCents: null,
         lineTotalCents: null,
         unitCogsCents: 1200,
-        marginBps: null,
+        markupBps: null,
         minUnitPriceCents: 1210,
         stockQuantity: 10,
       },
@@ -220,7 +224,7 @@ describe('OrderBuilderView', () => {
         unitPriceCents: 2500,
         lineTotalCents: 2500,
         unitCogsCents: null,
-        marginBps: null,
+        markupBps: null,
         minUnitPriceCents: null,
         stockQuantity: null,
       },
@@ -317,7 +321,7 @@ describe('OrderBuilderView', () => {
     expect(screen.getAllByRole('alert')).toHaveLength(1)
     ;[
       'Quantity for line 1',
-      'Margin % for line 1',
+      'Markup % for line 1',
       'Patient price for line 1',
     ].forEach((label) =>
       expect(screen.getByLabelText(label)).not.toHaveAttribute(
@@ -414,34 +418,35 @@ describe('Add-product modal', () => {
   it('appends the line, closes, and focuses the new Qty input', async () => {
     const user = userEvent.setup()
     await renderBuilder()
-    await addProduct(user, 'Vitamin D3', { qty: '3', margin: '40' })
+    await addProduct(user, 'Omega-3', { qty: '3', markup: '300' })
 
     await expectDialogClosed()
-    expect(screen.getByTestId('product-0')).toHaveTextContent('Vitamin D3')
+    expect(screen.getByTestId('product-0')).toHaveTextContent('Omega-3')
     expect(screen.getByLabelText('Quantity for line 1')).toHaveValue('3')
     expect(screen.getByLabelText('Patient price for line 1')).toHaveValue(
-      '20.00',
+      '40.30',
     )
     await vi.waitFor(() =>
       expect(screen.getByLabelText('Quantity for line 1')).toHaveFocus(),
     )
   })
 
-  it('links Margin % and price in step 2 and blocks a below-minimum price', async () => {
+  it('links Markup % and price in step 2 and blocks a below-minimum price', async () => {
     const user = userEvent.setup()
     await renderBuilder()
     await openAddProduct(user)
-    await chooseProduct(user, 'Vitamin D3')
+    await chooseProduct(user, 'Omega-3')
 
-    await fill(user, 'Margin %', '40')
-    expect(screen.getByLabelText('Patient price (each)')).toHaveValue('20.00')
+    await fill(user, 'Markup %', '300')
+    expect(screen.getByLabelText('Patient price (each)')).toHaveValue('40.30')
 
-    await fill(user, 'Patient price (each)', '12.05')
-    expect(screen.getByLabelText('Margin %')).toHaveValue('0.41')
+    // $10.05 is below the $10.08 minimum: markup -0.25% (half up toward +infinity).
+    await fill(user, 'Patient price (each)', '10.05')
+    expect(screen.getByLabelText('Markup %')).toHaveValue('-0.25')
     await user.click(screen.getByRole('button', { name: 'Add to order' }))
 
     expect(
-      screen.getByText('Price must be at least $12.10'),
+      screen.getByText('Price must be at least $10.08'),
     ).toBeInTheDocument()
     expect(dialog()).toBeInTheDocument()
     expect(screen.queryByTestId('product-0')).not.toBeInTheDocument()
@@ -490,7 +495,7 @@ describe('OrderBuilderView patient and stock', () => {
           unitPriceCents: 2000,
           lineTotalCents: 4000,
           unitCogsCents: 1200,
-          marginBps: 4000,
+          markupBps: 4000,
           minUnitPriceCents: 1210,
           stockQuantity: 3,
         },
@@ -507,7 +512,7 @@ describe('OrderBuilderView patient and stock', () => {
     expect(sendButton()).toBeDisabled()
   })
 
-  it('keeps price and margin as text inputs holding integer cents (no InputNumber)', async () => {
+  it('keeps price and markup as text inputs holding integer cents (no InputNumber)', async () => {
     const user = userEvent.setup()
     vi.mocked(api.createOrder).mockResolvedValue(draftDetail([]))
     vi.mocked(api.replaceOrderLines).mockResolvedValue(draftDetail([]))
@@ -521,7 +526,7 @@ describe('OrderBuilderView patient and stock', () => {
       screen.getByRole('textbox', { name: 'Patient price (each)' }),
     ).toBeInTheDocument()
     expect(
-      screen.getByRole('textbox', { name: 'Margin %' }),
+      screen.getByRole('textbox', { name: 'Markup %' }),
     ).toBeInTheDocument()
     await fill(user, 'Patient price (each)', '12.50')
     expect(screen.getByLabelText('Patient price (each)')).toHaveValue('12.50')
@@ -532,7 +537,7 @@ describe('OrderBuilderView patient and stock', () => {
       screen.getByRole('textbox', { name: 'Patient price for line 1' }),
     ).toHaveValue('12.50')
     expect(
-      screen.getByRole('textbox', { name: 'Margin % for line 1' }),
+      screen.getByRole('textbox', { name: 'Markup % for line 1' }),
     ).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Save draft' }))
@@ -543,19 +548,66 @@ describe('OrderBuilderView patient and stock', () => {
     )
   })
 
-  it('prefills Patient price with the minimum and derives Margin %', async () => {
+  it('prefills Patient price with the minimum and derives Markup %', async () => {
     const user = userEvent.setup()
     await renderBuilder()
     await openAddProduct(user)
-    await chooseProduct(user, 'Vitamin D3')
+    await chooseProduct(user, 'B-Complex')
 
-    // Minimum for a $12.00 cost is $12.10; (1210 - 1200) / 1210 = 0.83%.
-    expect(screen.getByLabelText('Patient price (each)')).toHaveValue('12.10')
-    expect(screen.getByLabelText('Margin %')).toHaveValue('0.83')
+    // Minimum for a $8.50 cost is $8.57, a net markup of 0.07% (contract values).
+    expect(screen.getByLabelText('Patient price (each)')).toHaveValue('8.57')
+    expect(screen.getByLabelText('Markup %')).toHaveValue('0.07')
+
+    // 0% markup means the minimum price.
+    await fill(user, 'Markup %', '0')
+    expect(screen.getByLabelText('Patient price (each)')).toHaveValue('8.57')
 
     await user.click(screen.getByRole('button', { name: 'Add to order' }))
     expect(screen.getByLabelText('Patient price for line 1')).toHaveValue(
-      '12.10',
+      '8.57',
+    )
+    expect(sendButton()).toBeEnabled()
+  })
+
+  it('accepts markup above 100% and shows it with two decimals', async () => {
+    const user = userEvent.setup()
+    await renderBuilder()
+    await addProduct(user, 'Omega-3')
+
+    await fill(user, 'Markup % for line 1', '300')
+    await user.tab()
+    expect(screen.getByLabelText('Markup % for line 1')).toHaveValue('300.00')
+    expect(screen.getByLabelText('Markup % for line 1')).not.toHaveAttribute(
+      'aria-invalid',
+      'true',
+    )
+    expect(sendButton()).toBeEnabled()
+  })
+
+  it('disables Markup % and shows "—" for a $0 wholesale cost; price only', async () => {
+    const user = userEvent.setup()
+    await renderBuilder()
+    await openAddProduct(user)
+    await chooseProduct(user, 'Sample Pack')
+
+    const markup = screen.getByLabelText('Markup %')
+    expect(markup).toBeDisabled()
+    expect(markup).toHaveValue('')
+    expect(markup).toHaveAttribute('placeholder', '—')
+    expect(markup).toHaveAccessibleDescription(
+      'No markup on a $0 cost; enter the price.',
+    )
+    await fill(user, 'Patient price (each)', '5')
+    expect(markup).toHaveValue('')
+    await user.click(screen.getByRole('button', { name: 'Add to order' }))
+
+    expect(screen.getByLabelText('Markup % for line 1')).toBeDisabled()
+    expect(screen.getByLabelText('Markup % for line 1')).toHaveAttribute(
+      'placeholder',
+      '—',
+    )
+    expect(screen.getByLabelText('Patient price for line 1')).toHaveValue(
+      '5.00',
     )
     expect(sendButton()).toBeEnabled()
   })

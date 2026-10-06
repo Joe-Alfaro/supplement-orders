@@ -23,17 +23,23 @@ describe('money edges', () => {
   })
 })
 
-describe('margin percent edges', () => {
+describe('markup percent edges', () => {
   it('parses percent strings to integer basis points', () => {
     expect(parsePercentToBps('40')).toEqual({ ok: true, bps: 4000 })
     expect(parsePercentToBps('40.5')).toEqual({ ok: true, bps: 4050 })
     expect(parsePercentToBps('0.01%')).toEqual({ ok: true, bps: 1 })
-    expect(parsePercentToBps('99.99')).toEqual({ ok: true, bps: 9999 })
+    expect(parsePercentToBps('0')).toEqual({ ok: true, bps: 0 })
   })
 
-  it('rejects 100 or more, negatives, and more than two decimals', () => {
-    expect(parsePercentToBps('100').ok).toBe(false)
+  it('has no upper bound: markup can exceed 100%', () => {
+    expect(parsePercentToBps('99.99')).toEqual({ ok: true, bps: 9999 })
+    expect(parsePercentToBps('300')).toEqual({ ok: true, bps: 30000 })
+    expect(parsePercentToBps('1250.5')).toEqual({ ok: true, bps: 125050 })
+  })
+
+  it('rejects negatives, more than two decimals, and non-numbers', () => {
     expect(parsePercentToBps('-5').ok).toBe(false)
+    expect(parsePercentToBps('abc').ok).toBe(false)
     expect(parsePercentToBps('40.125').ok).toBe(false)
     expect(parsePercentToBps('').ok).toBe(false)
   })
@@ -42,5 +48,6 @@ describe('margin percent edges', () => {
     expect(formatBps(4000)).toBe('40.00')
     expect(formatBps(5)).toBe('0.05')
     expect(formatBps(-1765)).toBe('-17.65')
+    expect(formatBps(30000)).toBe('300.00')
   })
 })

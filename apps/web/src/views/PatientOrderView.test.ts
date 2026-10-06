@@ -122,7 +122,7 @@ describe('PatientOrderView', () => {
     ['pending', pending],
     ['paid', paid],
   ])(
-    'never renders wholesale cost, COGS, margin, or any fee (%s)',
+    'never renders wholesale cost, COGS, margin, markup, or any fee (%s)',
     async (_label, order) => {
       vi.mocked(api.getOrder).mockResolvedValue(order)
       await renderWithRouter(PatientOrderView, {
@@ -134,6 +134,7 @@ describe('PatientOrderView', () => {
       expect(document.body).not.toHaveTextContent(/Wholesale cost/i)
       expect(document.body).not.toHaveTextContent(/COGS/i)
       expect(document.body).not.toHaveTextContent(/margin/i)
+      expect(document.body).not.toHaveTextContent(/markup/i)
       expect(document.body).not.toHaveTextContent(/Platform fee/i)
       expect(document.body).not.toHaveTextContent(/Processing fee/i)
     },

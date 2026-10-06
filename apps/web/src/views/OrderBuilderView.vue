@@ -247,34 +247,35 @@ function rowIndex(row: EvaluatedLine) {
           >
         </template>
       </Column>
-      <Column header="Margin %">
+      <Column header="Markup %">
         <template #body="{ data: row }">
-          <label :for="fieldId(row.line.key, 'margin')" class="visually-hidden"
-            >Margin % for line {{ rowIndex(row) + 1 }}</label
+          <label :for="fieldId(row.line.key, 'markup')" class="visually-hidden"
+            >Markup % for line {{ rowIndex(row) + 1 }}</label
           >
           <InputText
-            :id="fieldId(row.line.key, 'margin')"
-            class="margin"
+            :id="fieldId(row.line.key, 'markup')"
+            class="markup"
             inputmode="decimal"
-            placeholder="0.00"
-            :model-value="row.line.marginInput"
-            :class="{ negative: row.line.marginInput.startsWith('-') }"
-            :invalid="Boolean(row.errors.margin)"
+            :placeholder="row.product?.cogsCents === 0 ? '—' : '0.00'"
+            :disabled="row.product?.cogsCents === 0"
+            :model-value="row.line.markupInput"
+            :class="{ negative: row.line.markupInput.startsWith('-') }"
+            :invalid="Boolean(row.errors.markup)"
             :aria-describedby="
-              row.errors.margin
-                ? fieldId(row.line.key, 'margin-error')
+              row.errors.markup
+                ? fieldId(row.line.key, 'markup-error')
                 : undefined
             "
-            @update:model-value="draft.setMargin(row.line.key, $event ?? '')"
-            @blur="draft.normalizeMargin(row.line.key)"
+            @update:model-value="draft.setMarkup(row.line.key, $event ?? '')"
+            @blur="draft.normalizeMarkup(row.line.key)"
           />
           <Message
-            v-if="row.errors.margin"
-            :id="fieldId(row.line.key, 'margin-error')"
+            v-if="row.errors.markup"
+            :id="fieldId(row.line.key, 'markup-error')"
             severity="error"
             size="small"
             variant="simple"
-            >{{ row.errors.margin }}</Message
+            >{{ row.errors.markup }}</Message
           >
         </template>
       </Column>

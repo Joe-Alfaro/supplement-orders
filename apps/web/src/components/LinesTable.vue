@@ -5,7 +5,7 @@ import DataTable from 'primevue/datatable'
 import { formatBps } from '../money'
 import MoneyText from './MoneyText.vue'
 
-// Read-only lines. Wholesale cost and margin % columns appear only for provider
+// Read-only lines. Wholesale cost and markup % columns appear only for provider
 // lines with `showCosts`; patient lines carry no cost data to show.
 interface Props {
   lines: (OrderLineDto | ProviderOrderLineDto)[]
@@ -39,10 +39,10 @@ defineProps<Props>()
         <span v-else>—</span>
       </template>
     </Column>
-    <Column v-if="showCosts" header="Margin %">
+    <Column v-if="showCosts" header="Markup %">
       <template #body="{ data }">
-        <span v-if="data.marginBps !== null"
-          >{{ formatBps(data.marginBps) }}%</span
+        <span v-if="data.markupBps !== null"
+          >{{ formatBps(data.markupBps) }}%</span
         >
         <span v-else>—</span>
       </template>

@@ -39,7 +39,7 @@ const paid: ProviderOrderDetailDto = {
       unitPriceCents: 4000,
       lineTotalCents: 12000,
       unitCogsCents: 2333,
-      marginBps: 4168,
+      markupBps: 4168,
       minUnitPriceCents: 2351,
       stockQuantity: 7,
     },
