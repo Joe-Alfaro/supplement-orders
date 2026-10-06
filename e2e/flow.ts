@@ -44,6 +44,29 @@ export async function openDashboard(page: Page): Promise<void> {
   ).toBeVisible()
 }
 
+export const PAID_ORDERS_LINK = 'See paid orders →'
+export const AWAITING_ORDERS_LINK = 'See orders awaiting payment →'
+
+/**
+ * A dashboard link opens the Orders tab already filtered. The address does not
+ * change until that view's chunk has loaded, which is slow on a cold start.
+ */
+export async function openOrdersViaDashboard(
+  page: Page,
+  linkName: string,
+  status: string,
+): Promise<void> {
+  await page
+    .getByRole('link', { name: linkName, exact: true })
+    .click({ timeout: 10_000 })
+  await expect(page).toHaveURL(new RegExp(`/orders\\?status=${status}$`), {
+    timeout: 30_000,
+  })
+  await expect(
+    page.getByRole('heading', { name: 'Orders', level: 1 }),
+  ).toBeVisible()
+}
+
 /** Each stat tile is a group named by its label. The amount is the money inside. */
 export async function readSalesTiles(page: Page): Promise<SalesTiles> {
   async function groupCents(name: string): Promise<number> {

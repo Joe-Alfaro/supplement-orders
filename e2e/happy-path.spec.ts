@@ -2,7 +2,9 @@ import { expect, test } from '@playwright/test'
 import {
   addProduct,
   openDashboard,
+  openOrdersViaDashboard,
   openPatient,
+  PAID_ORDERS_LINK,
   readSalesTiles,
   readSplit,
   readStock,
@@ -159,20 +161,21 @@ test('provider sends an order, the patient pays, and the dashboard matches', asy
     expect(after.feeCents - recorded.baseline.feeCents).toBe(
       recorded.split.feeCents,
     )
-
-    const paidOrder = page
-      .getByRole('table', { name: 'Paid orders' })
-      .getByRole('row', { name: PATIENT })
-    await expect(paidOrder).toHaveCount(1)
-    expect(moneyIn(await paidOrder.innerText())).toBe(
-      recorded.split.patientPaysCents,
-    )
-
     expect(await readStock(page, FIRST_SKU)).toBe(
       recorded.firstStock - FIRST_QUANTITY,
     )
     expect(await readStock(page, SECOND_SKU)).toBe(
       recorded.secondStock - SECOND_QUANTITY,
+    )
+
+    await openOrdersViaDashboard(page, PAID_ORDERS_LINK, 'paid')
+    const paidOrder = page
+      .getByRole('table', { name: 'Orders', exact: true })
+      .getByRole('row', { name: PATIENT })
+    await expect(paidOrder).toHaveCount(1)
+    await expect(paidOrder).toContainText('Paid')
+    expect(moneyIn(await paidOrder.innerText())).toBe(
+      recorded.split.patientPaysCents,
     )
   })
 })
