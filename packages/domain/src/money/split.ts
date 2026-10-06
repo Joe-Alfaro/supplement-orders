@@ -3,7 +3,8 @@ import { SplitValidationError } from './errors'
 export const PLATFORM_FEE_BPS = 75
 
 const BPS_DENOMINATOR = 10_000
-const HALF_DENOMINATOR = BPS_DENOMINATOR / 2
+// Adding denominator - 1 before flooring is a ceiling in integer arithmetic.
+const CEILING_OFFSET = BPS_DENOMINATOR - 1
 
 export interface SplitLine {
   quantity: number
@@ -28,13 +29,14 @@ function isNonNegativeInteger(value: number): boolean {
   return Number.isInteger(value) && value >= 0
 }
 
+/** Shared by the fee and computeSplit's per-line overflow guard, so both use one threshold. */
 function feeNumerator(subtotalCents: number): number {
-  return subtotalCents * PLATFORM_FEE_BPS + HALF_DENOMINATOR
+  return subtotalCents * PLATFORM_FEE_BPS + CEILING_OFFSET
 }
 
 /**
- * 75 bps of the subtotal, rounded half up to the nearest cent. Adding half the
- * denominator before flooring rounds half up in pure integer arithmetic.
+ * 75 bps of the subtotal, rounded UP to the next whole cent (revision 7), so
+ * cost + displayed fee equals the minimum price, which also rounds the fee up.
  */
 export function computePlatformFee(subtotalCents: number): number {
   if (!isNonNegativeInteger(subtotalCents)) {
@@ -56,8 +58,8 @@ const MIN_PRICE_MARKUP_DENOMINATOR = BPS_DENOMINATOR - PLATFORM_FEE_BPS
 /**
  * The smallest unit price whose markup covers 75 bps of that price rounded up
  * to the cent. Any order with every line at or above its minimum has a
- * non-negative provider margin, because the order-level fee (half up on the
- * subtotal) never exceeds the sum of the per-unit fees rounded up.
+ * non-negative provider margin, because the order-level fee (rounded up on
+ * the subtotal) never exceeds the sum of the per-unit fees rounded up.
  */
 export function minUnitPriceCents(unitCogsCents: number): number {
   if (!isNonNegativeInteger(unitCogsCents)) {
