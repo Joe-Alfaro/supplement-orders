@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { ORDER_STATUSES } from './responses'
 
 /** Every request except GET /api/users and GET /api/health carries this header. */
 export const USER_ID_HEADER = 'X-User-Id'
@@ -52,6 +53,14 @@ function intParam(min: number, max: number, fallback: number) {
     .transform((v) => v ?? fallback)
 }
 
+/** Trimmed, at most 100 characters; blank or absent means no filter (null). */
+const searchParam = z
+  .string()
+  .trim()
+  .max(SEARCH_MAX_LENGTH)
+  .optional()
+  .transform((v) => (v ? v : null))
+
 /**
  * Query schema shared by GET /api/products and GET /api/patients. Invalid values
  * are a 400 VALIDATION_ERROR naming the param (`q`, `offset` or `limit`).
@@ -59,36 +68,60 @@ function intParam(min: number, max: number, fallback: number) {
  */
 export const listQuerySchema: z.ZodType<ParsedListQuery, ListQueryParams> =
   z.object({
-    q: z
-      .string()
-      .trim()
-      .max(SEARCH_MAX_LENGTH)
-      .optional()
-      .transform((v) => (v ? v : null)),
+    q: searchParam,
     offset: intParam(0, Number.MAX_SAFE_INTEGER, 0),
     limit: intParam(1, PAGE_LIMIT_MAX, PAGE_LIMIT_DEFAULT),
   })
 
 export const listProductsQuerySchema = listQuerySchema
-export const listPatientsQuerySchema = listQuerySchema
 
-/** GET /api/orders?patientId= */
+/** Patients list filter on each patient's most recent order (by created_at); `none` = no orders. */
+export const LATEST_ORDER_STATUS_FILTERS = ['none', ...ORDER_STATUSES] as const
+export type LatestOrderStatusFilter =
+  (typeof LATEST_ORDER_STATUS_FILTERS)[number]
+
+/** GET /api/patients: the shared list query plus an optional latest-status filter. */
+export interface ListPatientsQuery extends ListQuery {
+  latestStatus?: LatestOrderStatusFilter
+}
+
+export interface ParsedListPatientsQuery extends ParsedListQuery {
+  latestStatus?: LatestOrderStatusFilter
+}
+
+export const listPatientsQuerySchema: z.ZodType<
+  ParsedListPatientsQuery,
+  ListQueryParams & { latestStatus?: unknown }
+> = z.object({
+  q: searchParam,
+  offset: intParam(0, Number.MAX_SAFE_INTEGER, 0),
+  limit: intParam(1, PAGE_LIMIT_MAX, PAGE_LIMIT_DEFAULT),
+  latestStatus: z.enum(LATEST_ORDER_STATUS_FILTERS).optional(),
+})
+
+/** Provider order-list filter: one status, or `all`. */
+export const ORDER_LIST_STATUS_FILTERS = [...ORDER_STATUSES, 'all'] as const
+export type OrderListStatusFilter = (typeof ORDER_LIST_STATUS_FILTERS)[number]
+
 /**
- * GET /api/orders. Without `status` it returns every visible order as an array
- * (optionally one patient's). With `status=pending_payment` (provider only) it
- * returns a Page<AwaitingPaymentOrderDto>, oldest sentAt first, and honours
- * `offset`/`limit` like the other list endpoints. Other status values are 400.
+ * GET /api/orders.
+ * - Without `status`: unchanged. A provider gets ProviderOrderSummaryDto[] (optionally
+ *   one patient's); a patient gets their sent orders as PatientOrderSummaryDto[].
+ * - With `status` (provider only; a patient gets 403): Page<ProviderOrderListItemDto>,
+ *   honouring `offset`/`limit` and the optional `patientId`. `pending_payment` lists the
+ *   oldest sentAt first; every other filter, `all` included, lists the most recent
+ *   activity first (latest of paidAt, cancelledAt, sentAt, createdAt), then id desc.
  */
 export interface ListOrdersQuery {
   patientId?: number
-  status?: 'pending_payment'
+  status?: OrderListStatusFilter
   offset?: number
   limit?: number
 }
 
 export interface ParsedListOrdersQuery {
   patientId?: number
-  status?: 'pending_payment'
+  status?: OrderListStatusFilter
   offset: number
   limit: number
 }
@@ -98,7 +131,7 @@ export const listOrdersQuerySchema: z.ZodType<
   ListQueryParams & { patientId?: unknown; status?: unknown }
 > = z.object({
   patientId: idParamSchema.optional(),
-  status: z.literal('pending_payment').optional(),
+  status: z.enum(ORDER_LIST_STATUS_FILTERS).optional(),
   offset: intParam(0, Number.MAX_SAFE_INTEGER, 0),
   limit: intParam(1, PAGE_LIMIT_MAX, PAGE_LIMIT_DEFAULT),
 })
