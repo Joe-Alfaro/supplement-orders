@@ -3,6 +3,7 @@ import {
   dollarsToCents,
   formatCents,
   moneyIn,
+  percentToBps,
   platformFeeCents,
   textAfter,
 } from './money'
@@ -127,13 +128,22 @@ export async function addProduct(
   expect(prefilled).toBeGreaterThanOrEqual(minimum)
 
   if (options.markupPercent) {
+    const typedMarkup = options.markupPercent
     const feeBefore = dollarsToCents(await fee.inputValue())
     const markup = dialog.getByLabel('Markup %')
-    await markup.fill(options.markupPercent)
+    await markup.fill(typedMarkup)
     await expect(price).not.toHaveValue(prefilledInput)
     await expectFeeForPrice(dialog, price, fee, minimum)
     expect(dollarsToCents(await fee.inputValue())).not.toBe(feeBefore)
     await markup.blur()
+    // The edited field stays the typed percent (300 and 300.00 are the same).
+    // A gross-margin rewrite would show a different number, or reject 300.
+    await expect(async () => {
+      expect(percentToBps(await markup.inputValue())).toBe(
+        percentToBps(typedMarkup),
+      )
+    }).toPass()
+    await expectFeeForPrice(dialog, price, fee, minimum)
   }
 
   if (options.quantity !== 1) {

@@ -45,6 +45,29 @@ export function formatCents(cents: number): string {
   return `${sign}$${centsToInput(cents)}`
 }
 
+/**
+ * "300", "300.00", or "300%" -> 30000 basis points. Joins digit strings.
+ * Never uses parseFloat.
+ */
+export function percentToBps(displayed: string): number {
+  const stripped = displayed.trim().replace(/%$/, '').trim()
+  const pieces = stripped.split('.')
+  const whole = pieces[0] ?? ''
+  const fraction = pieces[1] ?? ''
+  if (
+    pieces.length > 2 ||
+    !/^\d+$/.test(whole) ||
+    !/^\d{0,2}$/.test(fraction)
+  ) {
+    throw new Error(`Cannot parse percent "${displayed}"`)
+  }
+  const bps = Number(`${whole}${fraction.padEnd(2, '0')}`)
+  if (!Number.isSafeInteger(bps)) {
+    throw new Error(`Percent is out of range "${displayed}"`)
+  }
+  return bps
+}
+
 /** 75 bps of an amount, rounded half up, in integer cents. */
 export function platformFeeCents(amountCents: number): number {
   return Math.floor((amountCents * 75 + 5_000) / 10_000)
