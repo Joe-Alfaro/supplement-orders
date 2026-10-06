@@ -1,11 +1,22 @@
 import {
   listPatientsQuerySchema,
   parseDateOfBirthQuery,
+  type LatestOrderStatusFilter,
   type OrderStatus,
   type PatientDto,
   type PatientPageDto,
 } from '@supplement-orders/domain'
-import { and, asc, count, desc, eq, inArray, or, type SQL } from 'drizzle-orm'
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  inArray,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm'
 import { Router } from 'express'
 import type { Db } from '../db/client'
 import { orders, patients, users } from '../db/schema'
@@ -79,19 +90,35 @@ function patientSearch(q: string | null): SQL | undefined {
   )
 }
 
+/**
+ * Status of the patient's most recent order (created_at desc, id desc, the same
+ * order the PatientDto's latestOrderStatus uses), as a correlated subquery
+ * served by orders_patient_created_idx (migration 0006). Null with no orders.
+ */
+const latestOrderStatus = sql`(select ${orders.status} from ${orders} where ${orders.patientId} = ${patients.id} order by ${orders.createdAt} desc, ${orders.id} desc limit 1)`
+
+function latestStatusFilter(
+  latestStatus: LatestOrderStatusFilter | undefined,
+): SQL | undefined {
+  if (latestStatus === undefined) return undefined
+  if (latestStatus === 'none') return sql`${latestOrderStatus} is null`
+  return sql`${latestOrderStatus} = ${latestStatus}`
+}
+
 /** Provider only, scoped to the provider's own patients. */
 export function patientsRouter({ db, auth }: AppContext) {
   const router = Router()
 
   router.get('/', async (req, res) => {
     const user = requireRole(await auth.getCurrentUser(req), 'provider')
-    const { q, offset, limit } = parseOrThrow(
+    const { q, offset, limit, latestStatus } = parseOrThrow(
       listPatientsQuerySchema,
       req.query,
     )
     const where = and(
       eq(patients.providerId, user.providerId),
       patientSearch(q),
+      latestStatusFilter(latestStatus),
     )
 
     const [items, [counted]] = await Promise.all([

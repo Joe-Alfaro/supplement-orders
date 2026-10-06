@@ -276,6 +276,53 @@ export async function sendOrder(
   })
 }
 
+/**
+ * Permanently deletes a draft and its lines. Safe because a draft was never sent
+ * and so has no payment or ledger rows. Takes the order row lock, so a concurrent
+ * send serializes with it: if send wins, the delete gets 409 ORDER_NOT_DRAFT; if
+ * the delete wins, the send finds no order (404).
+ */
+export async function deleteDraft(db: Db, user: ProviderUser, orderId: number) {
+  await db.transaction(async (tx) => {
+    await lockOwnedDraft(tx, user, orderId)
+    await tx.delete(orderItems).where(eq(orderItems.orderId, orderId))
+    await tx.delete(orders).where(eq(orders.id, orderId))
+  })
+}
+
+/**
+ * Cancelled -> draft (revision 8). Clears sentAt, cancelledAt and the sent
+ * snapshot so the order is an ordinary draft again (hidden from the patient until
+ * re-sent), and keeps its lines. Stock is untouched: only payment moves stock.
+ */
+export async function reopenOrder(db: Db, user: ProviderUser, orderId: number) {
+  await db.transaction(async (tx) => {
+    const order = await lockOrder(tx, orderId)
+    if (order.providerId !== user.providerId) {
+      throw forbidden('This order belongs to another provider')
+    }
+    if (order.status !== 'cancelled') {
+      throw new ApiError(
+        409,
+        'ORDER_NOT_REOPENABLE',
+        `Order is ${order.status}; only cancelled orders can be reopened`,
+      )
+    }
+    await tx
+      .update(orders)
+      .set({
+        status: 'draft',
+        sentAt: null,
+        cancelledAt: null,
+        subtotalCents: null,
+        platformFeeCents: null,
+        totalCents: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, orderId))
+  })
+}
+
 const CANCELLABLE = new Set(['draft', 'pending_payment'])
 
 /**
