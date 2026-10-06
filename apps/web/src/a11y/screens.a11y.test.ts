@@ -312,7 +312,9 @@ async function addProduct(user: UserEvent, name: string, price?: string) {
     )
   }
   await user.click(screen.getByRole('button', { name: 'Add to order' }))
-  await screen.findByLabelText('Patient price for line 1')
+  await screen.findByRole('textbox', {
+    name: new RegExp('^Patient price \\(each\\) ' + name),
+  })
 }
 
 // PrimeVue Dialog teleports to document.body. A Select list does too, unless
@@ -397,7 +399,9 @@ describe('accessibility', () => {
     const { container } = await renderBuilder()
     const user = userEvent.setup()
     await addProduct(user, 'Vitamin D3')
-    const price = screen.getByLabelText('Patient price for line 1')
+    const price = screen.getByRole('textbox', {
+      name: /^Patient price \(each\) Vitamin D3/,
+    })
     await replaceInput(user, price, '12.05')
     await vi.waitFor(() => {
       expect(price).toBeInvalid()
@@ -445,7 +449,9 @@ describe('accessibility', () => {
     await user.click(screen.getByRole('button', { name: 'Add to order' }))
     await screen.findByText(/Price must be at least/)
     expect(
-      screen.queryByLabelText('Patient price for line 1'),
+      screen.queryByRole('textbox', {
+        name: /^Patient price \(each\) Magnesium/,
+      }),
     ).not.toBeInTheDocument()
     await expectNoAxeViolations(screen.getByRole('dialog'))
     await expectAccessible(container)
