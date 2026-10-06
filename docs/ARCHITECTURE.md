@@ -10,7 +10,7 @@ This describes the system as it stands now. The reasoning behind each choice, in
 - The patient pays through a stubbed payment step.
 - Every paid order is split into wholesale cost (COGS), provider margin and a 75 bps platform fee. The three parts sum exactly to the amount paid.
 - A paid order is auditable from stored data alone: every cent is attributed to one of those three buckets in an append-only ledger.
-- A provider dashboard shows orders awaiting payment, what has sold, and current stock. Stock is never edited by hand; it decreases when an order is paid.
+- Providers can find any of their orders by status, and a dashboard shows sales totals and current stock. Stock is never edited by hand; it decreases when an order is paid.
 - GMV and platform fee revenue are directly queryable.
 
 **Non-goals** (from the brief)
@@ -18,7 +18,7 @@ This describes the system as it stands now. The reasoning behind each choice, in
 - Real payments, auth, email, shipping or fulfillment.
 - Tax, shipping cost, regulatory compliance, multi-state or international handling.
 - Warehouse or multi-location inventory.
-- Refunds. Cancelling is supported only for orders that haven't been paid.
+- Refunds. Only orders awaiting payment can be cancelled; paid orders have no actions.
 
 ## 2. Principles
 
@@ -38,6 +38,7 @@ This describes the system as it stands now. The reasoning behind each choice, in
 | ORM/migrations | Drizzle ORM and drizzle-kit; SQL migrations are committed                                         |
 | Tests          | Vitest 3, Supertest, Vue Testing Library, user-event, jest-dom, axe-core, Playwright              |
 | Tooling        | npm workspaces, ESLint (encodes the code style rules), Prettier                                   |
+| Hosting        | Railway: one Node 22 service built with Railpack, plus Railway Postgres                           |
 
 The domain package is consumed as TypeScript source with no build step. The API runs under `tsx` in development and has no compile step yet. Vitest is pinned to 3.x because every Vitest release from 4 on crashed the npm 10.9 dependency resolver on the development machine.
 
@@ -57,10 +58,20 @@ The domain package is consumed as TypeScript source with no build step. The API 
 Order status lifecycle:
 
 ```
-draft ──send──> pending_payment ──pay──> paid
-  │                   │
-  └──cancel──> cancelled <──cancel──┘
+            ┌──────────────────── reopen ───────────────────┐
+            v                                               │
+ (new) ──> draft ──send──> pending_payment ──pay──> paid     │
+            │                    │                          │
+          delete               cancel ──> cancelled ────────┘
+            v
+        (row removed)
 ```
+
+- **Delete** removes a draft and its lines for good. A draft was never sent, so it has no payment, ledger rows or patient-facing history.
+- **Cancel** applies only to `pending_payment`. Drafts are deleted instead, and paid orders can't be cancelled.
+- **Reopen** moves `cancelled` back to `draft`. It clears `sentAt`, `cancelledAt` and the stored totals, keeps the lines, and hides the order from the patient until it's sent again.
+
+Every state change (edit, send, delete, cancel, reopen, pay) runs in a transaction that first locks the order row with `SELECT ... FOR UPDATE`, so any two of them on the same order serialize. The loser sees the new status and gets a 409, or a 404 if the order was deleted. None of them except pay touches stock or the ledger.
 
 Why a ledger rather than three columns on the order: "where did every cent go" becomes a query over append-only rows, GMV and fee revenue are a `SUM` grouped by entry type, and future adjustments (refunds, corrections) can be new entries instead of mutations.
 
@@ -68,7 +79,7 @@ Database constraints back the model:
 
 - Every money column is `bigint` cents. `products.cogs_cents`, `order_items.unit_price_cents`, `order_items.unit_cogs_cents`, `payments.amount_cents` and `ledger_entries.amount_cents` have a `>= 0` check. The three order totals (`subtotal_cents`, `platform_fee_cents`, `total_cents`) don't; their non-negativity is an application invariant.
 - `orders_total_is_subtotal`: the patient total equals the subtotal. This constraint was added `NOT VALID` so rows from before that rule are left alone; every new or updated row is checked.
-- `orders_fee_within_subtotal`, `orders_paid_at_iff_paid`, `orders_cancelled_at_iff_cancelled`, `orders_sent_unless_draft_or_cancelled`, and `orders_totals_present_once_sent`.
+- `orders_fee_within_subtotal`, `orders_paid_at_iff_paid`, `orders_cancelled_at_iff_cancelled`, `orders_sent_unless_draft_or_cancelled`, and `orders_totals_present_once_sent`. (`cancelled` without `sentAt` is still allowed because revision 6 let drafts be cancelled; new cancels always have `sentAt`.)
 - `order_items`: quantity `>= 1`, one line per product per order, and a cost snapshot exactly when a product is set.
 - Unique `payments.order_id`, unique `payments.idempotency_key`, unique `ledger_entries(payment_id, type)`.
 
@@ -132,8 +143,10 @@ The ledger functions build and check the entries:
 
    The charge happens inside the database transaction. If the transaction fails after a successful charge, a retry reuses the same idempotency key, and the fake gateway replays the original result instead of charging twice. A production integration would also need reconciliation for a charge whose transaction never committed and was never retried (see §12).
 
-5. **Cancel.** `POST /api/orders/:id/cancel` by the provider, for `draft` or `pending_payment` orders only. It takes the same row lock as pay, so a cancel and a pay can't both succeed; the loser gets a 409 (`ORDER_NOT_CANCELLABLE` or `ORDER_NOT_PAYABLE`). Cancelling writes no ledger entries and doesn't touch stock. The patient is notified only if the order had been sent. A draft cancelled before sending stays invisible to the patient.
-6. **Read.** The provider's order detail shows the snapshotted lines, the split, the payment reference and the three ledger entries with a "Total of entries" check. The patient's view has its own DTO type with no cost, margin, fee or ledger fields, so those can't leak by accident.
+5. **Cancel.** `POST /api/orders/:id/cancel` by the provider, for `pending_payment` orders only. It takes the same row lock as pay, so a cancel and a pay can't both succeed; the loser gets a 409 (`ORDER_NOT_CANCELLABLE` or `ORDER_NOT_PAYABLE`). Cancelling writes no ledger entries and doesn't touch stock. The patient is notified and sees the order as cancelled, with no Pay button.
+6. **Delete a draft.** `DELETE /api/orders/:id` locks the order, requires the caller's draft (409 `ORDER_NOT_DRAFT` otherwise), deletes its lines and the order, and returns 204. If a send wins the lock first, the delete gets the 409; if the delete wins, the send gets a 404.
+7. **Reopen.** `POST /api/orders/:id/reopen` locks the order, requires it to be `cancelled` (409 `ORDER_NOT_REOPENABLE` otherwise), and returns it to `draft` as described in §4. Stock is untouched, since only payment moves stock.
+8. **Read.** The provider's order detail shows the snapshotted lines, the split, the payment reference and the three ledger entries with a "Total of entries" check. The patient's view has its own DTO type with no cost, margin, fee or ledger fields, so those can't leak by accident.
 
 ## 7. Seams
 
@@ -152,30 +165,34 @@ Shipping isn't modeled; the patient's address is a plain string.
 - **GMV** is the sum of `payments.amount_cents` for the provider's paid orders: what patients actually paid.
 - **Margin earned** and **processing fees** are sums of the `provider_margin` and `platform_fee` ledger entries.
 
-The dashboard reads the audited rows rather than recomputing anything. Cancelled and unpaid orders contribute nothing because they have no payment or ledger rows. There's no date filter in the UI; the queries are a `WHERE` clause away from one. Platform-wide fee revenue is a `SUM` over `platform_fee` entries, but it isn't exposed anywhere because there's no admin persona.
+The dashboard tiles read the audited rows rather than recomputing anything. Cancelled and unpaid orders contribute nothing because they have no payment or ledger rows. There's no date filter in the UI; the queries are a `WHERE` clause away from one. Platform-wide fee revenue is a `SUM` over `platform_fee` entries, but it isn't exposed anywhere because there's no admin persona.
 
 ## 9. API
 
 Every endpoint except `/api/health` and `/api/users` requires `X-User-Id`. Application errors use `{ error: { code, message, field? } }`, where `field` is a dotted path into the request body (for example `lines.1.unitPriceCents`) so the UI can place the message next to the input. Money fields are integer cents with a `Cents` suffix. Health is the exception to the error envelope: it returns `{ status, db }`, with 503 when Postgres is unreachable.
 
-| Method and path                                         | Who      | Purpose                                                                                                  |
-| ------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------- |
-| `GET /api/health`                                       | anyone   | 200 if Postgres is reachable, 503 otherwise                                                              |
-| `GET /api/users`                                        | anyone   | Seeded users for the login screen                                                                        |
-| `GET /api/products?q=&offset=&limit=`                   | provider | Paginated catalog search by name or SKU                                                                  |
-| `GET /api/patients?q=&offset=&limit=`                   | provider | The provider's patients. Name substring, or exact date of birth when `q` is `MM/DD/YYYY` or `YYYY-MM-DD` |
-| `GET /api/patients/:id`                                 | provider | Patient detail                                                                                           |
-| `GET /api/orders?patientId=`                            | both     | Orders visible to the caller, as an array. Patients never see unsent orders                              |
-| `GET /api/orders?status=pending_payment&offset=&limit=` | provider | Awaiting payment, oldest sent first, paginated                                                           |
-| `POST /api/orders`                                      | provider | Create a draft (201)                                                                                     |
-| `GET /api/orders/:id`                                   | both     | Provider view (lines, split, payment, ledger) or patient view (lines and total)                          |
-| `PUT /api/orders/:id/lines`                             | provider | Replace a draft's lines                                                                                  |
-| `POST /api/orders/:id/send`                             | provider | Draft to `pending_payment`                                                                               |
-| `POST /api/orders/:id/pay`                              | patient  | Pay. Body may be `{ "simulateFailure": true }` outside production                                        |
-| `POST /api/orders/:id/cancel`                           | provider | Cancel a draft or pending order                                                                          |
-| `GET /api/dashboard`                                    | provider | GMV, margin, fees, and paid orders with their splits                                                     |
+| Method and path                                     | Who      | Purpose                                                                                                                                                                                                                                                                                                     |
+| --------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/health`                                   | anyone   | 200 if Postgres is reachable, 503 otherwise                                                                                                                                                                                                                                                                 |
+| `GET /api/users`                                    | anyone   | Seeded users for the login screen                                                                                                                                                                                                                                                                           |
+| `GET /api/products?q=&offset=&limit=`               | provider | Paginated catalog search by name or SKU                                                                                                                                                                                                                                                                     |
+| `GET /api/patients?q=&latestStatus=&offset=&limit=` | provider | The provider's patients. Name substring, or exact date of birth when `q` is `MM/DD/YYYY` or `YYYY-MM-DD`. `latestStatus` is `none`, `draft`, `pending_payment`, `paid` or `cancelled`                                                                                                                       |
+| `GET /api/patients/:id`                             | provider | Patient detail                                                                                                                                                                                                                                                                                              |
+| `GET /api/orders?patientId=`                        | both     | Without `status`: orders visible to the caller, as an array. Patients never see unsent orders                                                                                                                                                                                                               |
+| `GET /api/orders?status=&patientId=&offset=&limit=` | provider | A page of the provider's orders. `status` is `all` or a comma list of `draft`, `pending_payment`, `paid`, `cancelled`; duplicates are ignored and an unknown value is a 400 on `status`. Exactly `pending_payment` sorts oldest sent first; anything else sorts by most recent activity. A patient gets 403 |
+| `POST /api/orders`                                  | provider | Create a draft (201)                                                                                                                                                                                                                                                                                        |
+| `GET /api/orders/:id`                               | both     | Provider view (lines, split, payment, ledger) or patient view (lines and total)                                                                                                                                                                                                                             |
+| `PUT /api/orders/:id/lines`                         | provider | Replace a draft's lines                                                                                                                                                                                                                                                                                     |
+| `POST /api/orders/:id/send`                         | provider | Draft to `pending_payment`                                                                                                                                                                                                                                                                                  |
+| `POST /api/orders/:id/pay`                          | patient  | Pay. Body may be `{ "simulateFailure": true }` outside production                                                                                                                                                                                                                                           |
+| `POST /api/orders/:id/cancel`                       | provider | Cancel an order awaiting payment                                                                                                                                                                                                                                                                            |
+| `POST /api/orders/:id/reopen`                       | provider | Return a cancelled order to draft                                                                                                                                                                                                                                                                           |
+| `DELETE /api/orders/:id`                            | provider | Permanently delete a draft (204)                                                                                                                                                                                                                                                                            |
+| `GET /api/dashboard`                                | provider | GMV, margin and fees. Also still returns a paid-orders list the UI no longer shows                                                                                                                                                                                                                          |
 
-Status codes: 400 `VALIDATION_ERROR`, 401 `UNAUTHENTICATED`, 403 `FORBIDDEN` (wrong persona or someone else's resource), 404 `NOT_FOUND`, 409 wrong order status (`ORDER_NOT_DRAFT`, `ORDER_NOT_PAYABLE`, `ORDER_NOT_CANCELLABLE`), 422 business rules (`EMPTY_ORDER`, `INCOMPLETE_LINE`, `PRICE_BELOW_MINIMUM`, `INSUFFICIENT_STOCK`, `DUPLICATE_PRODUCT`, `UNKNOWN_PRODUCT`, and the other split codes), 402 `PAYMENT_FAILED`, and 500 `INTERNAL` for an unexpected failure, including a sent order whose lines no longer reproduce the stored total.
+Status codes: 400 `VALIDATION_ERROR`, 401 `UNAUTHENTICATED`, 403 `FORBIDDEN` (wrong persona or someone else's resource), 404 `NOT_FOUND`, 409 wrong order status (`ORDER_NOT_DRAFT`, `ORDER_NOT_PAYABLE`, `ORDER_NOT_CANCELLABLE`, `ORDER_NOT_REOPENABLE`), 422 business rules (`EMPTY_ORDER`, `INCOMPLETE_LINE`, `PRICE_BELOW_MINIMUM`, `INSUFFICIENT_STOCK`, `DUPLICATE_PRODUCT`, `UNKNOWN_PRODUCT`, and the other split codes), 402 `PAYMENT_FAILED`, and 500 `INTERNAL` for an unexpected failure, including a sent order whose lines no longer reproduce the stored total.
+
+409 messages are written for people and use the same status names as the UI, from `ORDER_STATUS_LABELS` in the domain package (Draft, Awaiting payment, Paid, Cancelled). For example: "This order is paid; only orders awaiting payment can be cancelled." The UI shows them in its error banner and re-fetches the order.
 
 Request and response types are TypeScript interfaces in `packages/domain/src/api/`, each paired with a Zod schema typed against the interface so the two can't drift. The web app imports the same types.
 
@@ -185,26 +202,54 @@ Request and response types are TypeScript interfaces in `packages/domain/src/api
 - Search is a case-insensitive substring match (`ILIKE '%q%'`) with `%`, `_` and `\` escaped, so they match literally. Products match name or SKU. Patients match name, plus an exact date of birth when the whole query is a valid date. Address is deliberately not searched.
 - A btree index can't serve a substring match, so migration `0005` enables `pg_trgm` and adds GIN trigram indexes on `products.name`, `products.sku` and `users.name`. The queries `ILIKE` the bare columns, which is what those indexes match.
 - `npm run explain:search -w apps/api` loads 50,000 products and 20,000 patients into a throwaway database and prints the query plans before and after the trigram indexes. In one local run, a selective product name search went from about 38 ms (sequential scan) to about 0.2 ms (bitmap index scan on the trigram index), and the matching count query from about 40 ms to about 0.1 ms. A common term such as "ashwagandha" doesn't benefit on the first page, because a page of 25 is found quickly by walking the name index. Its count query still dropped from about 44 ms to about 5 ms. Timings vary by machine.
-- The awaiting-payment list uses a `(provider_id, status, sent_at, id)` index.
+- The provider order list has its own indexes. Migration `0004` adds `(provider_id, status, sent_at, id)` for the oldest-sent-first awaiting-payment view. Migration `0006` adds two indexes on `(provider_id, [status,] coalesce(paid_at, cancelled_at, sent_at, created_at) desc, id desc)`, matching the "most recent activity" sort, plus `(patient_id, created_at desc, id desc)` for a patient's orders.
 
-## 11. Testing strategy
+Migrations, all in `apps/api/drizzle/`:
+
+| Migration | What it does                                                                    |
+| --------- | ------------------------------------------------------------------------------- |
+| `0000`    | Initial schema                                                                  |
+| `0001`    | Revision 2: nullable draft line fields, `total = subtotal`, fee within subtotal |
+| `0002`    | Name and ordering indexes for paginated lists                                   |
+| `0003`    | Patient date of birth                                                           |
+| `0004`    | `cancelled_at`, status/timestamp checks, the awaiting-payment index             |
+| `0005`    | `pg_trgm` and trigram GIN indexes                                               |
+| `0006`    | Order list activity indexes                                                     |
+
+## 11. Front end
+
+- Vue 3 single-page app with Vue Router (history mode) and PrimeVue 4 (Aura preset, light only). Lazy `DataTable`s map directly onto the API's `{ items, total, offset, limit }` pages. Money and percent inputs are plain text inputs parsed by the shared integer parser, never PrimeVue's float-based `InputNumber`.
+- Provider navigation is **Patients | Orders | Dashboard**; a patient sees **My Orders**. The routes guard on the role from the server's user record and redirect the other persona with a notice. That's a convenience, not security; the API enforces access.
+- **Orders tab:** a paginated table of the provider's orders with a multi-select Status filter (Draft, Awaiting payment, Paid, Cancelled, plus a select-all box). The default is all statuses. An empty selection also means all statuses, shown with the placeholder "All statuses".
+- **Order detail actions** depend on status: Delete draft, Cancel order (awaiting payment) and Reopen as draft (cancelled), each behind a confirmation dialog. Reopen takes the provider straight to the builder.
+- **Dashboard:** three tiles (GMV, Your margin earned, Processing fees), links "See paid orders →" (`/orders?status=paid`) and "See orders awaiting payment →" (`/orders?status=pending_payment`), and a searchable, read-only inventory table.
+- **URL state:** every list's filters, search and page live in query parameters: Orders `status` and `page`, Patients `q`, `status` and `page`, and the inventory's `q` and `page`. Defaults are left out of the URL. Changing a filter resets the page. Typing in a search box updates the URL with `router.replace` (debounced), so it doesn't flood history; filter and page changes use `router.push`, so Back steps through them.
+- **Layout:** page content sits in a centered column with a 1200px max width. The header bar is full width with its contents aligned to that column.
+- Views fetch through one typed function per endpoint in `apps/web/src/api/`, with no client cache. State is composables and `ref`/`computed`; there's no store library.
+
+## 12. Testing strategy
 
 - **Domain (Vitest):** reference-value tables for the fee, minimum price and markup conversions, validation order and error codes, overflow boundaries, a 1,000-order randomized sweep checking the sum identities and margin `>= 0`, and money parsing (no floating-point multiplication).
-- **API (Vitest + Supertest, real Postgres):** black-box HTTP contract tests written only from the DTOs and the endpoint list, plus implementation-side tests for pay rollback after the ledger insert, idempotent double pay, concurrent pay and cancel pairs, ownership and persona rules, and search and pagination. Each checkout uses its own test database, truncated and reseeded with stable ids per test.
+- **API (Vitest + Supertest, real Postgres):** black-box HTTP contract tests written only from the DTOs and the endpoint list, plus implementation-side tests for pay rollback after the ledger insert, idempotent double pay, concurrent pay and cancel pairs, delete and reopen, the order list filters and sort orders, ownership and persona rules, search and pagination, and production SPA serving. Each checkout uses its own test database, truncated and reseeded with stable ids per test.
 - **Web (Vitest + Vue Testing Library + jsdom):** behavior tests for the builder (linked Markup % and price, minimum-price state, lenient drafts), pay, login and lists; loading, error, empty and forbidden-persona states for every data-loading view; and axe-core scans of each screen and key state, including PrimeVue's teleported dialog. Testing Library conventions are enforced by lint.
-- **End to end (Playwright, Chromium):** three specs against the real API and Vite on a dedicated `supplement_orders_e2e` database reset before each run. The happy path checks the processing fee shown, the cost + fee = minimum identity, the ledger total, and that the dashboard GMV, margin and fees rise by exactly the order's amounts while stock drops by exactly the quantity. The other two cover a simulated gateway failure and cancelling.
+- **End to end (Playwright, Chromium):** four specs against the real API and Vite on a dedicated `supplement_orders_e2e` database, reset once before each run. The happy path checks the processing fee shown, the cost + fee = minimum identity, the ledger total, and that the dashboard GMV, margin and fees rise by exactly the order's amounts while stock drops by exactly the quantity. The others cover a simulated gateway failure, cancelling, and the order lifecycle (delete a draft, send, cancel, reopen, pay, and the Orders and Patients status filters). The cancel spec has failed once on a dashboard link click that didn't navigate and passed on re-run; that flake is being investigated.
 - **Cross-model test authoring:** most suites were written first by a different model (Grok) from the one implementing (Claude), against written contracts. See [AI_USAGE.md](AI_USAGE.md).
 
-## 12. Deployment
+## 13. Deployment
 
-The app is set up for Railway; the README's [Deployment](../README.md#deployment) section has the steps and variables.
+The app is deployed at <https://web-production-b7c8c.up.railway.app>. The README's [Deployment](../README.md#deployment) section has the exact commands and variables.
 
-- A single Node service serves the API and, with `NODE_ENV=production`, the built SPA from `apps/web/dist` with history fallback. One origin, no CORS.
-- Railway Postgres, which supports the `pg_trgm` extension that migration `0005` creates.
-- Pre-deploy runs `db:migrate`, then `db:seed:if-empty`, which loads the demo seed only into an empty database and never truncates. `NODE_ENV=production` disables `simulateFailure`.
-- The API runs under `tsx`. A compiled build (tsc or esbuild) would trim startup time but isn't required.
+- **Railway project** `supplement-orders` with two services: `web` (the app) and `Postgres`. `DATABASE_URL` on `web` references the Postgres service's private URL.
+- **Build:** Railpack with Node 22 (`engines` is `>=22.13 <23`), running `npm run build`. Railpack's install step already includes dev dependencies such as Vite.
+- **Pre-deploy:** `npm run db:migrate && npm run db:seed:if-empty`. The seed step loads the full demo seed (the named users plus 300 products and 250 patients) only when the database has no users, and never deletes anything.
+- **Run:** `npm start` runs the API under `tsx`. With `NODE_ENV=production` the same process serves the built SPA from `apps/web/dist`: fingerprinted `/assets/` files are cached for a year, `index.html` is `no-cache`, and any other non-API GET falls back to `index.html` so deep links work. Unknown `/api` paths still return a JSON 404. One origin, no CORS. The process refuses to start if the web build is missing.
+- **Health check:** `GET /api/health`, with restart on failure.
+- `NODE_ENV=production` also disables `simulateFailure`, so the decline and rollback path can only be demonstrated locally.
+- **Config:** `railway.json` records the build and deploy settings, but Railway has [deprecated Config as Code](https://docs.railway.com/infrastructure-as-code#migrating-from-config-as-code) and new services don't read it. The same settings were applied to the service directly. If the service is ever recreated, they have to be applied again.
+- **Deploys** run `railway up` from an up-to-date `main`. Railway's repo auto-deploy supports only GitHub, and this repository is on GitLab.
+- **Accepted risk:** auth is stubbed on the public URL too, so anyone can act as any seeded user. All data is fake.
 
-## 13. Production hardening and future work
+## 14. Production hardening and future work
 
 - **Refunds** as new negative or reversing ledger entries, never edits to existing ones. Cancelling a paid order is out of scope today.
 - **Provider payouts:** the ledger says what each provider is owed; actually moving money is a separate system.
@@ -213,4 +258,5 @@ The app is set up for Railway; the README's [Deployment](../README.md#deployment
 - **Database-level ledger guarantees:** a trigger or deferred constraint that rejects updates and deletes on `ledger_entries` and checks that each payment's entries sum to its amount.
 - **Rate limiting** on the API, especially pay and search.
 - **Observability:** structured logs with order and payment ids, metrics on pay latency and gateway declines, and alerting on any `LedgerImbalanceError` or post-charge rollback.
-- **Search at larger scale:** the old `lower(name)` btree indexes are now unused and could be dropped.
+- **Cleanup:** the old `lower(name)` btree indexes are unused and could be dropped. `GET /api/dashboard` still returns a `paidOrders` list that the UI stopped rendering when the Orders tab replaced the dashboard tables; it should be removed in a later contract revision.
+- **Deploys from CI** rather than `railway up` from a laptop, which needs either a GitHub mirror or a CI job with a Railway token.
