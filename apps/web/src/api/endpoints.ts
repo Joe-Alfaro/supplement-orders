@@ -1,8 +1,10 @@
 import type {
-  AwaitingPaymentPageDto,
   CreateOrderRequest,
   DashboardDto,
   ListOrdersQuery,
+  ListPatientsQuery,
+  OrderStatus,
+  ProviderOrderListPageDto,
   ListQuery,
   OrderDetailDto,
   OrderLineInput,
@@ -38,8 +40,31 @@ export function searchProducts(query: ListQuery = {}) {
   return request<ProductPageDto>('GET', `/products${listQueryString(query)}`)
 }
 
-export function searchPatients(query: ListQuery = {}) {
-  return request<PatientPageDto>('GET', `/patients${listQueryString(query)}`)
+export function searchPatients(query: ListPatientsQuery = {}) {
+  const search = listQueryString(query)
+  const filter = query.latestStatus
+    ? `${search ? '&' : '?'}latestStatus=${query.latestStatus}`
+    : ''
+  return request<PatientPageDto>('GET', `/patients${search}${filter}`)
+}
+
+/**
+ * GET /api/orders?status= (provider): one page of orders whose status is any of
+ * `statuses` (sent as a comma list). An empty list means every status (`all`).
+ */
+export function listProviderOrders(
+  query: { statuses: readonly OrderStatus[] } & Pick<
+    ListOrdersQuery,
+    'offset' | 'limit'
+  >,
+) {
+  const status = query.statuses.length ? query.statuses.join(',') : 'all'
+  const search = listQueryString(query)
+  const params = search ? `&${search.slice(1)}` : ''
+  return request<ProviderOrderListPageDto>(
+    'GET',
+    `/orders?status=${status}${params}`,
+  )
 }
 
 export function getPatient(patientId: number) {
@@ -50,18 +75,6 @@ export function listOrders(query: ListOrdersQuery = {}) {
   const search =
     query.patientId === undefined ? '' : `?patientId=${query.patientId}`
   return request<OrderSummaryDto[]>('GET', `/orders${search}`)
-}
-
-/** The provider's pending_payment orders, one page, oldest sent first. */
-export function listAwaitingPayment(
-  query: Pick<ListOrdersQuery, 'offset' | 'limit'> = {},
-) {
-  const search = listQueryString(query)
-  const params = search ? `&${search.slice(1)}` : ''
-  return request<AwaitingPaymentPageDto>(
-    'GET',
-    `/orders?status=pending_payment${params}`,
-  )
 }
 
 export function createOrder(patientId: number) {
@@ -85,6 +98,16 @@ export function sendOrder(orderId: number) {
 /** Draft or pending_payment only; 409 ORDER_NOT_CANCELLABLE otherwise. */
 export function cancelOrder(orderId: number) {
   return request<ProviderOrderDetailDto>('POST', `/orders/${orderId}/cancel`)
+}
+
+/** Draft only, permanently (revision 8); 409 for any other status. */
+export function deleteOrder(orderId: number) {
+  return request<void>('DELETE', `/orders/${orderId}`)
+}
+
+/** Cancelled only: back to draft with its lines kept (revision 8); 409 otherwise. */
+export function reopenOrder(orderId: number) {
+  return request<ProviderOrderDetailDto>('POST', `/orders/${orderId}/reopen`)
 }
 
 export function getOrder(orderId: number) {

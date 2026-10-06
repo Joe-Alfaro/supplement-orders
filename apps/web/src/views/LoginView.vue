@@ -3,6 +3,7 @@ import Button from 'primevue/button'
 import Message from 'primevue/message'
 import Select from 'primevue/select'
 import { computed, ref } from 'vue'
+import { accessibleSelectPt } from '../primevue'
 import { useRouter } from 'vue-router'
 import { ErrorBanner } from '../components'
 import { homePathFor, useCurrentUser, userOptions } from '../user'
@@ -12,19 +13,6 @@ const { users, loadError, ensureUsersLoaded, signIn } = useCurrentUser()
 const selectedId = ref<number | null>(null)
 
 const options = computed(() => userOptions(users.value))
-
-/**
- * Accessibility fixes for PrimeVue's Select overlay, found by axe in a real
- * browser with the list open: its focus-wrap sentinels are aria-hidden yet
- * tabbable, and the scrolling list has nothing focusable. Tab already closes
- * the list through Select's own key handling, so the sentinels need not be tab
- * stops; the list container becomes keyboard-scrollable.
- */
-const selectPt = {
-  hiddenFirstFocusableEl: { tabindex: -1 },
-  hiddenLastFocusableEl: { tabindex: -1 },
-  listContainer: { tabindex: 0 },
-}
 
 async function submit() {
   const user = users.value.find(
@@ -62,7 +50,7 @@ async function submit() {
           filter
           filter-placeholder="Search users"
           append-to="self"
-          :pt="selectPt"
+          :pt="accessibleSelectPt"
           fluid
         />
       </div>

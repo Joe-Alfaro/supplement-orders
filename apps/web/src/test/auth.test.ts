@@ -1,6 +1,6 @@
 import type { UserDto } from '@supplement-orders/domain'
 import userEvent from '@testing-library/user-event'
-import { render, screen } from '@testing-library/vue'
+import { render, screen, within } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory } from 'vue-router'
 import * as api from '../api'
@@ -102,5 +102,17 @@ describe('stub login', () => {
     )
     expect(localStorage.getItem('supplementOrders.userId')).toBeNull()
     expect(screen.queryByText(/Signed in as/)).not.toBeInTheDocument()
+  })
+
+  it('shows the provider tabs Patients, Orders, Dashboard in order', async () => {
+    useCurrentUser().signIn(1)
+    await startApp('/')
+
+    const nav = await screen.findByRole('navigation', { name: 'Main' })
+    expect(
+      within(nav)
+        .getAllByRole('link')
+        .map((link) => link.textContent),
+    ).toEqual(['Patients', 'Orders', 'Dashboard'])
   })
 })

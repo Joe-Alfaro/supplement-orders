@@ -1,24 +1,14 @@
-import type {
-  AwaitingPaymentOrderDto,
-  AwaitingPaymentPageDto,
-  DashboardDto,
-  ProductDto,
-} from '@supplement-orders/domain'
+import type { DashboardDto, ProductDto, ProductPageDto } from '@supplement-orders/domain'
 import { screen, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
 import DashboardView from './DashboardView.vue'
 
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>()
-  return {
-    ...actual,
-    getDashboard: vi.fn(),
-    searchProducts: vi.fn(),
-    listAwaitingPayment: vi.fn(),
-  }
+  return { ...actual, getDashboard: vi.fn(), searchProducts: vi.fn() }
 })
 
 const dashboard: DashboardDto = {
@@ -39,54 +29,41 @@ const dashboard: DashboardDto = {
   ],
 }
 
-const products: ProductDto[] = [
-  {
-    id: 1,
-    sku: 'VITD',
-    name: 'Vitamin D3',
-    cogsCents: 850,
-    stockQuantity: 119,
-  },
-]
-
-function awaiting(
-  id: number,
-  patientName: string,
-  sentAt: string,
-): AwaitingPaymentOrderDto {
+function product(id: number, name: string): ProductDto {
   return {
     id,
-    patientId: id,
-    patientName,
-    patientDateOfBirth: '1984-03-14',
-    status: 'pending_payment',
-    totalCents: 12000,
-    createdAt: sentAt,
-    sentAt,
-    paidAt: null,
-    cancelledAt: null,
+    sku: `SKU-${id}`,
+    name,
+    cogsCents: 850,
+    stockQuantity: 119,
   }
 }
 
-function awaitingPage(
-  items: AwaitingPaymentOrderDto[],
+function productPage(
+  items: ProductDto[],
   total = items.length,
   offset = 0,
-): AwaitingPaymentPageDto {
+): ProductPageDto {
   return { items, total, offset, limit: 25 }
 }
 
+const firstPage = Array.from({ length: 25 }, (_, index) =>
+  product(index + 1, index === 0 ? 'Vitamin D3' : `Product ${index + 1}`),
+)
+
+// Answers like the server: page 2 of 30 when asked for offset 25.
+function serveProducts(query: { offset?: number } = {}) {
+  if (query.offset === 25) {
+    return Promise.resolve(productPage([product(26, 'Zinc')], 30, 25))
+  }
+  return Promise.resolve(productPage(firstPage, 30))
+}
+
 beforeEach(() => {
-  vi.mocked(api.listAwaitingPayment)
+  vi.mocked(api.getDashboard).mockReset().mockResolvedValue(dashboard)
+  vi.mocked(api.searchProducts)
     .mockReset()
-    .mockResolvedValue(awaitingPage([]))
-  vi.mocked(api.getDashboard).mockResolvedValue(dashboard)
-  vi.mocked(api.searchProducts).mockResolvedValue({
-    items: products,
-    total: products.length,
-    offset: 0,
-    limit: 25,
-  })
+    .mockResolvedValue(productPage([product(1, 'Vitamin D3')]))
 })
 
 describe('DashboardView', () => {
@@ -106,33 +83,25 @@ describe('DashboardView', () => {
     expect(
       screen.queryByRole('button', { name: /save/i }),
     ).not.toBeInTheDocument()
+    // Revision 8 removed the explanatory note under the table.
+    expect(
+      screen.queryByText(/Stock decreases automatically/),
+    ).not.toBeInTheDocument()
   })
 
   it('labels cost as wholesale cost, never COGS or our cost', async () => {
     await renderWithRouter(DashboardView)
     await screen.findByText('Vitamin D3')
 
-    expect(screen.getAllByText('Wholesale cost').length).toBeGreaterThan(0)
+    expect(
+      screen.getByRole('columnheader', { name: 'Wholesale cost' }),
+    ).toBeInTheDocument()
     expect(document.body).not.toHaveTextContent(/COGS|our cost/i)
     expect(document.body).not.toHaveTextContent(/Platform fee/i)
     expect(screen.getByText('Processing fees')).toBeInTheDocument()
-    expect(
-      screen.getByRole('columnheader', { name: 'Processing fee' }),
-    ).toBeInTheDocument()
   })
 
-  it('opens the order when a paid-order row is clicked', async () => {
-    const user = userEvent.setup()
-    const { router } = await renderWithRouter(DashboardView)
-
-    await user.click(await screen.findByText('Jordan Lee'))
-
-    await vi.waitFor(() =>
-      expect(router.currentRoute.value.path).toBe('/orders/7'),
-    )
-  })
-
-  it('names each stat tile and table so they can be found by role', async () => {
+  it('names each stat tile so it can be found by role', async () => {
     await renderWithRouter(DashboardView)
     await screen.findByText('Vitamin D3')
 
@@ -149,145 +118,136 @@ describe('DashboardView', () => {
         '$0.52',
       ),
     ).toBeInTheDocument()
-    expect(
-      screen.getByRole('table', { name: 'Paid orders' }),
-    ).toBeInTheDocument()
     expect(screen.getByRole('table', { name: 'Inventory' })).toBeInTheDocument()
+  })
+
+  it('keeps only Sales and Inventory: the order tables moved to Orders', async () => {
+    await renderWithRouter(DashboardView)
+    await screen.findByText('Vitamin D3')
+    await screen.findByText('$69.51')
+
+    expect(
+      screen
+        .getAllByRole('heading', { level: 2 })
+        .map((heading) => heading.textContent),
+    ).toEqual(['Sales', 'Inventory'])
+    expect(screen.getAllByRole('table')).toHaveLength(1)
+    expect(
+      screen.queryByRole('table', { name: 'Paid orders' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('table', { name: 'Awaiting payment' }),
+    ).not.toBeInTheDocument()
+    // The paid order's patient was only ever shown in the paid-orders table.
+    expect(screen.queryByText('Jordan Lee')).not.toBeInTheDocument()
+  })
+
+  it('links to the Orders tab filtered to paid and to awaiting payment', async () => {
+    await renderWithRouter(DashboardView)
+    const sales = await screen.findByRole('region', { name: 'Sales' })
+
+    expect(
+      within(sales).getByRole('link', { name: 'See paid orders →' }),
+    ).toHaveAttribute('href', '/orders?status=paid')
+    expect(
+      within(sales).getByRole('link', {
+        name: 'See orders awaiting payment →',
+      }),
+    ).toHaveAttribute('href', '/orders?status=pending_payment')
   })
 })
 
-describe('DashboardView awaiting payment', () => {
-  afterEach(() => {
-    vi.useRealTimers()
+describe('DashboardView inventory URL state', () => {
+  it('restores search and page from the URL', async () => {
+    vi.mocked(api.searchProducts).mockImplementation(serveProducts)
+    await renderWithRouter(DashboardView, { path: '/dashboard?q=vit&page=2' })
+
+    expect(await screen.findByText('Zinc')).toBeInTheDocument()
+    expect(api.searchProducts).toHaveBeenCalledWith({
+      q: 'vit',
+      offset: 25,
+      limit: 25,
+    })
+    expect(
+      screen.getByRole('searchbox', { name: 'Search products' }),
+    ).toHaveValue('vit')
+    expect(screen.getByText('Showing 26–26 of 30')).toBeInTheDocument()
   })
 
-  it('comes first, listing sent date, patient and DOB, total, and days waiting', async () => {
-    // Only Date is faked, and only here: this test never clicks, and a frozen
-    // clock kept the row-click test from navigating.
-    vi.useFakeTimers({ toFake: ['Date'] })
-    vi.setSystemTime(new Date(2026, 9, 6, 9, 0))
-    const sentAt = new Date(2026, 9, 1, 12, 0).toISOString()
-    vi.mocked(api.listAwaitingPayment).mockResolvedValue(
-      awaitingPage([awaiting(12, 'Avery Chen', sentAt)]),
-    )
-    await renderWithRouter(DashboardView)
-
-    const table = await screen.findByRole('table', {
-      name: 'Awaiting payment',
+  it('replaces the URL while typing, omitting page 1', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.searchProducts).mockImplementation(serveProducts)
+    const { router } = await renderWithRouter(DashboardView, {
+      path: '/dashboard?page=2',
     })
-    const sections = screen.getAllByRole('heading', { level: 2 })
-    expect(sections.map((heading) => heading.textContent)).toEqual([
-      'Awaiting payment',
-      'Sales',
-      'Inventory',
-    ])
-    expect(
-      within(table)
-        .getAllByRole('columnheader')
-        .map((header) => header.textContent),
-    ).toEqual(['Sent', 'Patient', 'Patient total', 'Days waiting'])
-    const row = within(table).getByRole('row', { name: /Avery Chen/ })
-    expect(
-      within(row)
-        .getAllByRole('cell')
-        .map((cell) => cell.textContent),
-    ).toEqual([
-      new Date(sentAt).toLocaleDateString(),
-      'Avery Chen · 03/14/1984',
-      '$120.00',
-      '5',
-    ])
-    expect(api.listAwaitingPayment).toHaveBeenCalledWith({
+    await screen.findByText('Zinc')
+    const push = vi.spyOn(router, 'push')
+
+    await user.type(
+      screen.getByRole('searchbox', { name: 'Search products' }),
+      'Vitamin',
+    )
+
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.fullPath).toBe('/dashboard?q=Vitamin'),
+    )
+    expect(api.searchProducts).toHaveBeenLastCalledWith({
+      q: 'Vitamin',
+      offset: 0,
+      limit: 25,
+    })
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('pushes page changes, and Back restores the previous page', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.searchProducts).mockImplementation(serveProducts)
+    const { router } = await renderWithRouter(DashboardView, {
+      path: '/dashboard?q=vit',
+    })
+    await screen.findByText('Vitamin D3')
+
+    await user.click(screen.getByRole('button', { name: 'Next Page' }))
+
+    expect(await screen.findByText('Zinc')).toBeInTheDocument()
+    expect(router.currentRoute.value.fullPath).toBe('/dashboard?q=vit&page=2')
+    expect(api.searchProducts).toHaveBeenLastCalledWith({
+      q: 'vit',
+      offset: 25,
+      limit: 25,
+    })
+
+    router.back()
+
+    expect(await screen.findByText('Vitamin D3')).toBeInTheDocument()
+    expect(router.currentRoute.value.fullPath).toBe('/dashboard?q=vit')
+    expect(api.searchProducts).toHaveBeenLastCalledWith({
+      q: 'vit',
+      offset: 0,
+      limit: 25,
+    })
+    expect(screen.queryByText('Zinc')).not.toBeInTheDocument()
+  })
+
+  it('ignores a page that is not a positive whole number', async () => {
+    await renderWithRouter(DashboardView, { path: '/dashboard?page=abc' })
+    await screen.findByText('Vitamin D3')
+
+    expect(api.searchProducts).toHaveBeenCalledWith({
+      q: '',
       offset: 0,
       limit: 25,
     })
   })
 
-  it('shows the empty state when nothing is pending', async () => {
-    await renderWithRouter(DashboardView)
-
-    expect(
-      await screen.findByText('Nothing awaiting payment.'),
-    ).toBeInTheDocument()
-    expect(
-      screen.queryByRole('table', { name: 'Awaiting payment' }),
-    ).not.toBeInTheDocument()
-  })
-
-  it('pages through the orders on the server', async () => {
-    const user = userEvent.setup()
-    const sentAt = new Date(2026, 9, 1, 12, 0).toISOString()
-    const firstPage = Array.from({ length: 25 }, (_, index) =>
-      awaiting(index + 1, `Patient ${index + 1}`, sentAt),
-    )
-    vi.mocked(api.listAwaitingPayment)
-      .mockResolvedValueOnce(awaitingPage(firstPage, 30))
-      .mockResolvedValueOnce(
-        awaitingPage([awaiting(26, 'Riley Park', sentAt)], 30, 25),
-      )
-    await renderWithRouter(DashboardView)
-    const section = await screen.findByRole('region', {
-      name: 'Awaiting payment',
+  it('does not refetch inventory when leaving for another route', async () => {
+    const { router } = await renderWithRouter(DashboardView, {
+      path: '/dashboard?q=vit',
     })
-    expect(
-      await within(section).findByText('Showing 1–25 of 30'),
-    ).toBeInTheDocument()
-    // Two paginators on one page: each navigation landmark needs its own name.
-    await screen.findByText('Vitamin D3')
-    expect(within(section).getByRole('navigation')).toHaveAccessibleName(
-      'Awaiting payment pages',
-    )
-    expect(
-      screen.getByRole('navigation', { name: 'Inventory pages' }),
-    ).toBeInTheDocument()
-
-    await user.click(within(section).getByRole('button', { name: 'Next Page' }))
-
-    expect(
-      await within(section).findByText('Riley Park · 03/14/1984'),
-    ).toBeInTheDocument()
-    expect(api.listAwaitingPayment).toHaveBeenLastCalledWith({
-      offset: 25,
-      limit: 25,
-    })
-    expect(within(section).getByText('Showing 26–26 of 30')).toBeInTheDocument()
-  })
-
-  it('opens the order when its row is clicked', async () => {
-    const user = userEvent.setup()
-    const sentAt = new Date(2026, 9, 1, 12, 0).toISOString()
-    vi.mocked(api.listAwaitingPayment).mockResolvedValue(
-      awaitingPage([
-        awaiting(12, 'Avery Chen', sentAt),
-        awaiting(13, 'Sam Ortiz', sentAt),
-      ]),
-    )
-    const { router } = await renderWithRouter(DashboardView)
-
-    await user.click(await screen.findByText('Sam Ortiz · 03/14/1984'))
-
-    await vi.waitFor(() =>
-      expect(router.currentRoute.value.path).toBe('/orders/13'),
-    )
-  })
-
-  it('opens the order when Enter is pressed on a focused row', async () => {
-    const user = userEvent.setup()
-    const sentAt = new Date(2026, 9, 1, 12, 0).toISOString()
-    vi.mocked(api.listAwaitingPayment).mockResolvedValue(
-      awaitingPage([awaiting(12, 'Avery Chen', sentAt)]),
-    )
-    const { router } = await renderWithRouter(DashboardView)
-    const row = await screen.findByRole('row', { name: /Avery Chen/ })
     await screen.findByText('Vitamin D3')
 
-    // The section comes first, so its first row is the page's first tab stop.
-    await user.tab()
-    expect(row).toHaveFocus()
-    await user.keyboard('{Enter}')
+    await router.push('/orders?status=paid')
 
-    await vi.waitFor(() =>
-      expect(router.currentRoute.value.path).toBe('/orders/12'),
-    )
+    expect(api.searchProducts).toHaveBeenCalledTimes(1)
   })
 })
