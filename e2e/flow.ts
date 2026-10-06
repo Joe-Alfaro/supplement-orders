@@ -89,10 +89,10 @@ export async function openPatient(page: Page, name: string): Promise<void> {
 interface AddProductOptions {
   quantity: number
   /**
-   * When set, step 2 types this margin. The resulting price is whatever the
-   * field shows; it is not computed from a margin formula.
+   * When set, step 2 types this markup. The resulting price is whatever the
+   * field shows; it is not computed from a markup formula.
    */
-  marginPercent?: string
+  markupPercent?: string
 }
 
 /**
@@ -126,14 +126,14 @@ export async function addProduct(
   const prefilled = dollarsToCents(prefilledInput)
   expect(prefilled).toBeGreaterThanOrEqual(minimum)
 
-  if (options.marginPercent) {
+  if (options.markupPercent) {
     const feeBefore = dollarsToCents(await fee.inputValue())
-    const margin = dialog.getByLabel('Margin %')
-    await margin.fill(options.marginPercent)
+    const markup = dialog.getByLabel('Markup %')
+    await markup.fill(options.markupPercent)
     await expect(price).not.toHaveValue(prefilledInput)
     await expectFeeForPrice(dialog, price, fee, minimum)
     expect(dollarsToCents(await fee.inputValue())).not.toBe(feeBefore)
-    await margin.blur()
+    await markup.blur()
   }
 
   if (options.quantity !== 1) {

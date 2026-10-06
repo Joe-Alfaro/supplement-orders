@@ -14,7 +14,7 @@ import {
 import { moneyIn } from './money'
 
 // Small supplement_orders_e2e seed: the first provider, their first patient, and two products
-// chosen by SKU fragment. Vitamin D3 gets Margin % 40, and the price is read
+// chosen by SKU fragment. Vitamin D3 gets Markup % 40, and the price is read
 // back from the field rather than computed. Magnesium stays at its prefilled
 // price with quantity 2.
 const PROVIDER = 'Dr. Maya Rivera (Provider)'
@@ -60,7 +60,7 @@ test('provider sends an order, the patient pays, and the dashboard matches', asy
 
     await addProduct(page, FIRST_SKU, {
       quantity: FIRST_QUANTITY,
-      marginPercent: '40',
+      markupPercent: '40',
     })
     await addProduct(page, SECOND_SKU, { quantity: SECOND_QUANTITY })
 
@@ -96,6 +96,7 @@ test('provider sends an order, the patient pays, and the dashboard matches', asy
     const main = await page.getByRole('main').innerText()
     expect(main).not.toMatch(/wholesale cost/i)
     expect(main).not.toMatch(/margin/i)
+    expect(main).not.toMatch(/markup/i)
     expect(main).not.toMatch(/fee/i)
 
     await page.getByRole('button', { name: /^Pay \$/ }).click()
