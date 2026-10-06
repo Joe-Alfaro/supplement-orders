@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   LATEST_ORDER_STATUS_FILTERS,
+  ORDER_STATUS_LABELS,
   type LatestOrderStatusFilter,
   type PatientDto,
 } from '@supplement-orders/domain'
@@ -32,10 +33,7 @@ type StatusChoice = LatestOrderStatusFilter | 'any'
 const STATUS_LABELS: Record<StatusChoice, string> = {
   any: 'Any',
   none: 'No orders',
-  draft: 'Draft',
-  pending_payment: 'Awaiting payment',
-  paid: 'Paid',
-  cancelled: 'Cancelled',
+  ...ORDER_STATUS_LABELS,
 }
 const statusOptions = (Object.keys(STATUS_LABELS) as StatusChoice[]).map(
   (value) => ({ value, label: STATUS_LABELS[value] }),

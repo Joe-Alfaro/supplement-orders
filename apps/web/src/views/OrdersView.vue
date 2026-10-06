@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  ORDER_STATUS_LABELS,
   ORDER_STATUSES,
   type OrderStatus,
   type ProviderOrderListItemDto,
@@ -21,22 +22,11 @@ import { usePagedSearch } from '../search'
 const route = useRoute()
 const router = useRouter()
 
-const STATUSES: Record<
-  OrderStatus,
-  { label: string; dateHeader: string; empty: string }
-> = {
-  draft: { label: 'Draft', dateHeader: 'Created', empty: 'No draft orders.' },
-  pending_payment: {
-    label: 'Awaiting payment',
-    dateHeader: 'Sent',
-    empty: 'No orders awaiting payment.',
-  },
-  paid: { label: 'Paid', dateHeader: 'Paid', empty: 'No paid orders.' },
-  cancelled: {
-    label: 'Cancelled',
-    dateHeader: 'Cancelled',
-    empty: 'No cancelled orders.',
-  },
+const STATUSES: Record<OrderStatus, { dateHeader: string; empty: string }> = {
+  draft: { dateHeader: 'Created', empty: 'No draft orders.' },
+  pending_payment: { dateHeader: 'Sent', empty: 'No orders awaiting payment.' },
+  paid: { dateHeader: 'Paid', empty: 'No paid orders.' },
+  cancelled: { dateHeader: 'Cancelled', empty: 'No cancelled orders.' },
 }
 
 /** Canonical order for options, the URL and the API. */
@@ -45,7 +35,7 @@ const DEFAULT_SELECTION: OrderStatus[] = ['pending_payment']
 
 const statusOptions = ORDER.map((value) => ({
   value,
-  label: STATUSES[value].label,
+  label: ORDER_STATUS_LABELS[value],
 }))
 
 function canonical(statuses: readonly OrderStatus[]) {
@@ -64,14 +54,18 @@ function selectionFromUrl(value: unknown): OrderStatus[] {
   return statuses.length ? canonical(statuses) : [...DEFAULT_SELECTION]
 }
 
-// PrimeVue names the select-all box after its state ("All items unselected");
-// name it for what it does instead. Each option row also renders its own
+// PrimeVue names the select-all box after its state ("All items unselected")
+// and shows no text for it; a visible <label> (the header slot) names it
+// instead, so the name is on screen (§9). Each option row also renders its own
 // checkbox <input>, which axe flags as unlabelled and nested inside an
 // interactive option; the option already exposes aria-selected, so that
 // checkbox is decorative: hidden from assistive tech and not focusable.
 const multiSelectPt = {
   ...accessibleSelectPt,
-  pcHeaderCheckbox: { input: { 'aria-label': 'Select all statuses' } },
+  pcHeaderCheckbox: {
+    input: { id: 'order-status-all', 'aria-label': undefined },
+  },
+  overlay: { class: 'status-overlay' },
   pcOptionCheckbox: {
     // The whole checkbox is click-through so the click lands on the option row,
     // which persists; a click on the check icon (removed on uncheck) would read
@@ -149,7 +143,13 @@ function onPage(event: DataTablePageEvent) {
         :max-selected-labels="4"
         append-to="self"
         :pt="multiSelectPt"
-      />
+      >
+        <template #header>
+          <label for="order-status-all" class="select-all-label"
+            >Select all</label
+          >
+        </template>
+      </MultiSelect>
     </div>
   </div>
   <ErrorBanner v-if="error" :message="error" retryable @retry="orders.load" />

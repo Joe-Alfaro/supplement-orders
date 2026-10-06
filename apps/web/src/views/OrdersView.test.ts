@@ -126,7 +126,7 @@ describe('OrdersView', () => {
     await openStatusList(user)
 
     const selectAll = screen.getByRole('checkbox', {
-      name: 'Select all statuses',
+      name: 'Select all',
     })
     await user.click(selectAll)
     await vi.waitFor(() =>

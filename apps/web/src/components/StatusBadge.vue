@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { OrderStatus } from '@supplement-orders/domain'
+import { ORDER_STATUS_LABELS, type OrderStatus } from '@supplement-orders/domain'
 import Tag from 'primevue/tag'
 
 interface Props {
@@ -7,13 +7,6 @@ interface Props {
 }
 
 defineProps<Props>()
-
-const LABELS: Record<OrderStatus, string> = {
-  draft: 'Draft',
-  pending_payment: 'Awaiting payment',
-  paid: 'Paid',
-  cancelled: 'Cancelled',
-}
 
 const SEVERITIES: Record<OrderStatus, string> = {
   draft: 'secondary',
@@ -24,5 +17,5 @@ const SEVERITIES: Record<OrderStatus, string> = {
 </script>
 
 <template>
-  <Tag :value="LABELS[status]" :severity="SEVERITIES[status]" />
+  <Tag :value="ORDER_STATUS_LABELS[status]" :severity="SEVERITIES[status]" />
 </template>
