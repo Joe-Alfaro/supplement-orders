@@ -53,6 +53,11 @@ export const routes: RouteRecordRaw[] = [
     }),
   },
   {
+    path: '/orders',
+    component: () => import('./views/OrdersView.vue'),
+    meta: provider,
+  },
+  {
     path: '/orders/:orderId',
     component: () => import('./views/ProviderOrderView.vue'),
     meta: provider,

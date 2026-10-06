@@ -26,6 +26,7 @@ async function onSignOut() {
     <nav aria-label="Main">
       <template v-if="currentUser.role === 'provider'">
         <RouterLink to="/patients">Patients</RouterLink>
+        <RouterLink to="/orders">Orders</RouterLink>
         <RouterLink to="/dashboard">Dashboard</RouterLink>
       </template>
       <RouterLink v-else to="/my-orders">My Orders</RouterLink>
