@@ -1,5 +1,4 @@
 import type {
-  AwaitingPaymentPageDto,
   CreateOrderRequest,
   DashboardDto,
   ListOrdersQuery,
@@ -13,6 +12,7 @@ import type {
   PayOrderRequest,
   ProductPageDto,
   ProviderOrderDetailDto,
+  ProviderOrderListPageDto,
   ReplaceOrderLinesRequest,
   UserDto,
 } from '@supplement-orders/domain'
@@ -58,7 +58,7 @@ export function listAwaitingPayment(
 ) {
   const search = listQueryString(query)
   const params = search ? `&${search.slice(1)}` : ''
-  return request<AwaitingPaymentPageDto>(
+  return request<ProviderOrderListPageDto>(
     'GET',
     `/orders?status=pending_payment${params}`,
   )
