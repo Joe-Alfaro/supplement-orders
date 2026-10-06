@@ -195,14 +195,14 @@ Request and response types are TypeScript interfaces in `packages/domain/src/api
 - **End to end (Playwright, Chromium):** three specs against the real API and Vite on a dedicated `supplement_orders_e2e` database reset before each run. The happy path checks the processing fee shown, the cost + fee = minimum identity, the ledger total, and that the dashboard GMV, margin and fees rise by exactly the order's amounts while stock drops by exactly the quantity. The other two cover a simulated gateway failure and cancelling.
 - **Cross-model test authoring:** most suites were written first by a different model (Grok) from the one implementing (Claude), against written contracts. See [AI_USAGE.md](AI_USAGE.md).
 
-## 12. Deployment plan (not yet deployed)
+## 12. Deployment
 
-The application has **not been deployed**. The proposed shape:
+The app is set up for Railway; the README's [Deployment](../README.md#deployment) section has the steps and variables.
 
-- A single Node service that serves both the API and the built SPA from `apps/web/dist`, so there's one origin and no CORS. That requires a small addition: the API doesn't serve static files yet.
-- Managed Postgres such as Neon, which supports the `pg_trgm` extension that migration `0005` creates.
-- Run `db:migrate` on deploy. Set `NODE_ENV=production`, which disables `simulateFailure`.
-- The API currently runs under `tsx`. A compiled build (tsc or esbuild) would trim startup time but isn't required.
+- A single Node service serves the API and, with `NODE_ENV=production`, the built SPA from `apps/web/dist` with history fallback. One origin, no CORS.
+- Railway Postgres, which supports the `pg_trgm` extension that migration `0005` creates.
+- Pre-deploy runs `db:migrate`, then `db:seed:if-empty`, which loads the demo seed only into an empty database and never truncates. `NODE_ENV=production` disables `simulateFailure`.
+- The API runs under `tsx`. A compiled build (tsc or esbuild) would trim startup time but isn't required.
 
 ## 13. Production hardening and future work
 

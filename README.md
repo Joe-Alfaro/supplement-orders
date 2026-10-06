@@ -54,6 +54,7 @@ Run from the repo root.
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `npm run dev`                        | API (`tsx watch`, port 3000) and web (Vite, port 5173) together                                                                                              |
 | `npm run build`                      | Builds the web app to `apps/web/dist`. The API runs from TypeScript source under `tsx` and has no build step                                                 |
+| `npm start`                          | Runs the API under `tsx`. With `NODE_ENV=production` it also serves `apps/web/dist` (see [Deployment](#deployment))                                          |
 | `npm test`                           | Unit and integration tests for every workspace (the API tests need `npm run db:up`)                                                                          |
 | `npm run lint`                       | ESLint plus `prettier --check` (Prettier also covers Markdown)                                                                                               |
 | `npm run format`                     | `prettier --write`                                                                                                                                           |
@@ -65,6 +66,7 @@ Run from the repo root.
 | `npm run db:up` / `db:down`          | Start or stop the Docker Postgres                                                                                                                            |
 | `npm run db:migrate`                 | Apply Drizzle migrations to the dev database                                                                                                                 |
 | `npm run db:seed`                    | Truncate the dev database and load the named seed plus the generated demo rows                                                                               |
+| `npm run db:seed:if-empty`           | Load the same full seed only if there are no users yet. Never deletes anything; the deploy runs it every time                                                |
 | `npm run explain:search -w apps/api` | Loads 50,000 products and 20,000 patients into a throwaway database and prints `EXPLAIN ANALYZE` for the search queries before and after the trigram indexes |
 
 The first `npm run test:e2e` on a machine may need `npx playwright install chromium`.
@@ -82,6 +84,31 @@ All money is integer cents (USD). No floats in the money path. The split is a pu
 Worked example: a product with a $5.81 wholesale cost has a minimum price of $5.86. At $5.86 the fee is 75 bps of $5.86 = 4.395 cents, rounded up to $0.05, so cost + fee = minimum and the provider margin is $0.00. At $120.00 against $70.00 wholesale, the fee is exactly $0.90 and the provider keeps $49.10.
 
 When the patient pays, the API writes three ledger entries (`cogs`, `provider_margin`, `platform_fee`) whose sum is asserted to equal the payment amount before they're inserted. The provider's order detail shows them with a "Total of entries" row. The dashboard's GMV comes from payments, and its margin and fee totals come from the ledger.
+
+## Deployment
+
+Public demo: _URL to be added after the first deploy_
+
+The app runs on [Railway](https://railway.com) as one service plus a Railway Postgres service. The API serves the built web app, so there is one origin and no CORS. [`railway.json`](railway.json) holds the build and deploy settings:
+
+| Step       | Command                                          | Notes                                                                                                     |
+| ---------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| Build      | `npm ci --include=dev && npm run build`          | Railpack, Node 22 from `engines`. Dev dependencies are included because Vite is one and `NODE_ENV` is set |
+| Pre-deploy | `npm run db:migrate && npm run db:seed:if-empty` | Runs before each release. Migrations are idempotent; the seed only runs on an empty database              |
+| Start      | `npm start`                                      | API under `tsx`, serving `apps/web/dist` with history fallback                                            |
+| Health     | `GET /api/health`                                | Returns 503 when the database is unreachable. Restart policy: on failure                                  |
+
+Service variables:
+
+- `DATABASE_URL`: a reference to the Postgres service's private URL, `${{Postgres.DATABASE_URL}}`.
+- `NODE_ENV=production`: turns on static serving and turns off **Simulate gateway failure**. The decline and rollback path is demonstrated locally.
+- `PORT`: provided by Railway.
+
+Production static serving: hashed files under `/assets/` are cached for a year, `index.html` is `no-cache`, and any other non-`/api` GET returns `index.html` so deep links such as `/orders?status=paid` work. Unknown `/api` routes still return a JSON 404.
+
+To deploy, run `railway up` from the repo root on an up-to-date `main`. Railway's repo auto-deploy only supports GitHub, and this repository is on GitLab.
+
+**Auth is stubbed on the public demo too.** Anyone with the URL can sign in as any seeded user and create, pay or cancel orders. All the data is fake.
 
 ## What's stubbed
 
