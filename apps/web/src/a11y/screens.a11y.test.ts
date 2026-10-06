@@ -43,7 +43,6 @@ vi.mock('../api', async (importOriginal) => {
     sendOrder: vi.fn(),
     payOrder: vi.fn(),
     getDashboard: vi.fn(),
-    listAwaitingPayment: vi.fn(),
   }
 })
 
@@ -274,12 +273,6 @@ beforeEach(async () => {
   vi.mocked(api.sendOrder).mockResolvedValue(paidProviderOrder)
   vi.mocked(api.payOrder).mockResolvedValue(paidPatientOrder)
   vi.mocked(api.getDashboard).mockResolvedValue(dashboard)
-  vi.mocked(api.listAwaitingPayment).mockResolvedValue({
-    items: [],
-    total: 0,
-    offset: 0,
-    limit: 25,
-  })
   useCurrentUser().signOut()
   await useCurrentUser().ensureUsersLoaded()
 })

@@ -4,6 +4,8 @@ import { handleApiError } from '../api'
 
 export interface PagedSearchOptions {
   initialQuery?: string
+  /** First row to load, e.g. restored from `?page=` in the URL. */
+  initialOffset?: number
   limit?: number
   debounceMs?: number
 }
@@ -27,7 +29,7 @@ export function usePagedSearch<T>(
   const query = ref(options.initialQuery ?? '')
   /** The query behind the current results. */
   const activeQuery = ref(query.value.trim())
-  const offset = ref(0)
+  const offset = ref(Math.max(0, options.initialOffset ?? 0))
   const page = shallowRef<Page<T> | null>(null)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -107,6 +109,18 @@ export function usePagedSearch<T>(
     return load()
   }
 
+  /**
+   * Show exactly this search and page, e.g. when Back/Forward changes the URL.
+   * Cancels pending typing so the box and the results agree.
+   */
+  function show(value: string, first: number) {
+    cancelPending()
+    query.value = value
+    activeQuery.value = value.trim()
+    offset.value = Math.max(0, first)
+    return load()
+  }
+
   /** Jump to a page by its first row, e.g. from DataTable's `@page`. */
   function goTo(first: number) {
     const target = Math.max(0, first)
@@ -136,5 +150,6 @@ export function usePagedSearch<T>(
     previous,
     goTo,
     restart,
+    show,
   }
 }

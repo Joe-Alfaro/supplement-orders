@@ -3,7 +3,6 @@ import { request } from './client'
 import {
   cancelOrder,
   deleteOrder,
-  listAwaitingPayment,
   reopenOrder,
   searchPatients,
 } from './endpoints'
@@ -28,22 +27,6 @@ describe('list endpoints', () => {
     expect(request).toHaveBeenCalledWith(
       'GET',
       '/patients?q=lee+%26+co&offset=25&limit=25',
-    )
-  })
-
-  it('asks for one page of pending orders by status', async () => {
-    vi.mocked(request).mockResolvedValue({
-      items: [],
-      total: 0,
-      offset: 50,
-      limit: 25,
-    })
-
-    await listAwaitingPayment({ offset: 50, limit: 25 })
-
-    expect(request).toHaveBeenCalledWith(
-      'GET',
-      '/orders?status=pending_payment&offset=50&limit=25',
     )
   })
 })
