@@ -58,7 +58,7 @@ A single model writing both sides would have settled both questions silently, on
 
 **Messages that didn't arrive.** `ao send` to a Claude worker between turns silently didn't reach it. The orchestrator noticed from the transcript and resent with `--steer`.
 
-**A cancelled revision was written anyway.** Revision 4 (margin net of the fee) was superseded by revision 5 (markup) after I asked why margin had a ceiling. One Grok worker had already committed the revision 4 test suite before it saw the redirect. That branch was simply never merged. Because implementation hadn't started, revision 4 cost only spec and dispatch time.
+**A cancelled revision was written anyway.** Revision 4 (margin net of the fee) was superseded by revision 5 (markup) after I asked why margin had a ceiling. One Grok worker had already committed the revision 4 test suite before it saw the redirect. That branch was simply never merged. Revision 4 cost only spec and test-writing time; no implementation was written.
 
 **Tests that went red on purpose.** Several times Grok's tests were deliberately left failing because the app didn't do something yet: a 401 that should send the user to the login screen, a Markup % label that hadn't landed, the rounded-up fee before the domain change. Grok didn't loosen an assertion to make one pass. The Playwright happy path, for example, stayed red on the missing "Markup %" label until the UI change landed, and the orchestrator approved keeping it red.
 
