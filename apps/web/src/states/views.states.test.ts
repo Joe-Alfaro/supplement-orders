@@ -10,7 +10,8 @@ import type {
   ProviderOrderSummaryDto,
   UserDto,
 } from '@supplement-orders/domain'
-import { fireEvent, render, screen } from '@testing-library/vue'
+import { render, screen } from '@testing-library/vue'
+import userEvent from '@testing-library/user-event'
 import PrimeVue from 'primevue/config'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory } from 'vue-router'
@@ -282,22 +283,25 @@ function serverError(message: string) {
 }
 
 async function expectLoading() {
-  expect(await screen.findByText(LOADING)).toBeTruthy()
+  expect(await screen.findByText(LOADING)).toBeInTheDocument()
 }
 
 async function expectServerError(message: string) {
-  expect(await screen.findByText(message)).toBeTruthy()
-  expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
-  expect(screen.queryByText(LOADING)).toBeNull()
+  expect(await screen.findByText(message)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+  expect(screen.queryByText(LOADING)).not.toBeInTheDocument()
 }
 
 async function retry() {
-  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Retry' }))
 }
 
 function expectBannerGone(message: string) {
-  expect(screen.queryByText(message)).toBeNull()
-  expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+  expect(screen.queryByText(message)).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: 'Retry' }),
+  ).not.toBeInTheDocument()
 }
 
 // Persona redirects and the unknown-user handoff live on the app router.
@@ -330,11 +334,11 @@ describe('PatientsView states', () => {
     await renderWithRouter(PatientsView, { path: '/patients' })
 
     await expectLoading()
-    expect(screen.queryByText('Jordan Lee')).toBeNull()
+    expect(screen.queryByText('Jordan Lee')).not.toBeInTheDocument()
 
     pending.resolve(patientsPage)
-    expect(await screen.findByText('Jordan Lee')).toBeTruthy()
-    expect(screen.queryByText(LOADING)).toBeNull()
+    expect(await screen.findByText('Jordan Lee')).toBeInTheDocument()
+    expect(screen.queryByText(LOADING)).not.toBeInTheDocument()
   })
 
   it('shows the server message, and Retry loads the list', async () => {
@@ -346,7 +350,7 @@ describe('PatientsView states', () => {
     vi.mocked(api.searchPatients).mockResolvedValueOnce(patientsPage)
     await retry()
 
-    expect(await screen.findByText('Jordan Lee')).toBeTruthy()
+    expect(await screen.findByText('Jordan Lee')).toBeInTheDocument()
     expectBannerGone(message)
     expect(api.searchPatients).toHaveBeenCalledTimes(2)
   })
@@ -354,7 +358,7 @@ describe('PatientsView states', () => {
   it('shows the empty copy when no patients are returned', async () => {
     vi.mocked(api.searchPatients).mockResolvedValue(noPatients)
     await renderWithRouter(PatientsView, { path: '/patients' })
-    expect(await screen.findByText('No patients yet.')).toBeTruthy()
+    expect(await screen.findByText('No patients yet.')).toBeInTheDocument()
   })
 })
 
@@ -375,14 +379,16 @@ describe('PatientDetailView states', () => {
     await renderDetail()
 
     await expectLoading()
-    expect(screen.queryByRole('heading', { name: 'Jordan Lee' })).toBeNull()
+    expect(
+      screen.queryByRole('heading', { name: 'Jordan Lee' }),
+    ).not.toBeInTheDocument()
 
     patientPending.resolve(patient)
     ordersPending.resolve([providerSummary])
     expect(
       await screen.findByRole('heading', { name: 'Jordan Lee' }),
-    ).toBeTruthy()
-    expect(screen.queryByText(LOADING)).toBeNull()
+    ).toBeInTheDocument()
+    expect(screen.queryByText(LOADING)).not.toBeInTheDocument()
   })
 
   it('shows the server message, and Retry loads the patient', async () => {
@@ -397,7 +403,7 @@ describe('PatientDetailView states', () => {
 
     expect(
       await screen.findByRole('heading', { name: 'Jordan Lee' }),
-    ).toBeTruthy()
+    ).toBeInTheDocument()
     expectBannerGone(message)
     expect(api.getPatient).toHaveBeenCalledTimes(2)
     expect(api.listOrders).toHaveBeenCalledTimes(2)
@@ -408,8 +414,10 @@ describe('PatientDetailView states', () => {
     await renderDetail()
     expect(
       await screen.findByText('No orders for this patient yet.'),
-    ).toBeTruthy()
-    expect(screen.getByRole('heading', { name: 'Jordan Lee' })).toBeTruthy()
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: 'Jordan Lee' }),
+    ).toBeInTheDocument()
   })
 })
 
@@ -430,14 +438,16 @@ describe('OrderBuilderView states', () => {
     await renderDraft()
 
     await expectLoading()
-    expect(screen.queryByRole('heading', { name: /Draft order/ })).toBeNull()
+    expect(
+      screen.queryByRole('heading', { name: /Draft order/ }),
+    ).not.toBeInTheDocument()
 
     patientPending.resolve(patient)
     orderPending.resolve(emptyDraft)
     expect(
       await screen.findByRole('heading', { name: /Draft order #99/ }),
-    ).toBeTruthy()
-    expect(screen.queryByText(LOADING)).toBeNull()
+    ).toBeInTheDocument()
+    expect(screen.queryByText(LOADING)).not.toBeInTheDocument()
   })
 
   it('shows the server message, and Retry loads the draft', async () => {
@@ -450,7 +460,7 @@ describe('OrderBuilderView states', () => {
     vi.mocked(api.getOrder).mockResolvedValueOnce(draftWithLine)
     await retry()
 
-    expect(await screen.findByText('Vitamin D3')).toBeTruthy()
+    expect(await screen.findByText('Vitamin D3')).toBeInTheDocument()
     expectBannerGone(message)
     expect(api.getPatient).toHaveBeenCalledTimes(2)
     expect(api.getOrder).toHaveBeenCalledTimes(2)
@@ -461,7 +471,7 @@ describe('OrderBuilderView states', () => {
     await renderDraft()
     expect(
       await screen.findByText('No lines yet. Add a product to start.'),
-    ).toBeTruthy()
+    ).toBeInTheDocument()
   })
 })
 
@@ -480,13 +490,15 @@ describe('ProviderOrderView states', () => {
     await renderOrder()
 
     await expectLoading()
-    expect(screen.queryByRole('heading', { name: /Order #7/ })).toBeNull()
+    expect(
+      screen.queryByRole('heading', { name: /Order #7/ }),
+    ).not.toBeInTheDocument()
 
     pending.resolve(providerOrder)
     expect(
       await screen.findByRole('heading', { name: /Order #7/ }),
-    ).toBeTruthy()
-    expect(screen.queryByText(LOADING)).toBeNull()
+    ).toBeInTheDocument()
+    expect(screen.queryByText(LOADING)).not.toBeInTheDocument()
   })
 
   it('shows the server message, and Retry loads the order', async () => {
@@ -500,7 +512,7 @@ describe('ProviderOrderView states', () => {
 
     expect(
       await screen.findByRole('heading', { name: /Order #7/ }),
-    ).toBeTruthy()
+    ).toBeInTheDocument()
     expectBannerGone(message)
     expect(api.getOrder).toHaveBeenCalledTimes(2)
   })
@@ -522,16 +534,16 @@ describe('DashboardView states', () => {
     await vi.waitFor(() => {
       expect(screen.getAllByText(LOADING)).toHaveLength(2)
     })
-    expect(screen.queryByText('GMV')).toBeNull()
-    expect(screen.queryByText('Vitamin D3')).toBeNull()
+    expect(screen.queryByText('GMV')).not.toBeInTheDocument()
+    expect(screen.queryByText('Vitamin D3')).not.toBeInTheDocument()
 
     salesPending.resolve(dashboard)
-    expect(await screen.findByText('GMV')).toBeTruthy()
+    expect(await screen.findByText('GMV')).toBeInTheDocument()
     expect(screen.getAllByText(LOADING)).toHaveLength(1)
 
     inventoryPending.resolve(productsPage)
-    expect(await screen.findByText('Vitamin D3')).toBeTruthy()
-    expect(screen.queryByText(LOADING)).toBeNull()
+    expect(await screen.findByText('Vitamin D3')).toBeInTheDocument()
+    expect(screen.queryByText(LOADING)).not.toBeInTheDocument()
   })
 
   it('shows the sales server message, and Retry loads sales', async () => {
@@ -540,13 +552,13 @@ describe('DashboardView states', () => {
     vi.mocked(api.searchProducts).mockResolvedValue(productsPage)
     await renderDashboard()
     await expectServerError(message)
-    expect(await screen.findByText('Vitamin D3')).toBeTruthy()
+    expect(await screen.findByText('Vitamin D3')).toBeInTheDocument()
 
     vi.mocked(api.getDashboard).mockResolvedValueOnce(dashboard)
     await retry()
 
-    expect(await screen.findByText('GMV')).toBeTruthy()
-    expect(screen.getByText('Jordan Lee')).toBeTruthy()
+    expect(await screen.findByText('GMV')).toBeInTheDocument()
+    expect(screen.getByText('Jordan Lee')).toBeInTheDocument()
     expectBannerGone(message)
     expect(api.getDashboard).toHaveBeenCalledTimes(2)
   })
@@ -557,12 +569,12 @@ describe('DashboardView states', () => {
     vi.mocked(api.getDashboard).mockResolvedValue(dashboard)
     await renderDashboard()
     await expectServerError(message)
-    expect(await screen.findByText('GMV')).toBeTruthy()
+    expect(await screen.findByText('GMV')).toBeInTheDocument()
 
     vi.mocked(api.searchProducts).mockResolvedValueOnce(productsPage)
     await retry()
 
-    expect(await screen.findByText('Vitamin D3')).toBeTruthy()
+    expect(await screen.findByText('Vitamin D3')).toBeInTheDocument()
     expectBannerGone(message)
     expect(api.searchProducts).toHaveBeenCalledTimes(2)
   })
@@ -571,8 +583,8 @@ describe('DashboardView states', () => {
     vi.mocked(api.getDashboard).mockResolvedValue(emptyDashboard)
     vi.mocked(api.searchProducts).mockResolvedValue(noProducts)
     await renderDashboard()
-    expect(await screen.findByText('No paid orders yet.')).toBeTruthy()
-    expect(screen.getByText('No products.')).toBeTruthy()
+    expect(await screen.findByText('No paid orders yet.')).toBeInTheDocument()
+    expect(screen.getByText('No products.')).toBeInTheDocument()
   })
 })
 
@@ -584,11 +596,11 @@ describe('MyOrdersView states', () => {
     await renderWithRouter(MyOrdersView, { path: '/my-orders' })
 
     await expectLoading()
-    expect(screen.queryByText('Dr. Maya Rivera')).toBeNull()
+    expect(screen.queryByText('Dr. Maya Rivera')).not.toBeInTheDocument()
 
     pending.resolve([myOrder])
-    expect(await screen.findByText('Dr. Maya Rivera')).toBeTruthy()
-    expect(screen.queryByText(LOADING)).toBeNull()
+    expect(await screen.findByText('Dr. Maya Rivera')).toBeInTheDocument()
+    expect(screen.queryByText(LOADING)).not.toBeInTheDocument()
   })
 
   it('shows the server message, and Retry loads the orders', async () => {
@@ -600,7 +612,7 @@ describe('MyOrdersView states', () => {
     vi.mocked(api.listOrders).mockResolvedValueOnce([myOrder])
     await retry()
 
-    expect(await screen.findByText('Dr. Maya Rivera')).toBeTruthy()
+    expect(await screen.findByText('Dr. Maya Rivera')).toBeInTheDocument()
     expectBannerGone(message)
     expect(api.listOrders).toHaveBeenCalledTimes(2)
   })
@@ -608,7 +620,9 @@ describe('MyOrdersView states', () => {
   it('shows the empty copy when the patient has no orders', async () => {
     vi.mocked(api.listOrders).mockResolvedValue([])
     await renderWithRouter(MyOrdersView, { path: '/my-orders' })
-    expect(await screen.findByText('You have no orders yet.')).toBeTruthy()
+    expect(
+      await screen.findByText('You have no orders yet.'),
+    ).toBeInTheDocument()
   })
 })
 
@@ -627,13 +641,15 @@ describe('PatientOrderView states', () => {
     await renderPay()
 
     await expectLoading()
-    expect(screen.queryByRole('heading', { name: /Order #42/ })).toBeNull()
+    expect(
+      screen.queryByRole('heading', { name: /Order #42/ }),
+    ).not.toBeInTheDocument()
 
     pending.resolve(patientOrder)
     expect(
       await screen.findByRole('heading', { name: /Order #42/ }),
-    ).toBeTruthy()
-    expect(screen.queryByText(LOADING)).toBeNull()
+    ).toBeInTheDocument()
+    expect(screen.queryByText(LOADING)).not.toBeInTheDocument()
   })
 
   it('shows the server message, and Retry loads the order', async () => {
@@ -647,13 +663,17 @@ describe('PatientOrderView states', () => {
 
     expect(
       await screen.findByRole('heading', { name: /Order #42/ }),
-    ).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Pay $120.00' })).toBeTruthy()
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Pay $120.00' }),
+    ).toBeInTheDocument()
     expectBannerGone(message)
     expect(api.getOrder).toHaveBeenCalledTimes(2)
   })
 })
 
+// renderApp returns the router, not Testing Library's render result.
+/* eslint-disable testing-library/render-result-naming-convention */
 describe('persona and unknown user', () => {
   it('sends a patient away from a provider route with a notice', async () => {
     useCurrentUser().signIn(2)
@@ -666,7 +686,7 @@ describe('persona and unknown user', () => {
       await screen.findByText(
         'That page is for providers, so you were sent to your home page.',
       ),
-    ).toBeTruthy()
+    ).toBeInTheDocument()
   })
 
   it('sends a provider away from a patient route with a notice', async () => {
@@ -680,7 +700,7 @@ describe('persona and unknown user', () => {
       await screen.findByText(
         'That page is for patients, so you were sent to your home page.',
       ),
-    ).toBeTruthy()
+    ).toBeInTheDocument()
   })
 
   it('sends the user to /login when the API rejects an unknown user', async () => {
@@ -693,7 +713,10 @@ describe('persona and unknown user', () => {
     await vi.waitFor(() =>
       expect(router.currentRoute.value.path).toBe('/login'),
     )
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeTruthy()
-    expect(screen.queryByText(/Signed in as/)).toBeNull()
+    expect(
+      await screen.findByRole('heading', { name: 'Sign in' }),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Signed in as/)).not.toBeInTheDocument()
   })
 })
+/* eslint-enable testing-library/render-result-naming-convention */
