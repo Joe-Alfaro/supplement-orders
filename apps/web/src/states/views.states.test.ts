@@ -40,6 +40,7 @@ vi.mock('../api', async (importOriginal) => {
     searchProducts: vi.fn(),
     getOrder: vi.fn(),
     getDashboard: vi.fn(),
+    listAwaitingPayment: vi.fn(),
   }
 })
 
@@ -128,6 +129,7 @@ const providerSummary: ProviderOrderSummaryDto = {
   createdAt: '2026-10-05T12:00:00.000Z',
   sentAt: '2026-10-05T12:05:00.000Z',
   paidAt: '2026-10-05T12:10:00.000Z',
+  cancelledAt: null,
   split: paidSplit,
 }
 
@@ -204,6 +206,7 @@ const patientOrder: PatientOrderDetailDto = {
   createdAt: '2026-10-05T12:00:00.000Z',
   sentAt: '2026-10-05T12:05:00.000Z',
   paidAt: null,
+  cancelledAt: null,
   patientAddress: '214 Alder St, Portland, OR 97205',
   totalCents: 12000,
   lines: [
@@ -230,6 +233,7 @@ const myOrder: PatientOrderSummaryDto = {
   createdAt: '2026-10-05T12:00:00.000Z',
   sentAt: '2026-10-05T12:00:00.000Z',
   paidAt: null,
+  cancelledAt: null,
   totalCents: 12000,
 }
 
@@ -322,6 +326,9 @@ beforeEach(() => {
   vi.mocked(api.searchProducts).mockReset().mockResolvedValue(productsPage)
   vi.mocked(api.getOrder).mockReset().mockResolvedValue(providerOrder)
   vi.mocked(api.getDashboard).mockReset().mockResolvedValue(dashboard)
+  vi.mocked(api.listAwaitingPayment)
+    .mockReset()
+    .mockResolvedValue({ items: [], total: 0, offset: 0, limit: 25 })
   useCurrentUser().signOut()
   clearNoticeUnlessOn('__reset__')
 })

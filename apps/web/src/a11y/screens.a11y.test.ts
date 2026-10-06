@@ -43,6 +43,7 @@ vi.mock('../api', async (importOriginal) => {
     sendOrder: vi.fn(),
     payOrder: vi.fn(),
     getDashboard: vi.fn(),
+    listAwaitingPayment: vi.fn(),
   }
 })
 
@@ -105,6 +106,7 @@ const providerSummary: ProviderOrderSummaryDto = {
   createdAt: '2026-10-05T12:00:00.000Z',
   sentAt: '2026-10-05T12:05:00.000Z',
   paidAt: '2026-10-05T12:10:00.000Z',
+  cancelledAt: null,
   split: paidSplit,
 }
 
@@ -176,6 +178,7 @@ const pendingPatientOrder: PatientOrderDetailDto = {
   createdAt: '2026-10-05T12:00:00.000Z',
   sentAt: '2026-10-05T12:05:00.000Z',
   paidAt: null,
+  cancelledAt: null,
   patientAddress: '214 Alder St, Portland, OR 97205',
   totalCents: 12000,
   lines: [
@@ -215,6 +218,7 @@ const myOrders: PatientOrderSummaryDto[] = [
     createdAt: '2026-10-05T12:00:00.000Z',
     sentAt: '2026-10-05T12:00:00.000Z',
     paidAt: null,
+    cancelledAt: null,
     totalCents: 12000,
   },
 ]
@@ -270,6 +274,12 @@ beforeEach(async () => {
   vi.mocked(api.sendOrder).mockResolvedValue(paidProviderOrder)
   vi.mocked(api.payOrder).mockResolvedValue(paidPatientOrder)
   vi.mocked(api.getDashboard).mockResolvedValue(dashboard)
+  vi.mocked(api.listAwaitingPayment).mockResolvedValue({
+    items: [],
+    total: 0,
+    offset: 0,
+    limit: 25,
+  })
   useCurrentUser().signOut()
   await useCurrentUser().ensureUsersLoaded()
 })

@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import type { DashboardPaidOrderDto } from '@supplement-orders/domain'
+import type {
+  AwaitingPaymentOrderDto,
+  DashboardPaidOrderDto,
+} from '@supplement-orders/domain'
 import Column from 'primevue/column'
 import DataTable, {
   type DataTablePageEvent,
@@ -10,24 +13,39 @@ import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { getDashboard, searchProducts } from '../api'
+import { getDashboard, listAwaitingPayment, searchProducts } from '../api'
 import { ErrorBanner, MoneyText, PageSummary, StatTile } from '../components'
-import { formatDate } from '../format'
+import { daysWaiting, formatDate, formatDateOfBirth } from '../format'
 import { usePagedSearch } from '../search'
 import { useResource } from '../useResource'
 
 const router = useRouter()
+// Not searchable: the query's q is ignored, only offset and limit are sent.
+const awaiting = usePagedSearch(({ offset, limit }) =>
+  listAwaitingPayment({ offset, limit }),
+)
 const sales = useResource(getDashboard)
 // Read-only: stock only changes when orders are paid.
 const inventory = usePagedSearch(searchProducts)
 
 onMounted(() => {
+  awaiting.load()
   sales.load()
   inventory.load()
 })
 
 function openOrder(event: DataTableRowClickEvent<DashboardPaidOrderDto>) {
   router.push(`/orders/${event.data.orderId}`)
+}
+
+function openAwaitingOrder(
+  event: DataTableRowClickEvent<AwaitingPaymentOrderDto>,
+) {
+  router.push(`/orders/${event.data.id}`)
+}
+
+function onAwaitingPage(event: DataTablePageEvent) {
+  awaiting.goTo(event.first)
 }
 
 function onInventoryPage(event: DataTablePageEvent) {
@@ -37,6 +55,67 @@ function onInventoryPage(event: DataTablePageEvent) {
 
 <template>
   <h1>Dashboard</h1>
+
+  <section aria-labelledby="awaiting-heading">
+    <h2 id="awaiting-heading">Awaiting payment</h2>
+    <ErrorBanner
+      v-if="awaiting.error.value"
+      :message="awaiting.error.value"
+      retryable
+      @retry="awaiting.load"
+    />
+    <p v-else-if="awaiting.loading.value && !awaiting.page.value">Loading…</p>
+    <template v-else-if="awaiting.page.value">
+      <p v-if="awaiting.items.value.length === 0">Nothing awaiting payment.</p>
+      <DataTable
+        v-else
+        :value="awaiting.items.value"
+        data-key="id"
+        lazy
+        paginator
+        :rows="awaiting.limit"
+        :first="awaiting.offset.value"
+        :total-records="awaiting.total.value"
+        paginator-template="PrevPageLink NextPageLink"
+        :loading="awaiting.loading.value"
+        selection-mode="single"
+        :meta-key-selection="false"
+        :table-props="{ 'aria-label': 'Awaiting payment' }"
+        :pt="{
+          pcPaginator: {
+            paginatorContainer: { 'aria-label': 'Awaiting payment pages' },
+          },
+        }"
+        @page="onAwaitingPage"
+        @row-click="openAwaitingOrder"
+      >
+        <template #paginatorstart>
+          <PageSummary
+            :offset="awaiting.offset.value"
+            :count="awaiting.items.value.length"
+            :total="awaiting.total.value"
+          />
+        </template>
+        <Column header="Sent">
+          <template #body="{ data }">{{ formatDate(data.sentAt) }}</template>
+        </Column>
+        <Column header="Patient">
+          <template #body="{ data }"
+            >{{ data.patientName }} ·
+            {{ formatDateOfBirth(data.patientDateOfBirth) }}</template
+          >
+        </Column>
+        <Column header="Patient total">
+          <template #body="{ data }"
+            ><MoneyText :cents="data.totalCents"
+          /></template>
+        </Column>
+        <Column header="Days waiting">
+          <template #body="{ data }">{{ daysWaiting(data.sentAt) }}</template>
+        </Column>
+      </DataTable>
+    </template>
+  </section>
 
   <section aria-labelledby="sales-heading">
     <h2 id="sales-heading">Sales</h2>
@@ -142,6 +221,11 @@ function onInventoryPage(event: DataTablePageEvent) {
         paginator-template="PrevPageLink NextPageLink"
         :loading="inventory.loading.value"
         :table-props="{ 'aria-label': 'Inventory' }"
+        :pt="{
+          pcPaginator: {
+            paginatorContainer: { 'aria-label': 'Inventory pages' },
+          },
+        }"
         @page="onInventoryPage"
       >
         <template #paginatorstart>

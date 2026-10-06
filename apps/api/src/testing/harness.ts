@@ -104,6 +104,7 @@ export async function createInternalTestContext(
       gateway.failNextCharges = false
       gateway.charges.length = 0
       notifier.sent.length = 0
+      notifier.cancelled.length = 0
       delete payHooks.afterLedgerInsert
     },
     async close() {

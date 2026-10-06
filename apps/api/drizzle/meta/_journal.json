@@ -29,6 +29,13 @@
       "when": 1791232817996,
       "tag": "0003_rev3b_patient_date_of_birth",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791305847690,
+      "tag": "0004_rev6_cancel_order",
+      "breakpoints": true
     }
   ]
 }
