@@ -20,6 +20,14 @@ export const ORDER_STATUSES = [
 ] as const
 export type OrderStatus = (typeof ORDER_STATUSES)[number]
 
+/** Human labels for order statuses: the only wording the UI and API messages use. */
+export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
+  draft: 'Draft',
+  pending_payment: 'Awaiting payment',
+  paid: 'Paid',
+  cancelled: 'Cancelled',
+}
+
 export const LEDGER_ENTRY_TYPES = [
   'cogs',
   'provider_margin',
@@ -238,7 +246,7 @@ interface OrderSummaryBase {
   createdAt: string
   sentAt: string | null
   paidAt: string | null
-  /** Set when a provider cancelled the order (from draft or pending_payment). */
+  /** Set when a provider cancelled the order (from pending_payment; revision 6 also allowed drafts). */
   cancelledAt: string | null
 }
 

@@ -114,6 +114,31 @@ describe('revision 8: provider order list and patient latest-status filter', () 
     )
   })
 
+  it('takes a comma-separated set of statuses (revision 8b)', async () => {
+    const { draft, pending, cancelled, paid } = await fourStates()
+
+    const allButPaid = await list('status=draft,pending_payment,cancelled')
+    const withDuplicates = await list('status=paid,draft,paid')
+
+    // Several statuses list by latest activity, even with pending_payment in the set.
+    expect(ids(allButPaid.body)).toEqual([cancelled, pending, draft])
+    expect(allButPaid.body.total).toBe(3)
+    expect(ids(withDuplicates.body)).toEqual([paid, draft])
+    expect(withDuplicates.body.total).toBe(2)
+  })
+
+  it.each([
+    'status=',
+    'status=all,paid',
+    'status=draft,',
+    'status=draft,bogus',
+    'status=draft&status=paid',
+  ])('rejects %s with a 400 on status', async (query) => {
+    const res = await list(query)
+
+    expect([res.status, res.body.error.field]).toEqual([400, 'status'])
+  })
+
   it('lists awaiting payment oldest sent first, but drafts newest first', async () => {
     const olderPending = await createSentOrder(ctx)
     await pin(olderPending, { sentAt: '2026-10-01T09:00:00Z' })

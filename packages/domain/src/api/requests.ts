@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { ORDER_STATUSES } from './responses'
+import { ORDER_STATUSES, type OrderStatus } from './responses'
 
 /** Every request except GET /api/users and GET /api/health carries this header. */
 export const USER_ID_HEADER = 'X-User-Id'
@@ -99,29 +99,60 @@ export const listPatientsQuerySchema: z.ZodType<
   latestStatus: z.enum(LATEST_ORDER_STATUS_FILTERS).optional(),
 })
 
-/** Provider order-list filter: one status, or `all`. */
-export const ORDER_LIST_STATUS_FILTERS = [...ORDER_STATUSES, 'all'] as const
-export type OrderListStatusFilter = (typeof ORDER_LIST_STATUS_FILTERS)[number]
+/** One value of the provider order-list filter (kept for revision 8 callers). */
+export type OrderListStatusFilter = OrderStatus | 'all'
+
+/** A parsed status filter: a de-duplicated set of statuses, or `all`. */
+export type OrderStatusSelection = OrderStatus[] | 'all'
+
+/**
+ * `status` as a comma-separated list (revision 8b): one or more of draft,
+ * pending_payment, paid, cancelled, or exactly `all`. Duplicates are ignored and
+ * the order of first appearance is kept. An empty string, an unknown value, an
+ * empty item ("draft,") or `all` mixed with statuses is a 400 on `status`.
+ */
+const statusSelectionParam = z
+  .string()
+  .transform((raw, ctx): OrderStatusSelection => {
+    if (raw === 'all') return 'all'
+    const parts = raw.split(',')
+    const invalid = parts.find(
+      (part) => !(ORDER_STATUSES as readonly string[]).includes(part),
+    )
+    if (invalid !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          invalid === ''
+            ? 'Status must list one or more of draft, pending_payment, paid, cancelled, or be all'
+            : `Unknown status "${invalid}"`,
+      })
+      return z.NEVER
+    }
+    return [...new Set(parts as OrderStatus[])]
+  })
 
 /**
  * GET /api/orders.
  * - Without `status`: unchanged. A provider gets ProviderOrderSummaryDto[] (optionally
  *   one patient's); a patient gets their sent orders as PatientOrderSummaryDto[].
  * - With `status` (provider only; a patient gets 403): Page<ProviderOrderListItemDto>,
- *   honouring `offset`/`limit` and the optional `patientId`. `pending_payment` lists the
- *   oldest sentAt first; every other filter, `all` included, lists the most recent
- *   activity first (latest of paidAt, cancelledAt, sentAt, createdAt), then id desc.
+ *   honouring `offset`/`limit` and the optional `patientId`. Exactly
+ *   `pending_payment` lists the oldest sentAt first; any other selection, `all`
+ *   included, lists the most recent activity first (latest of paidAt, cancelledAt,
+ *   sentAt, createdAt), then id desc.
  */
 export interface ListOrdersQuery {
   patientId?: number
-  status?: OrderListStatusFilter
+  /** `all`, one status, or several (sent comma-separated). */
+  status?: 'all' | OrderStatus | readonly OrderStatus[]
   offset?: number
   limit?: number
 }
 
 export interface ParsedListOrdersQuery {
   patientId?: number
-  status?: OrderListStatusFilter
+  status?: OrderStatusSelection
   offset: number
   limit: number
 }
@@ -131,7 +162,7 @@ export const listOrdersQuerySchema: z.ZodType<
   ListQueryParams & { patientId?: unknown; status?: unknown }
 > = z.object({
   patientId: idParamSchema.optional(),
-  status: z.enum(ORDER_LIST_STATUS_FILTERS).optional(),
+  status: statusSelectionParam.optional(),
   offset: intParam(0, Number.MAX_SAFE_INTEGER, 0),
   limit: intParam(1, PAGE_LIMIT_MAX, PAGE_LIMIT_DEFAULT),
 })
