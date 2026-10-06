@@ -679,7 +679,7 @@ describe('OrderBuilderView patient and stock', () => {
     await fill(user, 'Qty', '3')
     await fill(user, 'Patient price (each)', '20')
 
-    // 75 bps of the $60.00 line, half up: 45 cents. A labelled <output>, not a control.
+    // 75 bps of the $60.00 line is exactly 45 cents, so rounding up changes nothing. A labelled <output>, not a control.
     const fee = screen.getByRole('status', { name: 'Processing fee (0.75%)' })
     expect(fee).toHaveTextContent('$0.45')
     expect(
