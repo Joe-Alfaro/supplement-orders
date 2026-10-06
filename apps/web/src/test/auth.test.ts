@@ -3,7 +3,9 @@ import { fireEvent, render, screen } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory } from 'vue-router'
 import * as api from '../api'
+import PrimeVue from 'primevue/config'
 import App from '../App.vue'
+import { primeVueOptions } from '../primevue'
 import { createAppRouter } from '../router'
 import { useCurrentUser } from '../user'
 
@@ -38,7 +40,7 @@ async function renderApp(path: string) {
   const router = createAppRouter(createMemoryHistory())
   await router.push(path)
   await router.isReady()
-  render(App, { global: { plugins: [router] } })
+  render(App, { global: { plugins: [router, [PrimeVue, primeVueOptions]] } })
   return router
 }
 

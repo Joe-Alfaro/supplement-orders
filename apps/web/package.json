@@ -12,6 +12,9 @@
   },
   "dependencies": {
     "@supplement-orders/domain": "^0.0.0",
+    "@primeuix/themes": "^2.0.3",
+    "primeicons": "^8.0.2",
+    "primevue": "^4.5.5",
     "vue": "^3.5.43",
     "vue-router": "^5.3.1"
   },

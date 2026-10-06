@@ -1,6 +1,8 @@
 import { render } from '@testing-library/vue'
+import PrimeVue from 'primevue/config'
 import type { Component } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { primeVueOptions } from '../primevue'
 
 const Stub = { template: '<div />' }
 
@@ -17,7 +19,7 @@ export async function renderWithRouter(
   await router.isReady()
   const result = render(component, {
     props: options.props,
-    global: { plugins: [router] },
+    global: { plugins: [router, [PrimeVue, primeVueOptions]] },
   })
   return { ...result, router }
 }
