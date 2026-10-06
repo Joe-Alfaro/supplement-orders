@@ -40,7 +40,6 @@ vi.mock('../api', async (importOriginal) => {
     searchProducts: vi.fn(),
     getOrder: vi.fn(),
     getDashboard: vi.fn(),
-    listAwaitingPayment: vi.fn(),
   }
 })
 
@@ -326,9 +325,6 @@ beforeEach(() => {
   vi.mocked(api.searchProducts).mockReset().mockResolvedValue(productsPage)
   vi.mocked(api.getOrder).mockReset().mockResolvedValue(providerOrder)
   vi.mocked(api.getDashboard).mockReset().mockResolvedValue(dashboard)
-  vi.mocked(api.listAwaitingPayment)
-    .mockReset()
-    .mockResolvedValue({ items: [], total: 0, offset: 0, limit: 25 })
   useCurrentUser().signOut()
   clearNoticeUnlessOn('__reset__')
 })

@@ -4,6 +4,8 @@ import { handleApiError } from '../api'
 
 export interface PagedSearchOptions {
   initialQuery?: string
+  /** First row to load, e.g. restored from `?page=` in the URL. */
+  initialOffset?: number
   limit?: number
   debounceMs?: number
   /**
@@ -33,7 +35,7 @@ export function usePagedSearch<T>(
   const query = ref(options.initialQuery ?? '')
   /** The query behind the current results. */
   const activeQuery = ref(query.value.trim())
-  const offset = ref(0)
+  const offset = ref(Math.max(0, options.initialOffset ?? 0))
   const page = shallowRef<Page<T> | null>(null)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -119,7 +121,7 @@ export function usePagedSearch<T>(
 
   /**
    * Load exactly this query and offset, e.g. from the URL. The search box text
-   * follows the query unless the user is mid-typing.
+   * follows the query unless the user is mid-typing. (Orders, Patients.)
    */
   function apply(state: { q?: string; offset: number }) {
     if (state.q !== undefined) {
@@ -127,6 +129,18 @@ export function usePagedSearch<T>(
       if (timer === undefined) query.value = state.q
     }
     offset.value = Math.max(0, state.offset)
+    return load()
+  }
+
+  /**
+   * Show exactly this search and page, e.g. when Back/Forward changes the URL.
+   * Cancels pending typing so the box and the results agree. (Dashboard.)
+   */
+  function show(value: string, first: number) {
+    cancelPending()
+    query.value = value
+    activeQuery.value = value.trim()
+    offset.value = Math.max(0, first)
     return load()
   }
 
@@ -160,5 +174,6 @@ export function usePagedSearch<T>(
     goTo,
     restart,
     apply,
+    show,
   }
 }

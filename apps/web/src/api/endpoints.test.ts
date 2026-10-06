@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { request } from './client'
-import { cancelOrder, listAwaitingPayment, searchPatients } from './endpoints'
+import {
+  cancelOrder,
+  deleteOrder,
+  reopenOrder,
+  searchPatients,
+} from './endpoints'
 
 vi.mock('./client', () => ({ request: vi.fn() }))
 
@@ -24,22 +29,6 @@ describe('list endpoints', () => {
       '/patients?q=lee+%26+co&offset=25&limit=25',
     )
   })
-
-  it('asks for one page of pending orders by status', async () => {
-    vi.mocked(request).mockResolvedValue({
-      items: [],
-      total: 0,
-      offset: 50,
-      limit: 25,
-    })
-
-    await listAwaitingPayment({ offset: 50, limit: 25 })
-
-    expect(request).toHaveBeenCalledWith(
-      'GET',
-      '/orders?status=pending_payment&offset=50&limit=25',
-    )
-  })
 })
 
 describe('cancelOrder', () => {
@@ -47,5 +36,21 @@ describe('cancelOrder', () => {
     await cancelOrder(12)
 
     expect(request).toHaveBeenCalledWith('POST', '/orders/12/cancel')
+  })
+})
+
+describe('deleteOrder', () => {
+  it('sends DELETE to the order', async () => {
+    await deleteOrder(12)
+
+    expect(request).toHaveBeenCalledWith('DELETE', '/orders/12')
+  })
+})
+
+describe('reopenOrder', () => {
+  it('posts to the order reopen endpoint', async () => {
+    await reopenOrder(12)
+
+    expect(request).toHaveBeenCalledWith('POST', '/orders/12/reopen')
   })
 })

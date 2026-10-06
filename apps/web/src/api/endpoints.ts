@@ -1,5 +1,4 @@
 import type {
-  AwaitingPaymentPageDto,
   CreateOrderRequest,
   DashboardDto,
   ListOrdersQuery,
@@ -78,18 +77,6 @@ export function listOrders(query: ListOrdersQuery = {}) {
   return request<OrderSummaryDto[]>('GET', `/orders${search}`)
 }
 
-/** The provider's pending_payment orders, one page, oldest sent first. */
-export function listAwaitingPayment(
-  query: Pick<ListOrdersQuery, 'offset' | 'limit'> = {},
-) {
-  const search = listQueryString(query)
-  const params = search ? `&${search.slice(1)}` : ''
-  return request<AwaitingPaymentPageDto>(
-    'GET',
-    `/orders?status=pending_payment${params}`,
-  )
-}
-
 export function createOrder(patientId: number) {
   const body: CreateOrderRequest = { patientId }
   return request<ProviderOrderDetailDto>('POST', '/orders', body)
@@ -111,6 +98,16 @@ export function sendOrder(orderId: number) {
 /** Draft or pending_payment only; 409 ORDER_NOT_CANCELLABLE otherwise. */
 export function cancelOrder(orderId: number) {
   return request<ProviderOrderDetailDto>('POST', `/orders/${orderId}/cancel`)
+}
+
+/** Draft only, permanently (revision 8); 409 for any other status. */
+export function deleteOrder(orderId: number) {
+  return request<void>('DELETE', `/orders/${orderId}`)
+}
+
+/** Cancelled only: back to draft with its lines kept (revision 8); 409 otherwise. */
+export function reopenOrder(orderId: number) {
+  return request<ProviderOrderDetailDto>('POST', `/orders/${orderId}/reopen`)
 }
 
 export function getOrder(orderId: number) {

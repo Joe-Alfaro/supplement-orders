@@ -1,121 +1,92 @@
 <script setup lang="ts">
-import type {
-  AwaitingPaymentOrderDto,
-  DashboardPaidOrderDto,
-} from '@supplement-orders/domain'
 import Column from 'primevue/column'
-import DataTable, {
-  type DataTablePageEvent,
-  type DataTableRowClickEvent,
-} from 'primevue/datatable'
+import DataTable, { type DataTablePageEvent } from 'primevue/datatable'
 import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
-import { onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { getDashboard, listAwaitingPayment, searchProducts } from '../api'
+import { onMounted, watch } from 'vue'
+import { useRoute, useRouter, type LocationQuery } from 'vue-router'
+import { getDashboard, searchProducts } from '../api'
 import { ErrorBanner, MoneyText, PageSummary, StatTile } from '../components'
-import { daysWaiting, formatDate, formatDateOfBirth } from '../format'
-import { usePagedSearch } from '../search'
+import { PAGE_SIZE, usePagedSearch } from '../search'
 import { useResource } from '../useResource'
 
+const route = useRoute()
 const router = useRouter()
-// Not searchable: the query's q is ignored, only offset and limit are sent.
-const awaiting = usePagedSearch(({ offset, limit }) =>
-  listAwaitingPayment({ offset, limit }),
-)
+// Leaving for another route also changes the query; only react on this page.
+const dashboardPath = route.path
+
+interface InventoryUrlState {
+  q: string
+  offset: number
+}
+
+/** `?q=` and 1-based `?page=`; anything missing or malformed is the default. */
+function inventoryFromUrl(query: LocationQuery): InventoryUrlState {
+  const q = typeof query.q === 'string' ? query.q : ''
+  const page = typeof query.page === 'string' ? Number(query.page) : 1
+  const valid = Number.isSafeInteger(page) && page >= 1
+  return { q, offset: valid ? (page - 1) * PAGE_SIZE : 0 }
+}
+
+/** The URL query for a state, omitting defaults (empty search, page 1). */
+function inventoryToUrl({ q, offset }: InventoryUrlState) {
+  const page = Math.floor(offset / PAGE_SIZE) + 1
+  return {
+    ...(q ? { q } : {}),
+    ...(page > 1 ? { page: String(page) } : {}),
+  }
+}
+
 const sales = useResource(getDashboard)
 // Read-only: stock only changes when orders are paid.
-const inventory = usePagedSearch(searchProducts)
+const initial = inventoryFromUrl(route.query)
+const inventory = usePagedSearch(searchProducts, {
+  initialQuery: initial.q,
+  initialOffset: initial.offset,
+})
+
+function inventoryState(): InventoryUrlState {
+  return { q: inventory.activeQuery.value, offset: inventory.offset.value }
+}
+
+function urlMatches(state: InventoryUrlState) {
+  const current = inventoryFromUrl(route.query)
+  return current.q === state.q && current.offset === state.offset
+}
 
 onMounted(() => {
-  awaiting.load()
   sales.load()
   inventory.load()
 })
 
-function openOrder(event: DataTableRowClickEvent<DashboardPaidOrderDto>) {
-  router.push(`/orders/${event.data.orderId}`)
-}
+// Typing (debounced) replaces the URL, so Back doesn't step through keystrokes.
+watch(inventory.activeQuery, () => {
+  const state = inventoryState()
+  if (!urlMatches(state)) router.replace({ query: inventoryToUrl(state) })
+})
 
-function openAwaitingOrder(
-  event: DataTableRowClickEvent<AwaitingPaymentOrderDto>,
-) {
-  router.push(`/orders/${event.data.id}`)
-}
+// Back/Forward (or a link) changed the URL: show what it says.
+watch(
+  () => route.query,
+  (query) => {
+    if (route.path !== dashboardPath) return
+    const { q, offset } = inventoryFromUrl(query)
+    const state = inventoryState()
+    if (q === state.q && offset === state.offset) return
+    inventory.show(q, offset)
+  },
+)
 
-function onAwaitingPage(event: DataTablePageEvent) {
-  awaiting.goTo(event.first)
-}
-
+// Page changes push, so Back returns to the previous page.
 function onInventoryPage(event: DataTablePageEvent) {
   inventory.goTo(event.first)
+  router.push({ query: inventoryToUrl(inventoryState()) })
 }
 </script>
 
 <template>
   <h1>Dashboard</h1>
-
-  <section aria-labelledby="awaiting-heading">
-    <h2 id="awaiting-heading">Awaiting payment</h2>
-    <ErrorBanner
-      v-if="awaiting.error.value"
-      :message="awaiting.error.value"
-      retryable
-      @retry="awaiting.load"
-    />
-    <p v-else-if="awaiting.loading.value && !awaiting.page.value">Loading…</p>
-    <template v-else-if="awaiting.page.value">
-      <p v-if="awaiting.items.value.length === 0">Nothing awaiting payment.</p>
-      <DataTable
-        v-else
-        :value="awaiting.items.value"
-        data-key="id"
-        lazy
-        paginator
-        :rows="awaiting.limit"
-        :first="awaiting.offset.value"
-        :total-records="awaiting.total.value"
-        paginator-template="PrevPageLink NextPageLink"
-        :loading="awaiting.loading.value"
-        selection-mode="single"
-        :meta-key-selection="false"
-        :table-props="{ 'aria-label': 'Awaiting payment' }"
-        :pt="{
-          pcPaginator: {
-            paginatorContainer: { 'aria-label': 'Awaiting payment pages' },
-          },
-        }"
-        @page="onAwaitingPage"
-        @row-click="openAwaitingOrder"
-      >
-        <template #paginatorstart>
-          <PageSummary
-            :offset="awaiting.offset.value"
-            :count="awaiting.items.value.length"
-            :total="awaiting.total.value"
-          />
-        </template>
-        <Column header="Sent">
-          <template #body="{ data }">{{ formatDate(data.sentAt) }}</template>
-        </Column>
-        <Column header="Patient">
-          <template #body="{ data }"
-            >{{ data.patientName }} ·
-            {{ formatDateOfBirth(data.patientDateOfBirth) }}</template
-          >
-        </Column>
-        <Column header="Patient total">
-          <template #body="{ data }"
-            ><MoneyText :cents="data.totalCents"
-          /></template>
-        </Column>
-        <Column header="Days waiting">
-          <template #body="{ data }">{{ daysWaiting(data.sentAt) }}</template>
-        </Column>
-      </DataTable>
-    </template>
-  </section>
 
   <section aria-labelledby="sales-heading">
     <h2 id="sales-heading">Sales</h2>
@@ -138,50 +109,17 @@ function onInventoryPage(event: DataTablePageEvent) {
           :cents="sales.data.value.platformFeeCents"
         />
       </div>
-      <p v-if="sales.data.value.paidOrders.length === 0">No paid orders yet.</p>
-      <DataTable
-        v-else
-        :value="sales.data.value.paidOrders"
-        data-key="orderId"
-        selection-mode="single"
-        :meta-key-selection="false"
-        :table-props="{ 'aria-label': 'Paid orders' }"
-        @row-click="openOrder"
-      >
-        <Column header="Paid">
-          <template #body="{ data }">{{ formatDate(data.paidAt) }}</template>
-        </Column>
-        <Column field="patientName" header="Patient" />
-        <Column header="Patient total">
-          <template #body="{ data }"
-            ><MoneyText :cents="data.totalCents"
-          /></template>
-        </Column>
-        <Column header="Wholesale cost">
-          <template #body="{ data }"
-            ><MoneyText :cents="data.cogsCents"
-          /></template>
-        </Column>
-        <Column header="Processing fee">
-          <template #body="{ data }"
-            ><MoneyText :cents="data.platformFeeCents"
-          /></template>
-        </Column>
-        <Column header="Your margin">
-          <template #body="{ data }"
-            ><MoneyText :cents="data.providerMarginCents"
-          /></template>
-        </Column>
-      </DataTable>
     </template>
+    <p class="section-links">
+      <RouterLink to="/orders?status=paid">See paid orders →</RouterLink>
+      <RouterLink to="/orders?status=pending_payment"
+        >See orders awaiting payment →</RouterLink
+      >
+    </p>
   </section>
 
   <section aria-labelledby="inventory-heading">
     <h2 id="inventory-heading">Inventory</h2>
-    <p class="muted">
-      Stock decreases automatically when orders are paid. It is not edited by
-      hand.
-    </p>
     <div class="search">
       <label for="inventory-search">Search products</label>
       <IconField>

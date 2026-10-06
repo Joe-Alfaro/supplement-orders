@@ -18,7 +18,7 @@ export class ApiRequestError extends Error {
   }
 }
 
-type Method = 'GET' | 'POST' | 'PUT' | 'PATCH'
+type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 async function toError(response: Response) {
   const body: unknown = await response.json().catch(() => null)
@@ -53,6 +53,8 @@ export async function request<T>(
     throw new ApiRequestError(0, 'NETWORK', 'Could not reach the server')
   })
   if (!response.ok) throw await toError(response)
+  // e.g. DELETE: there is no body to parse; callers type T as void.
+  if (response.status === 204) return undefined as T
   return (await response.json()) as T
 }
 

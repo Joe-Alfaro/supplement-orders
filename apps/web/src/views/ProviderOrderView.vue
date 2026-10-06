@@ -1,10 +1,18 @@
 <script setup lang="ts">
-import type { ProviderOrderDetailDto } from '@supplement-orders/domain'
+import type { OrderStatus, ProviderOrderDetailDto } from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import ConfirmDialog from 'primevue/confirmdialog'
 import { useConfirm } from 'primevue/useconfirm'
 import { computed, nextTick, onMounted, ref, useTemplateRef } from 'vue'
-import { ApiRequestError, cancelOrder, getOrder, handleApiError } from '../api'
+import { useRouter } from 'vue-router'
+import {
+  ApiRequestError,
+  cancelOrder,
+  deleteOrder,
+  getOrder,
+  handleApiError,
+  reopenOrder,
+} from '../api'
 import {
   ErrorBanner,
   LedgerTable,
@@ -13,6 +21,7 @@ import {
   StatusBadge,
 } from '../components'
 import { formatDateOfBirth, formatDateTime } from '../format'
+import { showNotice } from '../user'
 import { useResource } from '../useResource'
 
 interface Props {
@@ -35,48 +44,101 @@ const {
 })
 onMounted(load)
 
+const router = useRouter()
 const confirm = useConfirm()
-const cancelling = ref(false)
+const acting = ref(false)
 // Outlives the re-fetch, so a lost race (409) stays explained after reload.
 const actionError = ref<string | null>(null)
 const heading = useTemplateRef<HTMLHeadingElement>('heading')
 
-// Paid orders can't be cancelled; refunds are out of scope.
-const cancellable = computed(
-  () =>
-    order.value?.status === 'draft' ||
-    order.value?.status === 'pending_payment',
+interface OrderAction {
+  label: string
+  prompt: (order: ProviderOrderDetailDto) => string
+  keepLabel: string
+  destructive: boolean
+  run: (order: ProviderOrderDetailDto) => Promise<void>
+}
+
+// One action per status (FRONTEND_DESIGN §4.5). Paid orders have none:
+// refunds are out of scope.
+const ACTIONS: Partial<Record<OrderStatus, OrderAction>> = {
+  draft: {
+    label: 'Delete draft',
+    prompt: (o) =>
+      `Delete draft order #${o.id} for ${o.patientName}? This can't be undone.`,
+    keepLabel: 'Keep draft',
+    destructive: true,
+    run: async (o) => {
+      await deleteOrder(o.id)
+      const patientPath = `/patients/${o.patientId}`
+      showNotice('Draft deleted', patientPath)
+      await router.push(patientPath)
+    },
+  },
+  pending_payment: {
+    label: 'Cancel order',
+    prompt: (o) =>
+      `Cancel order #${o.id} for ${o.patientName}? The patient will no longer be able to pay it.`,
+    keepLabel: 'Keep order',
+    destructive: true,
+    run: async (o) => {
+      order.value = await cancelOrder(o.id)
+      // The Cancel button is gone; keep keyboard focus on the page.
+      await nextTick()
+      heading.value?.focus()
+    },
+  },
+  cancelled: {
+    label: 'Reopen as draft',
+    prompt: (o) =>
+      `Reopen order #${o.id} as a draft? You can edit it and send it again.`,
+    keepLabel: 'Keep cancelled',
+    destructive: false,
+    run: async (o) => {
+      await reopenOrder(o.id)
+      await router.push(`/patients/${o.patientId}/orders/new?orderId=${o.id}`)
+    },
+  },
+}
+
+const action = computed(() =>
+  order.value ? ACTIONS[order.value.status] : undefined,
 )
 
-function confirmCancel() {
+function confirmAction() {
   const current = order.value
-  if (!current) return
+  const chosen = action.value
+  if (!current || !chosen) return
   confirm.require({
-    header: 'Cancel order',
-    message: `Cancel order #${current.id} for ${current.patientName}? The patient will no longer be able to pay it.`,
-    defaultFocus: 'reject',
-    rejectProps: { label: 'Keep order', severity: 'secondary' },
-    acceptProps: { label: 'Cancel order', severity: 'danger' },
-    accept: () => cancel(current.id),
+    header: chosen.label,
+    message: chosen.prompt(current),
+    // Destructive actions start on the safe choice.
+    defaultFocus: chosen.destructive ? 'reject' : 'accept',
+    rejectProps: { label: chosen.keepLabel, severity: 'secondary' },
+    acceptProps: {
+      label: chosen.label,
+      severity: chosen.destructive ? 'danger' : undefined,
+    },
+    accept: () => perform(chosen, current),
   })
 }
 
-async function cancel(orderId: number) {
-  if (cancelling.value) return
-  cancelling.value = true
+async function perform(chosen: OrderAction, current: ProviderOrderDetailDto) {
+  if (acting.value) return
+  acting.value = true
   actionError.value = null
   try {
-    order.value = await cancelOrder(orderId)
+    await chosen.run(current)
   } catch (err) {
-    // Usually the patient paid first: show why, then show what is true now.
+    // Usually the order changed elsewhere (e.g. the patient paid first):
+    // show why, then show what is true now.
     actionError.value = handleApiError(err)
     await load()
+    await nextTick()
+    heading.value?.focus()
   } finally {
-    cancelling.value = false
+    acting.value = false
   }
-  // The Cancel button is gone; keep keyboard focus on the page.
-  await nextTick()
-  heading.value?.focus()
 }
 </script>
 
@@ -129,14 +191,14 @@ async function cancel(orderId: number) {
     <p v-if="order.status === 'pending_payment'" class="banner" role="status">
       Waiting for patient payment.
     </p>
-    <p v-if="cancellable">
+    <p v-if="action">
       <Button
-        label="Cancel order"
-        severity="danger"
+        :label="action.label"
+        :severity="action.destructive ? 'danger' : 'secondary'"
         outlined
-        :loading="cancelling"
-        :disabled="cancelling"
-        @click="confirmCancel"
+        :loading="acting"
+        :disabled="acting"
+        @click="confirmAction"
       />
     </p>
 
