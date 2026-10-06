@@ -94,7 +94,7 @@ const PROVIDER_LINE_KEYS = [
   'unitPriceCents',
   'lineTotalCents',
   'unitCogsCents',
-  'marginBps',
+  'markupBps',
   'minUnitPriceCents',
   'stockQuantity',
 ]

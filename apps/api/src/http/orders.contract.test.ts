@@ -62,7 +62,7 @@ const PROVIDER_LINE_KEYS = [
   'unitPriceCents',
   'lineTotalCents',
   'unitCogsCents',
-  'marginBps',
+  'markupBps',
   'minUnitPriceCents',
   'stockQuantity',
 ]
@@ -210,15 +210,33 @@ function minUnitPriceCents(unitCogsCents: number): number {
   return search(unitCogsCents, unitCogsCents * 2)
 }
 
-function marginBpsFromPrice(
+// Revision 5: net markup on wholesale, (9925 * p - 10000 * c) / c.
+// Half up is toward +infinity. A zero cost has no markup, so the result is null.
+function markupBpsFromPrice(
   unitCogsCents: number,
   unitPriceCents: number,
-): number {
-  if (unitPriceCents === 0) {
-    return 0
+): number | null {
+  if (unitCogsCents === 0) {
+    return null
   }
-  const numerator = (unitPriceCents - unitCogsCents) * 10_000
-  return Math.floor((numerator * 2 + unitPriceCents) / (unitPriceCents * 2))
+  const numerator =
+    9925n * BigInt(unitPriceCents) - 10000n * BigInt(unitCogsCents)
+  const denominator = BigInt(unitCogsCents)
+  const doubled = numerator * 2n + denominator
+  const twice = denominator * 2n
+  const quotient = doubled / twice
+  const rounded =
+    doubled < 0n && quotient * twice !== doubled ? quotient - 1n : quotient
+  return Number(rounded)
+}
+
+function markupBpsOf(
+  line: ProviderOrderDetailDto['lines'][number] | undefined,
+): unknown {
+  if (line === undefined) {
+    return undefined
+  }
+  return Reflect.get(line, 'markupBps')
 }
 
 function expectedSplit(line: ExampleLine): ExpectedSplit {
@@ -406,8 +424,8 @@ describe('order draft and send', () => {
     expect(savedLine?.minUnitPriceCents).toBe(
       minUnitPriceCents(line.unitCogsCents),
     )
-    expect(savedLine?.marginBps).toBe(
-      marginBpsFromPrice(line.unitCogsCents, 12_000),
+    expect(markupBpsOf(savedLine)).toBe(
+      markupBpsFromPrice(line.unitCogsCents, 12_000),
     )
     expect(savedLine?.unitPriceCents).toBeGreaterThanOrEqual(
       savedLine?.minUnitPriceCents ?? 0,
@@ -471,10 +489,11 @@ describe('order draft and send', () => {
     expect(saved.lines[1]?.minUnitPriceCents).toBe(
       minUnitPriceCents(belowCost.cogsCents),
     )
-    expect(saved.lines[1]?.marginBps).toBe(
-      marginBpsFromPrice(belowCost.cogsCents, lowPrice),
+    expect(markupBpsOf(saved.lines[1])).toBe(
+      markupBpsFromPrice(belowCost.cogsCents, lowPrice),
     )
-    expect(saved.lines[1]?.marginBps ?? 0).toBeLessThan(0)
+    const belowMarkup = markupBpsOf(saved.lines[1])
+    expect(typeof belowMarkup === 'number' ? belowMarkup : 0).toBeLessThan(0)
 
     const sent = await sendOrder(draft.id)
     expectError(sent, 422, 'PRICE_BELOW_MINIMUM', 'lines.1.unitPriceCents')
@@ -532,7 +551,7 @@ describe('order draft and send', () => {
       unitPriceCents: null,
       lineTotalCents: null,
       unitCogsCents: missingPrice.unitCogsCents,
-      marginBps: null,
+      markupBps: null,
       minUnitPriceCents: minUnitPriceCents(missingPrice.unitCogsCents),
     })
     expect(saved.lines[1]).toMatchObject({
@@ -542,7 +561,7 @@ describe('order draft and send', () => {
       unitPriceCents: null,
       lineTotalCents: null,
       unitCogsCents: null,
-      marginBps: null,
+      markupBps: null,
       minUnitPriceCents: null,
     })
     expect(saved.lines[2]).toMatchObject({
@@ -550,7 +569,7 @@ describe('order draft and send', () => {
       unitPriceCents: 12_000,
       lineTotalCents: 24_000,
       unitCogsCents: complete.cogsCents,
-      marginBps: marginBpsFromPrice(complete.cogsCents, 12_000),
+      markupBps: markupBpsFromPrice(complete.cogsCents, 12_000),
       minUnitPriceCents: minUnitPriceCents(complete.cogsCents),
     })
 
