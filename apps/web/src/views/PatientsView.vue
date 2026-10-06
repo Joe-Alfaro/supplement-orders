@@ -27,6 +27,7 @@ import {
   pageForOffset,
   pageFromQuery,
   queryString,
+  useListUrl,
   usePagedSearch,
 } from '../search'
 
@@ -51,7 +52,8 @@ function statusFromUrl(value: unknown): StatusChoice {
 // The URL is the source of truth (§4.6b): ?q=, ?status= and ?page= are read
 // here. Typing writes q with router.replace (debounced); the filter, Clear and
 // paging use router.push so Back/Forward step through them.
-const listPath = route.path
+const listUrl = useListUrl()
+const listPath = listUrl.listPath
 
 /** Latest-order-status filter, applied on the server together with search. */
 const status = computed(() => statusFromUrl(route.query.status))
@@ -81,11 +83,13 @@ const search = usePagedSearch(
     initialQuery: urlQuery.value,
     // A settled search replaces the URL entry and goes back to page 1.
     onCommit: (q) =>
-      router.replace({ query: patientsQuery({ q, status: status.value }) }),
+      listUrl.replaceQuery(patientsQuery({ q, status: status.value })),
   },
 )
 const { query, activeQuery, items, page, loading, error, offset, total } =
   search
+// A pending debounced search must not write the URL after the user leaves.
+listUrl.onLeave(search.cancel)
 
 // Load whenever the list's URL state changes, including on Back/Forward.
 watch(
@@ -117,17 +121,17 @@ const emptyMessage = computed(() => {
 })
 
 function selectStatus(value: StatusChoice) {
-  router.push({ query: patientsQuery({ q: activeQuery.value, status: value }) })
+  listUrl.pushQuery(patientsQuery({ q: activeQuery.value, status: value }))
 }
 
 function clearSearch() {
   query.value = ''
-  router.push({ query: patientsQuery({ q: '', status: status.value }) })
+  listUrl.pushQuery(patientsQuery({ q: '', status: status.value }))
 }
 
 function clearFilters() {
   query.value = ''
-  router.push({ query: {} })
+  listUrl.pushQuery({})
 }
 
 function openPatient(event: DataTableRowClickEvent<PatientDto>) {
@@ -135,13 +139,13 @@ function openPatient(event: DataTableRowClickEvent<PatientDto>) {
 }
 
 function onPage(event: DataTablePageEvent) {
-  router.push({
-    query: patientsQuery({
+  listUrl.pushQuery(
+    patientsQuery({
       q: activeQuery.value,
       status: status.value,
       page: pageForOffset(event.first, search.limit),
     }),
-  })
+  )
 }
 </script>
 

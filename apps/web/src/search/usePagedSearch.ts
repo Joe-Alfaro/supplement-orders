@@ -168,6 +168,8 @@ export function usePagedSearch<T>(
     canNext,
     load,
     setQuery,
+    /** Drop a pending debounced search, e.g. when leaving the view. */
+    cancel: cancelPending,
     clear,
     next,
     previous,

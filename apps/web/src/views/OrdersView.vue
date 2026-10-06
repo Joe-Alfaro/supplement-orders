@@ -22,6 +22,7 @@ import {
   offsetForPage,
   pageForOffset,
   pageFromQuery,
+  useListUrl,
   usePagedSearch,
 } from '../search'
 
@@ -86,7 +87,8 @@ const multiSelectPt = {
 // The URL is the source of truth (§4.6b): ?status= and ?page= are read here,
 // and the controls write them back with router.push so Back/Forward step
 // through every filter and page change.
-const listPath = route.path
+const listUrl = useListUrl()
+const listPath = listUrl.listPath
 
 /** The selected statuses; empty means all statuses. */
 const selected = computed(() => selectionFromUrl(route.query.status))
@@ -114,6 +116,7 @@ const orders = usePagedSearch((listQuery) =>
   }),
 )
 const { items, page, loading, error, offset, total } = orders
+listUrl.onLeave(orders.cancel)
 
 const single = computed(() =>
   selected.value.length === 1 ? selected.value[0] : undefined,
@@ -141,9 +144,7 @@ watch(
 
 /** A new selection starts again from page 1. */
 function selectStatuses(statuses: OrderStatus[] | null | undefined) {
-  router.push({
-    query: listQuery({ status: statusParam(statuses ?? []) }),
-  })
+  listUrl.pushQuery(listQuery({ status: statusParam(statuses ?? []) }))
 }
 
 /** The date that matters for the order's own status. */
@@ -159,12 +160,12 @@ function openOrder(event: DataTableRowClickEvent<ProviderOrderListItemDto>) {
 }
 
 function onPage(event: DataTablePageEvent) {
-  router.push({
-    query: listQuery({
+  listUrl.pushQuery(
+    listQuery({
       status: statusParam(selected.value),
       page: pageForOffset(event.first, orders.limit),
     }),
-  })
+  )
 }
 </script>
 
