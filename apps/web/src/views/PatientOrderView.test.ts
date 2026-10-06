@@ -14,6 +14,7 @@ vi.mock('../api', async (importOriginal) => {
 const pending: PatientOrderDetailDto = {
   id: 42,
   view: 'patient',
+  revision: 1,
   status: 'pending_payment',
   patientId: 7,
   patientName: 'Jordan Lee',
@@ -90,7 +91,11 @@ describe('PatientOrderView', () => {
     await user.click(button)
 
     expect(api.payOrder).toHaveBeenCalledTimes(1)
-    expect(api.payOrder).toHaveBeenCalledWith(42, {})
+    // It pays exactly the quote on screen (revision 9).
+    expect(api.payOrder).toHaveBeenCalledWith(42, {
+      expectedRevision: 1,
+      expectedTotalCents: 12000,
+    })
     expect(button).toBeDisabled()
 
     payment.resolve(paid)
@@ -118,7 +123,11 @@ describe('PatientOrderView', () => {
     await user.click(button)
 
     expect(await screen.findByText(/Card declined/)).toBeInTheDocument()
-    expect(api.payOrder).toHaveBeenCalledWith(42, { simulateFailure: true })
+    expect(api.payOrder).toHaveBeenCalledWith(42, {
+      expectedRevision: 1,
+      expectedTotalCents: 12000,
+      simulateFailure: true,
+    })
     expect(screen.getByRole('button', { name: 'Pay $120.00' })).toBeEnabled()
     expect(
       screen.queryByRole('heading', { name: 'Receipt' }),
@@ -169,4 +178,67 @@ describe('PatientOrderView', () => {
       expect(document.body).not.toHaveTextContent(/Processing fee/i)
     },
   )
+
+  it('when the order changed, explains it, shows the new total, and waits for a fresh click', async () => {
+    const user = userEvent.setup()
+    const changed: PatientOrderDetailDto = {
+      ...pending,
+      revision: 2,
+      totalCents: 15000,
+      lines: [
+        {
+          productId: 1,
+          productName: 'Vitamin D3',
+          sku: 'VITD',
+          quantity: 3,
+          unitPriceCents: 5000,
+          lineTotalCents: 15000,
+        },
+      ],
+    }
+    vi.mocked(api.payOrder).mockRejectedValueOnce(
+      new api.ApiRequestError(
+        409,
+        'ORDER_CHANGED',
+        'This order changed since you opened it. Review the new total before paying.',
+      ),
+    )
+    vi.mocked(api.getOrder)
+      .mockResolvedValueOnce(pending)
+      .mockResolvedValueOnce(changed)
+    const button = await openPayScreen()
+
+    await user.click(button)
+
+    expect(
+      await screen.findByText(/This order changed since you opened it/),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/The total was \$120\.00 and is now/),
+    ).toHaveTextContent('The total was $120.00 and is now $150.00.')
+    const fresh = await screen.findByRole('button', { name: 'Pay $150.00' })
+    // Nothing is retried on the patient's behalf, and no receipt appears.
+    expect(api.payOrder).toHaveBeenCalledTimes(1)
+    expect(
+      screen.queryByRole('heading', { name: 'Receipt' }),
+    ).not.toBeInTheDocument()
+
+    vi.mocked(api.payOrder).mockResolvedValueOnce({
+      ...paid,
+      revision: 2,
+      totalCents: 15000,
+    })
+    await user.click(fresh)
+
+    expect(api.payOrder).toHaveBeenLastCalledWith(42, {
+      expectedRevision: 2,
+      expectedTotalCents: 15000,
+    })
+    expect(
+      await screen.findByRole('heading', { name: 'Receipt' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/This order changed since you opened it/),
+    ).not.toBeInTheDocument()
+  })
 })

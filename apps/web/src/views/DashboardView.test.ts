@@ -15,18 +15,6 @@ const dashboard: DashboardDto = {
   gmvCents: 6951,
   providerMarginCents: 3499,
   platformFeeCents: 52,
-  paidOrders: [
-    {
-      orderId: 7,
-      patientId: 1,
-      patientName: 'Jordan Lee',
-      paidAt: '2026-10-05T12:00:00.000Z',
-      totalCents: 6951,
-      cogsCents: 3400,
-      providerMarginCents: 3499,
-      platformFeeCents: 52,
-    },
-  ],
 }
 
 function product(id: number, name: string): ProductDto {

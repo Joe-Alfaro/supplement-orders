@@ -1,3 +1,4 @@
+import { MAX_LINE_QUANTITY, MAX_UNIT_PRICE_CENTS } from '@supplement-orders/domain'
 import {
   computePlatformFee,
   formatBps,
@@ -60,6 +61,13 @@ export function parsePrice(input: string): {
   if (input.trim() === '') return { cents: null }
   const parsed = parseDollarsToCents(input)
   if (!parsed.ok) return { cents: null, error: parsed.error }
+  // Revision 9 draft bound: the server rejects anything above $10,000 per unit.
+  if (parsed.cents > MAX_UNIT_PRICE_CENTS) {
+    return {
+      cents: null,
+      error: `Price can be at most ${formatCents(MAX_UNIT_PRICE_CENTS)}`,
+    }
+  }
   return { cents: parsed.cents }
 }
 
@@ -69,6 +77,10 @@ function parseQuantity(input: string, stock: number | null) {
     return { error: 'Enter a whole number of 1 or more' }
   }
   const quantity = Number(trimmed)
+  // Revision 9 draft bound, checked before stock so huge values read clearly.
+  if (quantity > MAX_LINE_QUANTITY) {
+    return { error: `Enter a quantity of at most ${MAX_LINE_QUANTITY}` }
+  }
   if (stock !== null && quantity > stock) {
     return { error: `Only ${stock} in stock` }
   }
@@ -92,7 +104,12 @@ export function priceInputFromMarkup(cogsCents: number, markupInput: string) {
   if (cogsCents === 0) return null
   const markup = parsePercentToBps(markupInput)
   if (!markup.ok) return null
-  return centsToInput(priceFromMarkupBps(cogsCents, markup.bps))
+  try {
+    return centsToInput(priceFromMarkupBps(cogsCents, markup.bps))
+  } catch {
+    // A markup so large the price isn't a safe integer: leave the price as is.
+    return null
+  }
 }
 
 export function normalizedPriceInput(input: string) {
