@@ -21,6 +21,7 @@ const paid: ProviderOrderDetailDto = {
   createdAt: '2026-10-05T12:00:00.000Z',
   sentAt: '2026-10-05T12:05:00.000Z',
   paidAt: '2026-10-05T12:10:00.000Z',
+  cancelledAt: null,
   split: {
     subtotalCents: 12000,
     platformFeeCents: 90,

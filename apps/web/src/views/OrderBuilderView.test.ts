@@ -89,6 +89,7 @@ function draftDetail(
     createdAt: '2026-10-05T12:00:00.000Z',
     sentAt: null,
     paidAt: null,
+    cancelledAt: null,
     split: null,
     patientDateOfBirth: '1984-03-14',
     patientAddress: '214 Alder St',

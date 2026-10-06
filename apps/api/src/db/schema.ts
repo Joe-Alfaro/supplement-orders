@@ -118,11 +118,29 @@ export const orders = pgTable(
       .defaultNow(),
     sentAt: timestamp('sent_at', { withTimezone: true }),
     paidAt: timestamp('paid_at', { withTimezone: true }),
+    // Revision 6: a provider may cancel a draft or pending order. No ledger or stock effect.
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
   },
   (t) => [
     check(
       'orders_totals_present_once_sent',
-      sql`${t.status} = 'draft' or (${t.subtotalCents} is not null and ${t.platformFeeCents} is not null and ${t.totalCents} is not null)`,
+      sql`${t.sentAt} is null or (${t.subtotalCents} is not null and ${t.platformFeeCents} is not null and ${t.totalCents} is not null)`,
+    ),
+    // Only drafts and drafts cancelled before sending lack sentAt.
+    check(
+      'orders_sent_unless_draft_or_cancelled',
+      sql`${t.status} in ('draft', 'cancelled') or ${t.sentAt} is not null`,
+    ),
+    check(
+      'orders_cancelled_at_iff_cancelled',
+      sql`(${t.status} = 'cancelled') = (${t.cancelledAt} is not null)`,
+    ),
+    // Dashboard "Awaiting payment": one provider's pending orders, oldest first.
+    index('orders_provider_status_sent_idx').on(
+      t.providerId,
+      t.status,
+      t.sentAt,
+      t.id,
     ),
     // Revision 2: the fee comes out of the provider's markup; the patient pays the subtotal.
     check(

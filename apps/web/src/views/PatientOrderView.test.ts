@@ -22,6 +22,7 @@ const pending: PatientOrderDetailDto = {
   createdAt: '2026-10-05T12:00:00.000Z',
   sentAt: '2026-10-05T12:05:00.000Z',
   paidAt: null,
+  cancelledAt: null,
   patientAddress: '214 Alder St, Portland, OR 97205',
   totalCents: 12000,
   lines: [

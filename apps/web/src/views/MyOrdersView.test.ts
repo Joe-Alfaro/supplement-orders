@@ -24,6 +24,7 @@ function order(id: number, providerName: string): PatientOrderSummaryDto {
     createdAt: '2026-10-05T12:00:00.000Z',
     sentAt: '2026-10-05T12:00:00.000Z',
     paidAt: null,
+    cancelledAt: null,
     totalCents: 1000,
   }
 }
