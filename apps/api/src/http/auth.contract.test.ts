@@ -44,6 +44,7 @@ const PROVIDER_SUMMARY_KEYS = [
   'createdAt',
   'sentAt',
   'paidAt',
+  'cancelledAt',
   'view',
   'split',
 ]
@@ -58,6 +59,7 @@ const PATIENT_SUMMARY_KEYS = [
   'createdAt',
   'sentAt',
   'paidAt',
+  'cancelledAt',
   'view',
   'totalCents',
 ]
