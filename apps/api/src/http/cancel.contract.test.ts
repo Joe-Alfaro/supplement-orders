@@ -30,18 +30,20 @@ import type {
 import { createTestContext } from '../testing/harness'
 import type { TestContext } from '../testing/harness'
 
-// POST /api/orders/:id/cancel returns the provider detail. A provider may
-// cancel a draft or a pending_payment order: status becomes cancelled and
-// cancelledAt is set. Cancelling again, or cancelling a paid order, is 409
-// ORDER_NOT_CANCELLABLE. Cancel writes no ledger rows and does not change stock.
-// The patient cannot cancel (403). Another provider cannot cancel someone
-// else's order (403), the same rule as reading it. A missing or unknown
-// X-User-Id is 401.
+// POST /api/orders/:id/cancel returns the provider detail for a
+// pending_payment order: status becomes cancelled and cancelledAt is set.
+// A draft, a paid order, or a second cancel is 409 ORDER_NOT_CANCELLABLE.
+// Drafts are deleted, not cancelled. Cancel writes no ledger rows and does
+// not change stock. The patient cannot cancel (403). Another provider cannot
+// cancel someone else's order (403), the same rule as reading it. A missing
+// or unknown X-User-Id is 401.
 // Paying a cancelled order is 409 ORDER_NOT_PAYABLE and persists nothing.
 // A patient's list includes a cancelled order that was sent, and still hides
-// drafts, including one cancelled before it was sent.
-// GET /api/orders?status=pending_payment is provider-only. It returns
-// Page<AwaitingPaymentOrderDto>, oldest sentAt first, then id.
+// drafts.
+// GET /api/orders?status= is provider-only. draft, pending_payment, paid,
+// cancelled, and all each return Page<ProviderOrderListItemDto>.
+// pending_payment is oldest sentAt first, then id. A value outside that set,
+// or a bad offset or limit, is 400 naming the field.
 // Cancelled orders do not move dashboard GMV, margin, or fees.
 
 const ISO_TIMESTAMP =
@@ -329,7 +331,7 @@ function expectPatientSummaries(body: unknown): PatientOrderSummaryDto[] {
   return summaries
 }
 
-function expectAwaitingPage(body: unknown): AwaitingPaymentPageDto {
+function expectStatusPage(body: unknown): AwaitingPaymentPageDto {
   expectExactKeys(body, PAGE_KEYS)
   const record = asRecord(body)
   if (!Array.isArray(record.items)) {
@@ -340,13 +342,31 @@ function expectAwaitingPage(body: unknown): AwaitingPaymentPageDto {
   })
   const page = awaitingPaymentPageDtoSchema.parse(body)
   page.items.forEach((item) => {
+    expectIsoTimestamp(item.createdAt)
+    expectOptionalTimestamp(item.sentAt)
+    expectOptionalTimestamp(item.paidAt)
+    expectOptionalTimestamp(item.cancelledAt)
+  })
+  return page
+}
+
+function expectAwaitingPage(body: unknown): AwaitingPaymentPageDto {
+  const page = expectStatusPage(body)
+  page.items.forEach((item) => {
     expect(item.status).toBe('pending_payment')
     expect(item.paidAt).toBeNull()
     expect(item.cancelledAt).toBeNull()
-    expectIsoTimestamp(item.createdAt)
     expectIsoTimestamp(requireSentAt(item))
   })
   return page
+}
+
+function onlyListItem(page: AwaitingPaymentPageDto): AwaitingPaymentOrderDto {
+  const item = page.items[0]
+  if (item === undefined || page.items.length !== 1) {
+    throw new Error('expected one order list row')
+  }
+  return item
 }
 
 function expectPatientPage(body: unknown): PatientPageDto {
@@ -752,7 +772,7 @@ afterAll(async () => {
 })
 
 describe('POST /api/orders/:id/cancel', () => {
-  it('cancels a draft and refuses a second cancel', async () => {
+  it('refuses to cancel a draft and leaves it a draft', async () => {
     const draft = await createDraft()
     expect(draft.status).toBe('draft')
     expect(draft.cancelledAt).toBeNull()
@@ -762,24 +782,14 @@ describe('POST /api/orders/:id/cancel', () => {
     expect(draft.lines).toEqual([])
 
     const response = await cancel(draft.id)
-    expect(response.status).toBe(200)
-    const cancelled = expectProviderDetail(response.body)
-    const cancelledAt = expectCancelled(cancelled, draft)
-    expect(cancelled.split).toBeNull()
-
-    const again = await cancel(draft.id)
     expectError(
-      { status: again.status, body: again.body },
+      { status: response.status, body: response.body },
       409,
       'ORDER_NOT_CANCELLABLE',
     )
 
     const current = await getProviderOrder(draft.id)
-    expect(current.status).toBe('cancelled')
-    expect(current.cancelledAt).toBe(cancelledAt)
-    expect(current.ledger).toEqual([])
-    expect(current.payment).toBeNull()
-    expect(current.split).toBeNull()
+    expect(current).toEqual(draft)
   })
 
   it('cancels a pending payment order without a ledger row or a stock change', async () => {
@@ -935,9 +945,8 @@ describe('POST /api/orders/:id/pay', () => {
 describe('GET /api/orders', () => {
   it('includes a cancelled sent order and still hides drafts', async () => {
     const openDraft = await createDraft()
-    const cancelledDraft = await cancelOrder((await createDraft()).id)
-    expect(cancelledDraft.status).toBe('cancelled')
-    expect(cancelledDraft.sentAt).toBeNull()
+    expect(openDraft.status).toBe('draft')
+    expect(openDraft.sentAt).toBeNull()
 
     const pending = await placePayableOrder()
     const cancelled = await cancelOrder((await placePayableOrder()).detail.id)
@@ -952,7 +961,6 @@ describe('GET /api/orders', () => {
     const ids = summaries.map((order) => order.id)
     expect(summaries.every((order) => order.status !== 'draft')).toBe(true)
     expect(ids).not.toContain(openDraft.id)
-    expect(ids).not.toContain(cancelledDraft.id)
 
     const pendingRow = summaries.find((order) => order.id === pending.detail.id)
     expect(pendingRow?.status).toBe('pending_payment')
@@ -976,7 +984,7 @@ describe('GET /api/orders', () => {
     })
 
     const hidden = await context()
-      .request.get(`/api/orders/${cancelledDraft.id}`)
+      .request.get(`/api/orders/${openDraft.id}`)
       .set(USER_ID_HEADER, String(context().seed.patientUserId))
     expectError({ status: hidden.status, body: hidden.body }, 404, 'NOT_FOUND')
 
@@ -1104,6 +1112,98 @@ describe('GET /api/orders?status=pending_payment', () => {
     const response = await getOrders(query, context().seed.providerUserId)
     expectError(response, 400, 'VALIDATION_ERROR', field)
   })
+
+  it('accepts draft, paid, cancelled, and all', async () => {
+    const draft = await createDraft()
+    const pending = await placePayableOrder()
+    const paidPlaced = await placePayableOrder()
+    const paidResponse = await pay(paidPlaced.detail.id)
+    expect(paidResponse.status).toBe(200)
+    const paid = await getProviderOrder(paidPlaced.detail.id)
+    const cancelled = await cancelOrder((await placePayableOrder()).detail.id)
+    const paidSplit = requireSplit(paid)
+    const cancelledSplit = requireSplit(cancelled)
+    if (
+      paid.paidAt === null ||
+      paid.sentAt === null ||
+      cancelled.sentAt === null
+    ) {
+      throw new Error('sent orders are missing their timestamps')
+    }
+
+    async function statusPage(status: string): Promise<AwaitingPaymentPageDto> {
+      const response = await getOrders(
+        { status, limit: '100' },
+        context().seed.providerUserId,
+      )
+      expect(response.status).toBe(200)
+      const page = expectStatusPage(response.body)
+      expect(page.offset).toBe(0)
+      expect(page.limit).toBe(100)
+      return page
+    }
+
+    const drafts = await statusPage('draft')
+    expect(drafts.total).toBe(1)
+    expect(onlyListItem(drafts)).toEqual({
+      id: draft.id,
+      patientId: draft.patientId,
+      patientName: draft.patientName,
+      patientDateOfBirth: draft.patientDateOfBirth,
+      status: 'draft',
+      totalCents: null,
+      createdAt: draft.createdAt,
+      sentAt: null,
+      paidAt: null,
+      cancelledAt: null,
+    })
+
+    const paidPage = await statusPage('paid')
+    expect(paidPage.total).toBe(1)
+    expect(onlyListItem(paidPage)).toEqual({
+      id: paid.id,
+      patientId: paid.patientId,
+      patientName: paid.patientName,
+      patientDateOfBirth: paid.patientDateOfBirth,
+      status: 'paid',
+      totalCents: paidSplit.totalCents,
+      createdAt: paid.createdAt,
+      sentAt: paid.sentAt,
+      paidAt: paid.paidAt,
+      cancelledAt: null,
+    })
+
+    const cancelledPage = await statusPage('cancelled')
+    expect(cancelledPage.total).toBe(1)
+    expect(onlyListItem(cancelledPage)).toEqual({
+      id: cancelled.id,
+      patientId: cancelled.patientId,
+      patientName: cancelled.patientName,
+      patientDateOfBirth: cancelled.patientDateOfBirth,
+      status: 'cancelled',
+      totalCents: cancelledSplit.totalCents,
+      createdAt: cancelled.createdAt,
+      sentAt: cancelled.sentAt,
+      paidAt: null,
+      cancelledAt: cancelled.cancelledAt,
+    })
+
+    const all = await statusPage('all')
+    expect(all.total).toBe(4)
+    expect(
+      all.items.map((item) => item.id).sort((left, right) => left - right),
+    ).toEqual(
+      [draft.id, pending.detail.id, paid.id, cancelled.id].sort(
+        (left, right) => left - right,
+      ),
+    )
+    expect(all.items.map((item) => item.status).sort()).toEqual([
+      'cancelled',
+      'draft',
+      'paid',
+      'pending_payment',
+    ])
+  })
 })
 
 describe('GET /api/dashboard', () => {
@@ -1136,9 +1236,9 @@ describe('GET /api/dashboard', () => {
       },
     ])
 
-    const draft = await cancelOrder((await createDraft()).id)
+    const draft = await createDraft()
     const cancelled = await cancelOrder((await placePayableOrder()).detail.id)
-    expect(draft.status).toBe('cancelled')
+    expect(draft.status).toBe('draft')
     expect(cancelled.status).toBe('cancelled')
 
     const after = await getDashboard()
