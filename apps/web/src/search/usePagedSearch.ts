@@ -6,6 +6,12 @@ export interface PagedSearchOptions {
   initialQuery?: string
   limit?: number
   debounceMs?: number
+  /**
+   * When set, a settled (debounced) search box value is handed here instead of
+   * searching directly, e.g. to write it to the URL; the caller then applies
+   * it with `apply`. Lets the URL be the single source of truth.
+   */
+  onCommit?: (q: string) => void
 }
 
 export const PAGE_SIZE = 25
@@ -71,6 +77,10 @@ export function usePagedSearch<T>(
     cancelPending()
     timer = setTimeout(() => {
       timer = undefined
+      if (options.onCommit) {
+        options.onCommit(value.trim())
+        return
+      }
       search(value)
     }, debounceMs)
   }
@@ -107,6 +117,19 @@ export function usePagedSearch<T>(
     return load()
   }
 
+  /**
+   * Load exactly this query and offset, e.g. from the URL. The search box text
+   * follows the query unless the user is mid-typing.
+   */
+  function apply(state: { q?: string; offset: number }) {
+    if (state.q !== undefined) {
+      activeQuery.value = state.q.trim()
+      if (timer === undefined) query.value = state.q
+    }
+    offset.value = Math.max(0, state.offset)
+    return load()
+  }
+
   /** Jump to a page by its first row, e.g. from DataTable's `@page`. */
   function goTo(first: number) {
     const target = Math.max(0, first)
@@ -136,5 +159,6 @@ export function usePagedSearch<T>(
     previous,
     goTo,
     restart,
+    apply,
   }
 }

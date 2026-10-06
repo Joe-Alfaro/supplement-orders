@@ -259,4 +259,96 @@ describe('PatientsView', () => {
     ).toHaveTextContent('Any')
     await vi.waitFor(() => expect(router.currentRoute.value.query).toEqual({}))
   })
+
+  it('restores q, status and page together from a deep link', async () => {
+    await renderWithRouter(PatientsView, {
+      path: '/patients?q=lee&status=paid&page=3',
+    })
+
+    expect(
+      await screen.findByRole('searchbox', {
+        name: 'Search by name or date of birth',
+      }),
+    ).toHaveValue('lee')
+    expect(
+      screen.getByRole('combobox', { name: 'Latest order status' }),
+    ).toHaveTextContent('Paid')
+    expect(api.searchPatients).toHaveBeenCalledWith({
+      q: 'lee',
+      offset: 50,
+      limit: 25,
+      latestStatus: 'paid',
+    })
+    expect(await screen.findByText('Showing 51–75 of 312')).toBeInTheDocument()
+  })
+
+  it('typing replaces the history entry; the filter and paging push new ones', async () => {
+    const user = userEvent.setup()
+    const { router } = await renderWithRouter(PatientsView, {
+      path: '/patients?page=2',
+    })
+    await screen.findByText('Showing 26–50 of 312')
+    await user.type(
+      screen.getByRole('searchbox', {
+        name: 'Search by name or date of birth',
+      }),
+      'lee',
+    )
+    // The settled search replaces the entry and drops ?page.
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.query).toEqual({ q: 'lee' }),
+    )
+    expect(api.searchPatients).toHaveBeenLastCalledWith({
+      q: 'lee',
+      offset: 0,
+      limit: 25,
+    })
+
+    await user.click(
+      screen.getByRole('combobox', { name: 'Latest order status' }),
+    )
+    await user.click(await screen.findByRole('option', { name: 'Paid' }))
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.query).toEqual({
+        q: 'lee',
+        status: 'paid',
+      }),
+    )
+    await user.click(screen.getByRole('button', { name: 'Next Page' }))
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.query).toEqual({
+        q: 'lee',
+        status: 'paid',
+        page: '2',
+      }),
+    )
+
+    // Back steps through page, then filter, then the replaced search entry.
+    router.back()
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.query).toEqual({
+        q: 'lee',
+        status: 'paid',
+      }),
+    )
+    expect(api.searchPatients).toHaveBeenLastCalledWith({
+      q: 'lee',
+      offset: 0,
+      limit: 25,
+      latestStatus: 'paid',
+    })
+    router.back()
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.query).toEqual({ q: 'lee' }),
+    )
+    expect(
+      screen.getByRole('combobox', { name: 'Latest order status' }),
+    ).toHaveTextContent('Any')
+    // The search replaced the original ?page=2 entry (the router's first
+    // navigation replaced the blank start), so there is nothing further back:
+    // Back stays on the search instead of returning to page 2.
+    router.back()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(router.currentRoute.value.fullPath).toBe('/patients?q=lee')
+  })
 })

@@ -75,6 +75,10 @@ function lastStatuses() {
   return vi.mocked(api.listProviderOrders).mock.lastCall?.[0].statuses
 }
 
+function lastOffset() {
+  return vi.mocked(api.listProviderOrders).mock.lastCall?.[0].offset
+}
+
 /** Opens the Status list from its focused combobox, as a keyboard user would. */
 async function openStatusList(user: UserEvent) {
   screen.getByRole('combobox', { name: 'Status' }).focus()
@@ -86,6 +90,15 @@ function option(name: string) {
   return screen.getByRole('option', { name })
 }
 
+function selectedOptions() {
+  return screen
+    .getAllByRole('option')
+    .filter((node) => node.getAttribute('aria-selected') === 'true')
+    .map((node) => node.getAttribute('aria-label'))
+}
+
+const ALL = ['Draft', 'Awaiting payment', 'Paid', 'Cancelled']
+
 beforeEach(() => {
   vi.mocked(api.listProviderOrders)
     .mockReset()
@@ -93,51 +106,37 @@ beforeEach(() => {
 })
 
 describe('OrdersView', () => {
-  it('defaults to Awaiting payment only and lists the order with patient and DOB', async () => {
+  it('defaults to every status checked, newest activity, with no status in the URL', async () => {
     const user = userEvent.setup()
-    await renderWithRouter(OrdersView, { path: '/orders' })
+    const { router } = await renderWithRouter(OrdersView, { path: '/orders' })
 
     const table = await screen.findByRole('table', { name: 'Orders' })
+    // Every status is no filter: the API gets status=all (an empty list).
     expect(api.listProviderOrders).toHaveBeenCalledWith({
-      statuses: ['pending_payment'],
+      statuses: [],
       offset: 0,
       limit: 25,
     })
+    expect(router.currentRoute.value.query).toEqual({})
+    expect(within(table).getAllByRole('row')).toHaveLength(5)
     expect(
-      within(table).getByRole('columnheader', { name: 'Sent' }),
+      within(table).getByRole('columnheader', { name: 'Date' }),
     ).toBeInTheDocument()
     const row = within(table).getByRole('row', { name: /#12/ })
     expect(row).toHaveTextContent('Jordan Lee · 03/14/1984')
-    expect(row).toHaveTextContent('Awaiting payment')
     expect(row).toHaveTextContent('$62.51')
-    expect(screen.getByText('Showing 1–1 of 27')).toBeInTheDocument()
 
     await openStatusList(user)
-    expect(option('Awaiting payment')).toHaveAttribute('aria-selected', 'true')
-    ;['Draft', 'Paid', 'Cancelled'].forEach((name) =>
-      expect(option(name)).toHaveAttribute('aria-selected', 'false'),
-    )
+    expect(selectedOptions()).toEqual(ALL)
+    expect(screen.getByRole('checkbox', { name: 'Select all' })).toBeChecked()
   })
 
-  it('select all, then uncheck Paid, shows every order except paid', async () => {
+  it('unchecking Paid shows every order except paid; rechecking it clears the URL again', async () => {
     const user = userEvent.setup()
     const { router } = await renderWithRouter(OrdersView, { path: '/orders' })
     await screen.findByRole('table', { name: 'Orders' })
     await openStatusList(user)
-
-    const selectAll = screen.getByRole('checkbox', {
-      name: 'Select all',
-    })
-    await user.click(selectAll)
-    await vi.waitFor(() =>
-      expect(lastStatuses()).toEqual([
-        'draft',
-        'pending_payment',
-        'paid',
-        'cancelled',
-      ]),
-    )
-    expect(selectAll).toBeChecked()
+    const selectAll = screen.getByRole('checkbox', { name: 'Select all' })
 
     await user.click(option('Paid'))
     await vi.waitFor(() =>
@@ -145,65 +144,150 @@ describe('OrdersView', () => {
     )
     // Unchecking one status clears the select-all box.
     expect(selectAll).not.toBeChecked()
-    await vi.waitFor(() =>
-      expect(router.currentRoute.value.query).toEqual({
-        status: 'draft,pending_payment,cancelled',
-      }),
-    )
+    expect(router.currentRoute.value.query).toEqual({
+      status: 'draft,pending_payment,cancelled',
+    })
     const table = screen.getByRole('table', { name: 'Orders' })
     await vi.waitFor(() =>
-      expect(within(table).queryByRole('row', { name: /#14/ })).toBeNull(),
+      expect(
+        within(table).queryByRole('row', { name: /#14/ }),
+      ).not.toBeInTheDocument(),
     )
     ;[/#12/, /#13/, /#15/].forEach((name) =>
       expect(within(table).getByRole('row', { name })).toBeInTheDocument(),
     )
-    expect(
-      within(table).getByRole('columnheader', { name: 'Date' }),
-    ).toBeInTheDocument()
+
+    await user.click(option('Paid'))
+    await vi.waitFor(() => expect(lastStatuses()).toEqual([]))
+    expect(selectAll).toBeChecked()
+    expect(router.currentRoute.value.query).toEqual({})
   })
 
-  it('an empty selection means all statuses, with the "All statuses" placeholder', async () => {
+  it('an empty selection also means all statuses, with the "All statuses" placeholder', async () => {
     const user = userEvent.setup()
     const { router } = await renderWithRouter(OrdersView, { path: '/orders' })
     await screen.findByRole('table', { name: 'Orders' })
     await openStatusList(user)
 
-    await user.click(option('Awaiting payment'))
+    await user.click(screen.getByRole('checkbox', { name: 'Select all' }))
 
-    await vi.waitFor(() => expect(lastStatuses()).toEqual([]))
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.query).toEqual({ status: 'all' }),
+    )
+    expect(lastStatuses()).toEqual([])
+    expect(selectedOptions()).toEqual([])
     expect(screen.getByRole('combobox', { name: 'Status' })).toHaveAttribute(
       'placeholder',
       'All statuses',
     )
     expect(screen.getByText('All statuses')).toBeInTheDocument()
-    await vi.waitFor(() =>
-      expect(router.currentRoute.value.query).toEqual({ status: 'all' }),
-    )
-    const table = screen.getByRole('table', { name: 'Orders' })
-    await vi.waitFor(() =>
-      expect(within(table).getAllByRole('row')).toHaveLength(5),
-    )
   })
 
   it.each([
-    ['/orders?status=paid,draft', ['draft', 'paid']],
-    ['/orders?status=all', []],
-    ['/orders?status=bogus', ['pending_payment']],
-    ['/orders', ['pending_payment']],
-  ])('reads the selection from %s', async (path, statuses) => {
+    [
+      '/orders?status=pending_payment',
+      ['pending_payment'],
+      ['Awaiting payment'],
+    ],
+    ['/orders?status=paid', ['paid'], ['Paid']],
+    ['/orders?status=paid,draft', ['draft', 'paid'], ['Draft', 'Paid']],
+    ['/orders?status=all', [], []],
+    ['/orders?status=bogus', [], ALL],
+    ['/orders', [], ALL],
+  ])('deep link %s selects exactly that', async (path, statuses, shown) => {
+    const user = userEvent.setup()
     await renderWithRouter(OrdersView, { path })
-    await screen.findByRole('table', { name: 'Orders' })
+    await screen.findByText(/Showing|No /)
 
     expect(api.listProviderOrders).toHaveBeenCalledWith({
       statuses,
       offset: 0,
       limit: 25,
     })
+    await openStatusList(user)
+    expect(selectedOptions()).toEqual(shown)
+  })
+
+  it('restores the page from ?page= and keeps it in the URL', async () => {
+    const user = userEvent.setup()
+    const { router } = await renderWithRouter(OrdersView, {
+      path: '/orders?status=paid&page=2',
+    })
+    await screen.findByRole('table', { name: 'Orders' })
+    expect(api.listProviderOrders).toHaveBeenCalledWith({
+      statuses: ['paid'],
+      offset: 25,
+      limit: 25,
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Previous Page' }))
+    await vi.waitFor(() => expect(lastOffset()).toBe(0))
+    // Page 1 is the default, so it's omitted.
+    expect(router.currentRoute.value.query).toEqual({ status: 'paid' })
+
+    await user.click(screen.getByRole('button', { name: 'Next Page' }))
+    await vi.waitFor(() => expect(lastOffset()).toBe(25))
+    expect(router.currentRoute.value.query).toEqual({
+      status: 'paid',
+      page: '2',
+    })
+  })
+
+  it('a filter change goes back to page 1', async () => {
+    const user = userEvent.setup()
+    const { router } = await renderWithRouter(OrdersView, {
+      path: '/orders?page=2',
+    })
+    await screen.findByRole('table', { name: 'Orders' })
+    expect(lastOffset()).toBe(25)
+    await openStatusList(user)
+
+    await user.click(option('Draft'))
+
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.query).toEqual({
+        status: 'pending_payment,paid,cancelled',
+      }),
+    )
+    expect(lastOffset()).toBe(0)
+  })
+
+  it('Back and Forward step through filter and page changes', async () => {
+    const user = userEvent.setup()
+    const { router } = await renderWithRouter(OrdersView, { path: '/orders' })
+    await screen.findByRole('table', { name: 'Orders' })
+    await openStatusList(user)
+    await user.click(option('Paid'))
+    await vi.waitFor(() =>
+      expect(lastStatuses()).toEqual(['draft', 'pending_payment', 'cancelled']),
+    )
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByRole('button', { name: 'Next Page' }))
+    await vi.waitFor(() => expect(lastOffset()).toBe(25))
+
+    router.back()
+    await vi.waitFor(() => expect(lastOffset()).toBe(0))
+    expect(lastStatuses()).toEqual(['draft', 'pending_payment', 'cancelled'])
+
+    router.back()
+    await vi.waitFor(() => expect(lastStatuses()).toEqual([]))
+    expect(router.currentRoute.value.query).toEqual({})
+
+    router.forward()
+    await vi.waitFor(() =>
+      expect(lastStatuses()).toEqual(['draft', 'pending_payment', 'cancelled']),
+    )
+    await openStatusList(user)
+    expect(selectedOptions()).toEqual([
+      'Draft',
+      'Awaiting payment',
+      'Cancelled',
+    ])
   })
 
   it('is operable from the keyboard', async () => {
     const user = userEvent.setup()
-    await renderWithRouter(OrdersView, { path: '/orders' })
+    await renderWithRouter(OrdersView, { path: '/orders?status=draft' })
     await screen.findByRole('table', { name: 'Orders' })
 
     await user.tab()
@@ -213,12 +297,10 @@ describe('OrdersView', () => {
     expect(await screen.findByRole('listbox')).toBeInTheDocument()
     expect(combobox).toHaveAttribute('aria-expanded', 'true')
 
-    // The active option starts on the selected one; move to Paid and toggle it.
-    await user.keyboard('{ArrowDown}')
+    // The active option starts on the selected one (Draft); move to Paid and toggle it.
+    await user.keyboard('{ArrowDown}{ArrowDown}')
     await user.keyboard(' ')
-    await vi.waitFor(() =>
-      expect(lastStatuses()).toEqual(['pending_payment', 'paid']),
-    )
+    await vi.waitFor(() => expect(lastStatuses()).toEqual(['draft', 'paid']))
     expect(option('Paid')).toHaveAttribute('aria-selected', 'true')
 
     await user.keyboard('{Escape}')
@@ -238,9 +320,7 @@ describe('OrdersView', () => {
 
   it('opens the order from a row click or Enter', async () => {
     const user = userEvent.setup()
-    const { router } = await renderWithRouter(OrdersView, {
-      path: '/orders?status=all',
-    })
+    const { router } = await renderWithRouter(OrdersView, { path: '/orders' })
     await screen.findByRole('table', { name: 'Orders' })
 
     await user.click(screen.getByText('#14'))
@@ -252,22 +332,6 @@ describe('OrdersView', () => {
     await user.keyboard('{Enter}')
     await vi.waitFor(() =>
       expect(router.currentRoute.value.path).toBe('/orders/12'),
-    )
-  })
-
-  it('pages on the server', async () => {
-    const user = userEvent.setup()
-    await renderWithRouter(OrdersView, { path: '/orders' })
-    await screen.findByRole('table', { name: 'Orders' })
-
-    await user.click(screen.getByRole('button', { name: 'Next Page' }))
-
-    await vi.waitFor(() =>
-      expect(api.listProviderOrders).toHaveBeenLastCalledWith({
-        statuses: ['pending_payment'],
-        offset: 25,
-        limit: 25,
-      }),
     )
   })
 

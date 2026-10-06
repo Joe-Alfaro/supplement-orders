@@ -15,18 +15,23 @@ import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { searchPatients } from '../api'
 import { ErrorBanner, PageSummary, StatusBadge } from '../components'
 import { formatDateOfBirth } from '../format'
 import { accessibleSelectPt } from '../primevue'
-import { usePagedSearch } from '../search'
+import {
+  listQuery,
+  offsetForPage,
+  pageForOffset,
+  pageFromQuery,
+  queryString,
+  usePagedSearch,
+} from '../search'
 
 const route = useRoute()
 const router = useRouter()
-
-const initialQuery = typeof route.query.q === 'string' ? route.query.q : ''
 
 type StatusChoice = LatestOrderStatusFilter | 'any'
 
@@ -43,8 +48,28 @@ function statusFromUrl(value: unknown): StatusChoice {
   return LATEST_ORDER_STATUS_FILTERS.find((s) => s === value) ?? 'any'
 }
 
+// The URL is the source of truth (§4.6b): ?q=, ?status= and ?page= are read
+// here. Typing writes q with router.replace (debounced); the filter, Clear and
+// paging use router.push so Back/Forward step through them.
+const listPath = route.path
+
 /** Latest-order-status filter, applied on the server together with search. */
-const status = ref<StatusChoice>(statusFromUrl(route.query.status))
+const status = computed(() => statusFromUrl(route.query.status))
+const urlQuery = computed(() => queryString(route.query, 'q') ?? '')
+const pageNumber = computed(() => pageFromQuery(route.query))
+
+/** The URL query for a list state; defaults (no q, any, page 1) are omitted. */
+function patientsQuery(state: {
+  q: string
+  status: StatusChoice
+  page?: number
+}) {
+  return listQuery({
+    q: state.q,
+    status: state.status === 'any' ? undefined : state.status,
+    page: state.page,
+  })
+}
 
 const search = usePagedSearch(
   (listQuery) =>
@@ -52,24 +77,28 @@ const search = usePagedSearch(
       ...listQuery,
       latestStatus: status.value === 'any' ? undefined : status.value,
     }),
-  { initialQuery },
+  {
+    initialQuery: urlQuery.value,
+    // A settled search replaces the URL entry and goes back to page 1.
+    onCommit: (q) =>
+      router.replace({ query: patientsQuery({ q, status: status.value }) }),
+  },
 )
 const { query, activeQuery, items, page, loading, error, offset, total } =
   search
 
-onMounted(search.load)
-
-watch(status, () => search.restart())
-
-// Keep search and filter in the URL so they survive reload and back navigation.
-watch([activeQuery, status], ([q, s]) => {
-  router.replace({
-    query: {
-      ...(q ? { q } : {}),
-      ...(s === 'any' ? {} : { status: s }),
-    },
-  })
-})
+// Load whenever the list's URL state changes, including on Back/Forward.
+watch(
+  () => [route.path, route.query.q, route.query.status, route.query.page],
+  () => {
+    if (route.path !== listPath) return
+    search.apply({
+      q: urlQuery.value,
+      offset: offsetForPage(pageNumber.value, search.limit),
+    })
+  },
+  { immediate: true },
+)
 
 const emptyMessage = computed(() => {
   const filtered =
@@ -87,10 +116,18 @@ const emptyMessage = computed(() => {
   return filtered ? `No patients${filtered}.` : 'No patients yet.'
 })
 
+function selectStatus(value: StatusChoice) {
+  router.push({ query: patientsQuery({ q: activeQuery.value, status: value }) })
+}
+
+function clearSearch() {
+  query.value = ''
+  router.push({ query: patientsQuery({ q: '', status: status.value }) })
+}
+
 function clearFilters() {
   query.value = ''
-  status.value = 'any'
-  search.clear()
+  router.push({ query: {} })
 }
 
 function openPatient(event: DataTableRowClickEvent<PatientDto>) {
@@ -98,7 +135,13 @@ function openPatient(event: DataTableRowClickEvent<PatientDto>) {
 }
 
 function onPage(event: DataTablePageEvent) {
-  search.goTo(event.first)
+  router.push({
+    query: patientsQuery({
+      q: activeQuery.value,
+      status: status.value,
+      page: pageForOffset(event.first, search.limit),
+    }),
+  })
 }
 </script>
 
@@ -123,7 +166,7 @@ function onPage(event: DataTablePageEvent) {
         >Latest order status</label
       >
       <Select
-        v-model="status"
+        :model-value="status"
         input-id="latest-status"
         aria-labelledby="latest-status-label"
         :options="statusOptions"
@@ -131,6 +174,7 @@ function onPage(event: DataTablePageEvent) {
         option-value="value"
         append-to="self"
         :pt="accessibleSelectPt"
+        @update:model-value="selectStatus"
       />
     </div>
   </div>
@@ -144,7 +188,7 @@ function onPage(event: DataTablePageEvent) {
         label="Clear search"
         size="small"
         severity="secondary"
-        @click="search.clear"
+        @click="clearSearch"
       />
       <Button
         v-else-if="activeQuery || status !== 'any'"

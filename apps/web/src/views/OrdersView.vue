@@ -11,13 +11,19 @@ import DataTable, {
   type DataTableRowClickEvent,
 } from 'primevue/datatable'
 import MultiSelect from 'primevue/multiselect'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listProviderOrders } from '../api'
 import { ErrorBanner, MoneyText, PageSummary, StatusBadge } from '../components'
 import { formatDate, formatDateOfBirth } from '../format'
 import { accessibleSelectPt } from '../primevue'
-import { usePagedSearch } from '../search'
+import {
+  listQuery,
+  offsetForPage,
+  pageForOffset,
+  pageFromQuery,
+  usePagedSearch,
+} from '../search'
 
 const route = useRoute()
 const router = useRouter()
@@ -31,7 +37,8 @@ const STATUSES: Record<OrderStatus, { dateHeader: string; empty: string }> = {
 
 /** Canonical order for options, the URL and the API. */
 const ORDER: OrderStatus[] = ['draft', 'pending_payment', 'paid', 'cancelled']
-const DEFAULT_SELECTION: OrderStatus[] = ['pending_payment']
+/** Revision 8d: every status, most recent activity first. */
+const DEFAULT_SELECTION: OrderStatus[] = [...ORDER]
 
 const statusOptions = ORDER.map((value) => ({
   value,
@@ -43,8 +50,9 @@ function canonical(statuses: readonly OrderStatus[]) {
 }
 
 /**
- * ?status= is a comma list; absent means the default, `all` means no filter
- * (an empty selection). Unknown values are ignored.
+ * ?status= is a comma list. Absent means the default (every status checked);
+ * `all` is an empty selection, which also means every status. Unknown values
+ * are ignored.
  */
 function selectionFromUrl(value: unknown): OrderStatus[] {
   if (typeof value !== 'string') return [...DEFAULT_SELECTION]
@@ -75,12 +83,32 @@ const multiSelectPt = {
   },
 }
 
+// The URL is the source of truth (§4.6b): ?status= and ?page= are read here,
+// and the controls write them back with router.push so Back/Forward step
+// through every filter and page change.
+const listPath = route.path
+
 /** The selected statuses; empty means all statuses. */
-const selected = ref<OrderStatus[]>(selectionFromUrl(route.query.status))
+const selected = computed(() => selectionFromUrl(route.query.status))
+const pageNumber = computed(() => pageFromQuery(route.query))
+
+/** ?status= for a selection: omitted when every status is checked, `all` for none. */
+function statusParam(statuses: readonly OrderStatus[]) {
+  const value = canonical(statuses)
+  if (value.length === 0) return 'all'
+  if (value.length === ORDER.length) return undefined
+  return value.join(',')
+}
+
+/** Every status or none is no filter at all: the API gets status=all. */
+function apiStatuses(statuses: readonly OrderStatus[]) {
+  const value = canonical(statuses)
+  return value.length === ORDER.length ? [] : value
+}
 
 const orders = usePagedSearch((listQuery) =>
   listProviderOrders({
-    statuses: canonical(selected.value),
+    statuses: apiStatuses(selected.value),
     offset: listQuery.offset,
     limit: listQuery.limit,
   }),
@@ -101,13 +129,22 @@ const emptyMessage = computed(() => {
   return 'No orders with the selected statuses.'
 })
 
-onMounted(orders.load)
+// Load whenever the list's URL state changes, including on Back/Forward.
+watch(
+  () => [route.path, route.query.status, route.query.page],
+  () => {
+    if (route.path !== listPath) return
+    orders.apply({ offset: offsetForPage(pageNumber.value, orders.limit) })
+  },
+  { immediate: true },
+)
 
-watch(selected, (statuses) => {
-  const status = statuses.length ? canonical(statuses).join(',') : 'all'
-  router.replace({ query: { status } })
-  orders.restart()
-})
+/** A new selection starts again from page 1. */
+function selectStatuses(statuses: OrderStatus[] | null | undefined) {
+  router.push({
+    query: listQuery({ status: statusParam(statuses ?? []) }),
+  })
+}
 
 /** The date that matters for the order's own status. */
 function relevantDate(order: ProviderOrderListItemDto) {
@@ -122,7 +159,12 @@ function openOrder(event: DataTableRowClickEvent<ProviderOrderListItemDto>) {
 }
 
 function onPage(event: DataTablePageEvent) {
-  orders.goTo(event.first)
+  router.push({
+    query: listQuery({
+      status: statusParam(selected.value),
+      page: pageForOffset(event.first, orders.limit),
+    }),
+  })
 }
 </script>
 
@@ -132,7 +174,7 @@ function onPage(event: DataTablePageEvent) {
     <div class="field filter">
       <label id="order-status-label" for="order-status">Status</label>
       <MultiSelect
-        v-model="selected"
+        :model-value="selected"
         input-id="order-status"
         aria-labelledby="order-status-label"
         :options="statusOptions"
@@ -143,6 +185,7 @@ function onPage(event: DataTablePageEvent) {
         :max-selected-labels="4"
         append-to="self"
         :pt="multiSelectPt"
+        @update:model-value="selectStatuses"
       >
         <template #header>
           <label for="order-status-all" class="select-all-label"
