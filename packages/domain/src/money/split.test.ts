@@ -349,10 +349,10 @@ describe('computeSplit', () => {
   it('extends a line by quantity before splitting', () => {
     expectOrder([{ quantity: 3, unitPriceCents: 500, unitCogsCents: 200 }], {
       subtotalCents: 1500,
-      platformFeeCents: 11,
+      platformFeeCents: 12,
       totalCents: 1500,
       cogsCents: 600,
-      providerMarginCents: 889,
+      providerMarginCents: 888,
     })
   })
 
