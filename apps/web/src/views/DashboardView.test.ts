@@ -1,5 +1,6 @@
 import type { DashboardDto, ProductDto } from '@supplement-orders/domain'
-import { fireEvent, screen } from '@testing-library/vue'
+import { screen, within } from '@testing-library/vue'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
@@ -50,39 +51,67 @@ beforeEach(() => {
 
 describe('DashboardView', () => {
   it('shows inventory read-only, with no inputs or Save buttons', async () => {
-    const { container } = await renderWithRouter(DashboardView)
+    await renderWithRouter(DashboardView)
     await screen.findByText('Vitamin D3')
 
-    expect(screen.getByText('119')).toBeTruthy()
+    expect(screen.getByRole('cell', { name: '119' })).toBeInTheDocument()
     // The only input is the search box; stock itself is never editable.
-    const inputs = Array.from(
-      container.querySelectorAll('input, select, textarea'),
+    expect(screen.getAllByRole('searchbox')).toHaveLength(1)
+    expect(screen.getByRole('searchbox')).toHaveAccessibleName(
+      'Search products',
     )
-    expect(inputs.map((input) => input.id)).toEqual(['inventory-search'])
-    expect(screen.queryByRole('spinbutton')).toBeNull()
-    expect(screen.queryByRole('button', { name: /save/i })).toBeNull()
+    expect(screen.queryAllByRole('textbox')).toHaveLength(0)
+    expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /save/i }),
+    ).not.toBeInTheDocument()
   })
 
   it('labels cost as wholesale cost, never COGS or our cost', async () => {
-    const { container } = await renderWithRouter(DashboardView)
+    await renderWithRouter(DashboardView)
     await screen.findByText('Vitamin D3')
 
     expect(screen.getAllByText('Wholesale cost').length).toBeGreaterThan(0)
-    expect(container.textContent).not.toMatch(/COGS|our cost/i)
-    expect(container.textContent).not.toMatch(/Platform fee/i)
-    expect(screen.getByText('Processing fees')).toBeTruthy()
+    expect(document.body).not.toHaveTextContent(/COGS|our cost/i)
+    expect(document.body).not.toHaveTextContent(/Platform fee/i)
+    expect(screen.getByText('Processing fees')).toBeInTheDocument()
     expect(
       screen.getByRole('columnheader', { name: 'Processing fee' }),
-    ).toBeTruthy()
+    ).toBeInTheDocument()
   })
 
   it('opens the order when a paid-order row is clicked', async () => {
+    const user = userEvent.setup()
     const { router } = await renderWithRouter(DashboardView)
 
-    await fireEvent.click(await screen.findByText('Jordan Lee'))
+    await user.click(await screen.findByText('Jordan Lee'))
 
     await vi.waitFor(() =>
       expect(router.currentRoute.value.path).toBe('/orders/7'),
     )
+  })
+
+  it('names each stat tile and table so they can be found by role', async () => {
+    await renderWithRouter(DashboardView)
+    await screen.findByText('Vitamin D3')
+
+    expect(
+      within(screen.getByRole('group', { name: 'GMV' })).getByText('$69.51'),
+    ).toBeInTheDocument()
+    expect(
+      within(
+        screen.getByRole('group', { name: 'Your margin earned' }),
+      ).getByText('$34.99'),
+    ).toBeInTheDocument()
+    expect(
+      within(screen.getByRole('group', { name: 'Processing fees' })).getByText(
+        '$0.52',
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('table', { name: 'Paid orders' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('table', { name: 'Inventory' })).toBeInTheDocument()
   })
 })

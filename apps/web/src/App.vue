@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import Button from 'primevue/button'
 import Message from 'primevue/message'
-import { RouterLink, RouterView, useRouter } from 'vue-router'
+import { watch } from 'vue'
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { notice, roleLabel, useCurrentUser } from './user'
 
 const router = useRouter()
+const route = useRoute()
 const { currentUser, signOut } = useCurrentUser()
+
+// Signed out from anywhere (e.g. the API rejected the user): go to the login screen.
+watch(currentUser, (user) => {
+  if (!user && route.name !== 'login') router.replace({ name: 'login' })
+})
 
 async function onSignOut() {
   signOut()

@@ -1,5 +1,6 @@
 import type { PatientOrderDetailDto } from '@supplement-orders/domain'
-import { fireEvent, screen } from '@testing-library/vue'
+import { screen } from '@testing-library/vue'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
@@ -58,7 +59,7 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-async function renderPayScreen() {
+async function openPayScreen() {
   await renderWithRouter(PatientOrderView, {
     path: '/my-orders/42',
     props: { orderId: '42' },
@@ -73,39 +74,48 @@ beforeEach(() => {
 
 describe('PatientOrderView', () => {
   it('pays once, disables the button while pending, then shows the receipt', async () => {
+    const user = userEvent.setup()
     const payment = deferred<PatientOrderDetailDto>()
     vi.mocked(api.payOrder).mockReturnValue(payment.promise)
-    const button = await renderPayScreen()
+    const button = await openPayScreen()
 
-    await fireEvent.click(button)
-    await fireEvent.click(button)
+    await user.click(button)
+    await user.click(button)
 
     expect(api.payOrder).toHaveBeenCalledTimes(1)
     expect(api.payOrder).toHaveBeenCalledWith(42, {})
-    expect(button).toHaveProperty('disabled', true)
+    expect(button).toBeDisabled()
 
     payment.resolve(paid)
-    expect(await screen.findByRole('heading', { name: 'Receipt' })).toBeTruthy()
-    expect(screen.getByText('fake_ch_123')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /Pay/ })).toBeNull()
+    expect(
+      await screen.findByRole('heading', { name: 'Receipt' }),
+    ).toBeInTheDocument()
+    expect(screen.getByText('fake_ch_123')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /Pay/ }),
+    ).not.toBeInTheDocument()
   })
 
   it('shows the gateway error and stays payable on failure', async () => {
+    const user = userEvent.setup()
     vi.mocked(api.payOrder).mockRejectedValue(
       new api.ApiRequestError(402, 'PAYMENT_FAILED', 'Card declined'),
     )
-    const button = await renderPayScreen()
+    const button = await openPayScreen()
 
-    await fireEvent.click(
-      screen.getByLabelText('Simulate gateway failure (dev only)'),
+    await user.click(
+      screen.getByRole('checkbox', {
+        name: 'Simulate gateway failure (dev only)',
+      }),
     )
-    await fireEvent.click(button)
+    await user.click(button)
 
-    expect(await screen.findByText(/Card declined/)).toBeTruthy()
+    expect(await screen.findByText(/Card declined/)).toBeInTheDocument()
     expect(api.payOrder).toHaveBeenCalledWith(42, { simulateFailure: true })
-    const retry = screen.getByRole('button', { name: 'Pay $120.00' })
-    expect(retry).toHaveProperty('disabled', false)
-    expect(screen.queryByRole('heading', { name: 'Receipt' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Pay $120.00' })).toBeEnabled()
+    expect(
+      screen.queryByRole('heading', { name: 'Receipt' }),
+    ).not.toBeInTheDocument()
   })
 
   it.each([
@@ -115,18 +125,17 @@ describe('PatientOrderView', () => {
     'never renders wholesale cost, COGS, margin, or any fee (%s)',
     async (_label, order) => {
       vi.mocked(api.getOrder).mockResolvedValue(order)
-      const { container } = await renderWithRouter(PatientOrderView, {
+      await renderWithRouter(PatientOrderView, {
         path: '/my-orders/42',
         props: { orderId: '42' },
       })
       await screen.findByRole('heading', { name: /Order #42/ })
 
-      const text = container.textContent ?? ''
-      expect(text).not.toMatch(/Wholesale cost/i)
-      expect(text).not.toMatch(/COGS/i)
-      expect(text).not.toMatch(/margin/i)
-      expect(text).not.toMatch(/Platform fee/i)
-      expect(text).not.toMatch(/Processing fee/i)
+      expect(document.body).not.toHaveTextContent(/Wholesale cost/i)
+      expect(document.body).not.toHaveTextContent(/COGS/i)
+      expect(document.body).not.toHaveTextContent(/margin/i)
+      expect(document.body).not.toHaveTextContent(/Platform fee/i)
+      expect(document.body).not.toHaveTextContent(/Processing fee/i)
     },
   )
 })

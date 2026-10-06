@@ -66,7 +66,7 @@ function onInventoryPage(event: DataTablePageEvent) {
         data-key="orderId"
         selection-mode="single"
         :meta-key-selection="false"
-        aria-label="Paid orders"
+        :table-props="{ 'aria-label': 'Paid orders' }"
         @row-click="openOrder"
       >
         <Column header="Paid">
@@ -141,7 +141,7 @@ function onInventoryPage(event: DataTablePageEvent) {
         :total-records="inventory.total.value"
         paginator-template="PrevPageLink NextPageLink"
         :loading="inventory.loading.value"
-        aria-label="Inventory"
+        :table-props="{ 'aria-label': 'Inventory' }"
         @page="onInventoryPage"
       >
         <template #paginatorstart>
