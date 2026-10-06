@@ -6,10 +6,10 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 **Integer cents everywhere**
 
-- **Decision:** every amount is an integer number of cents, stored as `bigint`. Dollar strings exist only at input and display. Parsing splits the string on `.` and combines the integer parts, with no float multiplication.
+- **Decision:** every amount is an integer number of cents, stored as `bigint`. Dollar strings exist only at input and display. Parsing uses a regex to capture the dollar digits and up to two decimal digits, strips commas, and concatenates them into a cent integer. No float multiplication.
 - **Why:** floats can't represent cents exactly, and the split has to reconcile to the cent.
 - **Alternative:** a decimal library.
-- **Tradeoff:** unsafe-integer checks are needed at the edges. We reject anything past `Number.MAX_SAFE_INTEGER` as `UNSAFE_AMOUNT`.
+- **Tradeoff:** unsafe-integer checks are needed at the edges. The split, fee, minimum-price and markup functions reject an unsafe integer as `UNSAFE_AMOUNT`. Formatting throws a `RangeError`, and parsing returns a field error string instead.
 
 **A three-entry ledger, not three columns on the order**
 
@@ -22,7 +22,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 - **Decision:** 75 bps of the subtotal, never per line.
 - **Why:** per-line rounding accumulates error.
-- **Tradeoff:** the per-line fee shown in the order builder is informational and can differ from the order fee by a cent. The summary labels its fee "calculated on the order total".
+- **Tradeoff:** the per-line fee shown in the order builder is informational. Because each line rounds up on its own, the per-line fees can sum to more than the order fee by more than a cent (three 1-cent lines: 3 cents versus 1). The order fee is never larger than that sum. The summary labels its fee "calculated on the order total".
 
 **Reversed: fee charged on top -> fee comes out of the provider's markup**
 
@@ -131,7 +131,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 **Cross-model, test-first development**
 
-- **Decision:** written contracts first. A different model (Grok) writes failing tests from the contract, and Claude implements. The implementer may not edit tests; disputes go to the orchestrator.
+- **Decision:** written contracts first. A different model (Grok) writes failing tests from the contract, and Claude implements. The implementer may not edit tests without the orchestrator's approval; disputes go to the orchestrator. In practice that approval was given three times, for two type-only and formatting-only fixes and one stale expected value. One domain test file, `fee-guard.test.ts`, was written by the implementer.
 - **Why:** when the same model writes tests and code, the tests tend to share the code's assumptions.
 - **Tradeoff:** a contract document and an extra round trip per disagreement. Covered in detail in [AI_USAGE.md](AI_USAGE.md).
 

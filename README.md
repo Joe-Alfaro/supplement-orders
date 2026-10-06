@@ -1,6 +1,6 @@
 # Supplement Orders
 
-A working vertical slice of in-house supplement ordering inside an EHR. A provider assembles a supplement order for a patient and sets the patient-facing price per item. The patient pays through a stubbed gateway. The system splits every paid order into wholesale cost, provider margin and a 75 bps platform fee, and records the split as three immutable ledger entries that sum exactly to the amount paid. A provider dashboard shows orders awaiting payment, sales totals (GMV, margin earned, processing fees) and read-only stock.
+A working vertical slice of in-house supplement ordering inside an EHR. A provider assembles a supplement order for a patient and sets the patient-facing price per item. The patient pays through a stubbed gateway. The system splits every paid order into wholesale cost, provider margin and a 75 bps processing fee (ledger type `platform_fee`), and records the split as three immutable ledger entries that sum exactly to the amount paid. A provider dashboard shows orders awaiting payment, sales totals (GMV, margin earned, processing fees) and read-only stock.
 
 Stack: TypeScript end to end. Vue 3 + Vite + PrimeVue 4 on the front end, an Express 5 REST API with Zod validation, Drizzle ORM, and Postgres 16. npm workspaces share one domain package, so the money logic lives in exactly one place.
 
@@ -14,7 +14,7 @@ To be added.
 
 ## Quickstart
 
-Prerequisites: Node 22 or later (`engines` in `package.json`; developed on Node 23 with npm 10.9), npm, and Docker.
+Prerequisites: Node 22 or later (`engines` in `package.json`), npm, and Docker. Node 22.13+ LTS or Node 24 is recommended: it was developed on Node 23 with npm 10.9, where `npm install` warns that some transitive dependencies want `^22.13` or `>=24`. The tests pass on Node 23 regardless.
 
 ```sh
 npm install
@@ -30,20 +30,21 @@ The API defaults `DATABASE_URL` to the Docker database (`postgres://supplement_o
 
 ### Signing in
 
-Authentication is stubbed. The `/login` screen lists the seeded users. Pick one and click **Sign in**; there is no password. The role comes from the user record on the server, never from the client.
+Authentication is stubbed. The `/login` dropdown lists every user in the database, including the generated patients described below. The named users are: Pick one and click **Sign in**; there is no password. The role comes from the user record on the server, never from the client.
 
 | User                 | Role     | Use it to                                                             |
 | -------------------- | -------- | --------------------------------------------------------------------- |
 | Dr. Maya Rivera      | Provider | Build and send orders for Jordan Lee or Sam Patel, view the dashboard |
 | Jordan Lee           | Patient  | Pay an order Dr. Rivera sent                                          |
 | Dr. Owen Brooks      | Provider | A second provider, to see that providers can't see each other's data  |
+| Sam Patel            | Patient  | Dr. Rivera's second patient                                           |
 | Alex Kim, Riley Chen | Patient  | Dr. Brooks's patients                                                 |
 
-`npm run db:seed` also adds generated data: 300 products and 250 patients in total, split between the two providers, so search and pagination have something to page through. Some generated patients share a name and differ only by date of birth.
+`npm run db:seed` also adds generated data: 300 products in one catalog, and 250 patients split between the two providers, so search and pagination have something to page through. A few generated patients share a name and a provider and differ by date of birth and address.
 
 A demo path: sign in as Dr. Maya Rivera, open Jordan Lee, click **New order**, add a product through **Add line**, set Markup % or Patient price, **Send to patient**. Sign out, sign in as Jordan Lee, open the order under My orders and click **Pay**. Sign back in as Dr. Rivera to see the order's ledger and the dashboard.
 
-In development builds the patient pay screen has a "Simulate gateway failure" checkbox. A simulated decline rolls back everything: no payment, no ledger rows, no stock change.
+In development builds the patient pay screen has a "Simulate gateway failure (dev only)" checkbox. A simulated decline rolls back everything: no payment, no ledger rows, no stock change.
 
 ## Scripts
 
@@ -88,7 +89,7 @@ When the patient pays, the API writes three ledger entries (`cogs`, `provider_ma
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Payments         | `FakePaymentGateway` (in-process) always succeeds unless failure is forced, and replays the original result for a repeated idempotency key. `{ simulateFailure: true }` on the pay request forces a decline unless `NODE_ENV` is `production` |
 | Auth             | The login screen stores the chosen user id in localStorage; the client sends it as `X-User-Id`. `HeaderAuth` looks the user up and takes the role from the database. Unknown or missing id is a 401. No passwords or sessions                 |
-| Notifications    | `ConsoleNotifier` logs "order ready" and "order cancelled" to the API console                                                                                                                                                                 |
+| Notifications    | `ConsoleNotifier` logs `[notifier] order <id> is ready for patient payment` and `[notifier] order <id> was cancelled by the provider` to the API console                                                                                      |
 | Shipping and tax | Not modeled. The patient's address is shown as a plain string                                                                                                                                                                                 |
 
 Each stub sits behind an interface in `apps/api/src/seams/` and is injected through `createApp`, so a real implementation replaces the fake without touching domain code.

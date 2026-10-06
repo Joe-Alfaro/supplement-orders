@@ -66,7 +66,7 @@ Why a ledger rather than three columns on the order: "where did every cent go" b
 
 Database constraints back the model:
 
-- Every money column is `bigint` cents with a `>= 0` check.
+- Every money column is `bigint` cents. `products.cogs_cents`, `order_items.unit_price_cents`, `order_items.unit_cogs_cents`, `payments.amount_cents` and `ledger_entries.amount_cents` have a `>= 0` check. The three order totals (`subtotal_cents`, `platform_fee_cents`, `total_cents`) don't; their non-negativity is an application invariant.
 - `orders_total_is_subtotal`: the patient total equals the subtotal. This constraint was added `NOT VALID` so rows from before that rule are left alone; every new or updated row is checked.
 - `orders_fee_within_subtotal`, `orders_paid_at_iff_paid`, `orders_cancelled_at_iff_cancelled`, `orders_sent_unless_draft_or_cancelled`, and `orders_totals_present_once_sent`.
 - `order_items`: quantity `>= 1`, one line per product per order, and a cost snapshot exactly when a product is set.
@@ -110,7 +110,7 @@ The ledger functions build and check the entries:
 ## 6. Core flow
 
 1. **Create a draft.** `POST /api/orders` with a `patientId` the provider owns.
-2. **Edit lines.** `PUT /api/orders/:id/lines` replaces all lines. Drafts are lenient: a line may have no product or no price yet, and a price may be below the minimum. Only a duplicate or unknown product is rejected at save time. The builder shows a live split computed with the shared `computeSplit` once all lines are complete.
+2. **Edit lines.** `PUT /api/orders/:id/lines` replaces all lines. Drafts are lenient: a line may omit the product or the price, and a price may be below the minimum. Save returns 400 for a non-integer, a quantity below 1, or a negative price, and 422 for a duplicate or unknown product. Completeness, stock and the minimum are enforced on send. The builder shows a live split computed with the shared `computeSplit` once all lines are complete.
 3. **Send.** `POST /api/orders/:id/send`, in one transaction:
    - lock the order row (`SELECT ... FOR UPDATE`) and require it to be the caller's draft;
    - require at least one line (`EMPTY_ORDER`), every line complete (`INCOMPLETE_LINE`), enough stock (`INSUFFICIENT_STOCK`), and every price at or above its minimum (`PRICE_BELOW_MINIMUM`, from `computeSplit`);
@@ -120,7 +120,7 @@ The ledger functions build and check the entries:
    After commit, the notifier is called. A notification failure is logged and doesn't undo the send.
 
 4. **Pay.** `POST /api/orders/:id/pay` by the patient, in one transaction:
-   1. lock the order row `FOR UPDATE`. If it's already `paid`, return the existing result without charging again. If it isn't `pending_payment`, respond 409;
+   1. lock the order row `FOR UPDATE`. If it's already `paid`, return the existing result without charging again. If it was never sent, respond 404. If it was sent but isn't `pending_payment`, respond 409 `ORDER_NOT_PAYABLE`;
    2. recompute the split from the snapshotted lines with `computeSplit`, and abort if it doesn't reproduce the stored total;
    3. decrement stock for each line with a conditional update (`stock >= quantity`). This happens **before** the charge, so every expected failure (such as insufficient stock) happens before money moves;
    4. charge the `PaymentGateway` with the idempotency key `order-<id>-payment`. A decline is a 402 `PAYMENT_FAILED`;
@@ -156,7 +156,7 @@ The dashboard reads the audited rows rather than recomputing anything. Cancelled
 
 ## 9. API
 
-Every endpoint except `/api/health` and `/api/users` requires `X-User-Id`. Errors are `{ error: { code, message, field? } }`, where `field` is a dotted path into the request body (for example `lines.1.unitPriceCents`) so the UI can place the message next to the input. Money fields are integer cents with a `Cents` suffix.
+Every endpoint except `/api/health` and `/api/users` requires `X-User-Id`. Application errors use `{ error: { code, message, field? } }`, where `field` is a dotted path into the request body (for example `lines.1.unitPriceCents`) so the UI can place the message next to the input. Money fields are integer cents with a `Cents` suffix. Health is the exception to the error envelope: it returns `{ status, db }`, with 503 when Postgres is unreachable.
 
 | Method and path                                         | Who      | Purpose                                                                                                  |
 | ------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------- |
@@ -175,7 +175,7 @@ Every endpoint except `/api/health` and `/api/users` requires `X-User-Id`. Error
 | `POST /api/orders/:id/cancel`                           | provider | Cancel a draft or pending order                                                                          |
 | `GET /api/dashboard`                                    | provider | GMV, margin, fees, and paid orders with their splits                                                     |
 
-Status codes: 400 `VALIDATION_ERROR`, 401 `UNAUTHENTICATED`, 403 `FORBIDDEN` (wrong persona or someone else's resource), 404 `NOT_FOUND`, 409 wrong order status (`ORDER_NOT_DRAFT`, `ORDER_NOT_PAYABLE`, `ORDER_NOT_CANCELLABLE`), 422 business rules (`EMPTY_ORDER`, `INCOMPLETE_LINE`, `PRICE_BELOW_MINIMUM`, `INSUFFICIENT_STOCK`, `DUPLICATE_PRODUCT`, `UNKNOWN_PRODUCT`, and the other split codes), 402 `PAYMENT_FAILED`.
+Status codes: 400 `VALIDATION_ERROR`, 401 `UNAUTHENTICATED`, 403 `FORBIDDEN` (wrong persona or someone else's resource), 404 `NOT_FOUND`, 409 wrong order status (`ORDER_NOT_DRAFT`, `ORDER_NOT_PAYABLE`, `ORDER_NOT_CANCELLABLE`), 422 business rules (`EMPTY_ORDER`, `INCOMPLETE_LINE`, `PRICE_BELOW_MINIMUM`, `INSUFFICIENT_STOCK`, `DUPLICATE_PRODUCT`, `UNKNOWN_PRODUCT`, and the other split codes), 402 `PAYMENT_FAILED`, and 500 `INTERNAL` for an unexpected failure, including a sent order whose lines no longer reproduce the stored total.
 
 Request and response types are TypeScript interfaces in `packages/domain/src/api/`, each paired with a Zod schema typed against the interface so the two can't drift. The web app imports the same types.
 

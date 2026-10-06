@@ -6,17 +6,17 @@ Almost all of the code in this repository was written by AI agents. My job was p
 
 - **Agent Orchestrator (AO)** ran the build. One orchestrator session, a Claude Code agent, planned the work, wrote the specs, spawned worker sessions in separate git worktrees, reviewed their branches, and merged accepted work. Workers reported progress and decisions back through AO.
 - **Claude Opus 5.5 workers** did the implementation, each scoped to one area: scaffold, domain money module, API, UI, infrastructure and documentation.
-- **Grok workers** acted as an independent test author. They wrote the domain tests, the HTTP contract tests, the accessibility and UI state tests, and the Playwright specs, without seeing the implementation.
+- **Grok workers** acted as an independent test author. They wrote the domain money suites and the HTTP contract tests from the written contract, before or in parallel with the implementation and without seeing it. The one exception in the domain package is `fee-guard.test.ts`, which the implementer added. Grok also wrote the accessibility, UI state and Playwright tests, but those are black-box tests written against a UI that already existed.
 - **Playwright and axe-core** for end-to-end and accessibility testing. AO's built-in browser panel was used for manual exploratory checks and a real-browser axe run that included color contrast.
 
-Before any code, the orchestrator and I wrote three private planning documents: the brief, an architecture "north star" with each decision marked Proposed or Accepted, and a front-end design covering screens, routes and money display rules. Later we added a domain contract, which fixed function signatures, rounding rules with reference values, error codes and their precedence. A running decision log recorded every notable call. The public docs in this folder are cleaned-up versions of those.
+Before the orchestrator existed, I worked with an earlier, separate AI session to write three private planning documents: the brief, an architecture "north star" with each decision marked Proposed or Accepted, and a front-end design covering screens, routes and money display rules. Once the build started, the orchestrator added a domain contract, which fixed function signatures, rounding rules with reference values, error codes and their precedence. A running decision log recorded every notable call. The public docs in this folder are cleaned-up versions of those.
 
 ## The workflow
 
 1. **Contract.** The orchestrator writes or updates a contract: signatures, formulas, reference values, error codes.
 2. **Red.** A Grok worker writes failing tests from the contract alone.
-3. **Green.** A Claude worker implements against the merged tests. It may not edit tests. If it thinks a test is wrong, it files a dispute.
-4. **Dispute.** The orchestrator decides whether the test, the implementation or the contract is wrong, logs the ruling, and the owning side makes the change. Grok fixes Grok's tests.
+3. **Green.** A Claude worker implements against the merged tests. It may not edit tests on its own. If it thinks a test is wrong, it files a dispute.
+4. **Dispute.** The orchestrator decides whether the test, the implementation or the contract is wrong, logs the ruling, and the owning side makes the change. Grok fixes Grok's tests. The exceptions were all orchestrator-approved: two type-only and formatting-only fixes to Grok's domain tests (no expected value, input or test count changed), and one stale fee value in Grok's split tests after the rounding change.
 5. **Integrate.** The orchestrator merges branches, often in a throwaway worktree first to check that the combination is green, then re-runs lint, typecheck, unit tests, build, and later the Playwright suite before accepting.
 
 The same loop ran for each product revision after the first build: the fee model (revision 2), search and pagination (3), date-of-birth identification (3b), net margin (4, cancelled), markup (5), cancel and the remaining open items (6), and fee rounding (7). The PrimeVue migration went through it too.
@@ -38,7 +38,7 @@ A single model writing both sides would have settled both questions silently, on
 
 **Asking instead of implementing literally.** When I asked for prices to be "calculated from cost plus 75 bps", the agent asked a clarifying question rather than doing it, because a price of exactly cost plus the fee would leave the provider no margin, which the brief requires. That question is what led me to restate the business model correctly (next section).
 
-**Encoding preferences as lint.** My code style preferences (no `for` loops, no `any`, no nested ternaries, Testing Library conventions) were turned into ESLint rules at scaffold time. With several agents writing in parallel, that held up much better than repeating the rules in every prompt.
+**Encoding preferences as lint.** My code style preferences (no `for` loops, no `any`, no nested ternaries, Testing Library conventions) were turned into ESLint rules at scaffold time. With several agents writing in parallel, lint enforces them mechanically instead of relying on each agent remembering them.
 
 ## What didn't go as expected, and how we corrected
 
@@ -58,9 +58,9 @@ A single model writing both sides would have settled both questions silently, on
 
 **Messages that didn't arrive.** `ao send` to a Claude worker between turns silently didn't reach it. The orchestrator noticed from the transcript and resent with `--steer`.
 
-**A cancelled revision was written anyway.** Revision 4 (margin net of the fee) was superseded by revision 5 (markup) after I asked why margin had a ceiling. One Grok worker had already committed the revision 4 test suite before it saw the redirect. That branch was simply never merged. Because the tests came first, the cost was only test-writing time, not implementation.
+**A cancelled revision was written anyway.** Revision 4 (margin net of the fee) was superseded by revision 5 (markup) after I asked why margin had a ceiling. One Grok worker had already committed the revision 4 test suite before it saw the redirect. That branch was simply never merged. Because implementation hadn't started, revision 4 cost only spec and dispatch time.
 
-**Tests that went red on purpose.** Several times Grok's tests were deliberately left failing because the app didn't do something yet: a 401 that should send the user to the login screen, a Markup % label that hadn't landed, the rounded-up fee before the domain change. Grok was asked not to loosen an assertion to make it pass, and it didn't. Once, a follow-up pointed a spec back at the old label so the suite would pass. The orchestrator had it reverted, because red was the correct state.
+**Tests that went red on purpose.** Several times Grok's tests were deliberately left failing because the app didn't do something yet: a 401 that should send the user to the login screen, a Markup % label that hadn't landed, the rounded-up fee before the domain change. Grok didn't loosen an assertion to make one pass. The Playwright happy path, for example, stayed red on the missing "Markup %" label until the UI change landed, and the orchestrator approved keeping it red.
 
 **Strict key-list assertions broke on additive fields.** Grok's contract tests check exact response key lists, so adding a field (such as a patient's date of birth on order detail) broke them several times. Each time Grok updated its own lists. We kept the strictness on purpose: it's what would catch cost or margin accidentally leaking into a patient response.
 
@@ -71,7 +71,7 @@ A single model writing both sides would have settled both questions silently, on
 ## Lessons
 
 - **Write the contract before splitting work across models.** Without a shared spec, two models test and build against different guesses. With one, their disagreements point at exactly the parts of the spec that were ambiguous.
-- **Keep test authorship separate and binding.** The implementer not being allowed to edit tests was the most valuable rule we had. Every dispute was cheap to resolve and exposed something.
+- **Keep test authorship separate and binding.** The rule that the implementer couldn't edit tests without approval was the most valuable one we had. Every dispute was cheap to resolve and exposed something.
 - **Brute-check money rules before dispatching them.** Every rounding rule that survived was checked over hundreds of thousands of cases before a worker saw it. The one inconsistency that shipped came from checking two rules separately instead of checking the relationship between them.
 - **Confirm the user's mental model of a number before formalizing it.** Margin versus markup cost a whole revision. One question up front ("do you think in markup on cost or margin on price?") would have saved it.
 - **Diagnose agent infrastructure from transcripts, not by retrying.** Most of the time lost to tooling was spent nudging workers that were blocked on something visible in their logs.
