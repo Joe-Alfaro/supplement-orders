@@ -59,8 +59,12 @@ function awaiting(
     patientId: id,
     patientName,
     patientDateOfBirth: '1984-03-14',
+    status: 'pending_payment',
     totalCents: 12000,
+    createdAt: sentAt,
     sentAt,
+    paidAt: null,
+    cancelledAt: null,
   }
 }
 
