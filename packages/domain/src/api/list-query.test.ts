@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { listOrdersQuerySchema, listQuerySchema } from './requests'
+import {
+  listOrdersQuerySchema,
+  listPatientsQuerySchema,
+  listQuerySchema,
+} from './requests'
 import { pageSchema, productDtoSchema } from './responses'
 
 function issuePath(input: Record<string, unknown>) {
@@ -81,12 +85,41 @@ describe('listOrdersQuerySchema', () => {
     })
   })
 
+  it.each(['draft', 'pending_payment', 'paid', 'cancelled', 'all'])(
+    'accepts status %s (revision 8)',
+    (status) => {
+      expect(listOrdersQuerySchema.parse({ status }).status).toBe(status)
+    },
+  )
+
   it.each([
-    [{ status: 'paid' }, 'status'],
-    [{ status: 'cancelled' }, 'status'],
+    [{ status: 'bogus' }, 'status'],
+    [{ status: 'PAID' }, 'status'],
     [{ status: 'pending_payment', limit: '0' }, 'limit'],
   ])('rejects %j on %s', (input, field) => {
     const result = listOrdersQuerySchema.safeParse(input)
     expect(result.error?.issues[0]?.path).toEqual([field])
+  })
+})
+
+describe('listPatientsQuerySchema', () => {
+  it('combines search, paging and the latest-status filter', () => {
+    expect(
+      listPatientsQuerySchema.parse({ q: ' lee ', latestStatus: 'none' }),
+    ).toEqual({ q: 'lee', offset: 0, limit: 25, latestStatus: 'none' })
+  })
+
+  it.each(['none', 'draft', 'pending_payment', 'paid', 'cancelled'])(
+    'accepts latestStatus %s',
+    (latestStatus) => {
+      expect(listPatientsQuerySchema.parse({ latestStatus }).latestStatus).toBe(
+        latestStatus,
+      )
+    },
+  )
+
+  it.each(['all', 'any', ''])('rejects latestStatus %j', (latestStatus) => {
+    const result = listPatientsQuerySchema.safeParse({ latestStatus })
+    expect(result.error?.issues[0]?.path).toEqual(['latestStatus'])
   })
 })
