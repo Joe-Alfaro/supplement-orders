@@ -92,11 +92,11 @@ export async function openPatient(page: Page, name: string): Promise<void> {
 interface AddProductOptions {
   quantity: number
   /**
-   * When set, step 2 types this into Margin %. The resulting price is whatever
-   * the field shows; it is not computed from a margin formula. Revision 5
-   * renames the label to Markup %; that change is not on this UI yet.
+   * When set, step 2 types this into Markup %. The resulting price is whatever
+   * the field shows; it is not computed from a formula. The label is not on
+   * this UI yet, so this branch stays red until it lands.
    */
-  marginPercent?: string
+  markupPercent?: string
 }
 
 /**
@@ -132,19 +132,20 @@ export async function addProduct(
   const prefilled = dollarsToCents(prefilledInput)
   expect(prefilled).toBeGreaterThanOrEqual(minimum)
 
-  if (options.marginPercent) {
-    const typedMargin = options.marginPercent
+  if (options.markupPercent) {
+    const typedMarkup = options.markupPercent
+    const markup = dialog.getByLabel('Markup %')
+    await expect(markup).toBeVisible()
     const feeBefore = await shownFee(fee)
-    const margin = dialog.getByLabel('Margin %')
-    await margin.fill(typedMargin)
+    await markup.fill(typedMarkup)
     await expect(price).not.toHaveValue(prefilledInput)
     await expectFeeForPrice(dialog, price, fee, minimum)
     expect(await shownFee(fee)).not.toBe(feeBefore)
-    await margin.blur()
-    // Blur may format "40" as "40.00". Either way it stays the typed percent.
+    await markup.blur()
+    // Blur may format "300" as "300.00". Either way it stays the typed percent.
     await expect(async () => {
-      expect(percentToBps(await margin.inputValue())).toBe(
-        percentToBps(typedMargin),
+      expect(percentToBps(await markup.inputValue())).toBe(
+        percentToBps(typedMarkup),
       )
     }).toPass()
     await expectFeeForPrice(dialog, price, fee, minimum)

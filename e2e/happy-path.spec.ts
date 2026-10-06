@@ -14,10 +14,10 @@ import {
 import { moneyIn } from './money'
 
 // Small supplement_orders_e2e seed: the first provider, their first patient, and two products
-// chosen by SKU fragment. Vitamin D3 gets Margin % 40. The price is read back
-// from the field rather than computed. Markup % lands later. Magnesium stays
-// at its prefilled
-// price with quantity 2.
+// chosen by SKU fragment. Vitamin D3 gets Markup % 300, which is read back
+// from the field rather than computed. That label is not on this UI yet, so
+// the happy path stays red there. Magnesium stays at its prefilled price
+// with quantity 2.
 const PROVIDER = 'Dr. Maya Rivera (Provider)'
 const PATIENT = 'Jordan Lee'
 const PATIENT_USER = 'Jordan Lee (Patient)'
@@ -61,7 +61,7 @@ test('provider sends an order, the patient pays, and the dashboard matches', asy
 
     await addProduct(page, FIRST_SKU, {
       quantity: FIRST_QUANTITY,
-      marginPercent: '40',
+      markupPercent: '300',
     })
     await addProduct(page, SECOND_SKU, { quantity: SECOND_QUANTITY })
 
