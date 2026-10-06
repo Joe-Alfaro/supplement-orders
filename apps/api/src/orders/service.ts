@@ -3,7 +3,9 @@ import {
   computeSplit,
   SplitValidationError,
   toLedgerEntries,
+  ORDER_STATUS_LABELS,
   type DraftLine,
+  type OrderStatus,
   type SplitLine,
 } from '@supplement-orders/domain'
 import { and, asc, eq, gte, inArray, sql } from 'drizzle-orm'
@@ -64,7 +66,21 @@ async function lockOrder(tx: Tx, orderId: number) {
   return order
 }
 
-async function lockOwnedDraft(tx: Tx, user: ProviderUser, orderId: number) {
+/**
+ * The status as it reads mid-sentence in a message the UI shows verbatim,
+ * e.g. "This order is awaiting payment". Never the raw enum value.
+ */
+function statusInSentence(status: OrderStatus) {
+  if (status === 'draft') return 'a draft'
+  return ORDER_STATUS_LABELS[status].toLowerCase()
+}
+
+async function lockOwnedDraft(
+  tx: Tx,
+  user: ProviderUser,
+  orderId: number,
+  action: 'edited' | 'sent' | 'deleted',
+) {
   const order = await lockOrder(tx, orderId)
   if (order.providerId !== user.providerId) {
     throw forbidden('This order belongs to another provider')
@@ -73,7 +89,7 @@ async function lockOwnedDraft(tx: Tx, user: ProviderUser, orderId: number) {
     throw new ApiError(
       409,
       'ORDER_NOT_DRAFT',
-      `Order is ${order.status}; only drafts can be changed`,
+      `This order is ${statusInSentence(order.status)}; only drafts can be ${action}.`,
     )
   }
   return order
@@ -128,7 +144,7 @@ export async function replaceDraftLines(
   lines: DraftLine[],
 ) {
   await db.transaction(async (tx) => {
-    await lockOwnedDraft(tx, user, orderId)
+    await lockOwnedDraft(tx, user, orderId, 'edited')
 
     const productIds = lines.flatMap((l) =>
       l.productId === null ? [] : [l.productId],
@@ -200,7 +216,7 @@ export async function sendOrder(
   orderId: number,
 ) {
   await db.transaction(async (tx) => {
-    await lockOwnedDraft(tx, user, orderId)
+    await lockOwnedDraft(tx, user, orderId, 'sent')
     const rows = await tx
       .select({
         itemId: orderItems.id,
@@ -284,7 +300,7 @@ export async function sendOrder(
  */
 export async function deleteDraft(db: Db, user: ProviderUser, orderId: number) {
   await db.transaction(async (tx) => {
-    await lockOwnedDraft(tx, user, orderId)
+    await lockOwnedDraft(tx, user, orderId, 'deleted')
     await tx.delete(orderItems).where(eq(orderItems.orderId, orderId))
     await tx.delete(orders).where(eq(orders.id, orderId))
   })
@@ -305,7 +321,7 @@ export async function reopenOrder(db: Db, user: ProviderUser, orderId: number) {
       throw new ApiError(
         409,
         'ORDER_NOT_REOPENABLE',
-        `Order is ${order.status}; only cancelled orders can be reopened`,
+        `This order is ${statusInSentence(order.status)}; only cancelled orders can be reopened.`,
       )
     }
     await tx
@@ -344,7 +360,7 @@ export async function cancelOrder(
       throw new ApiError(
         409,
         'ORDER_NOT_CANCELLABLE',
-        `Order is ${order.status} and cannot be cancelled`,
+        `This order is ${statusInSentence(order.status)}; only orders awaiting payment can be cancelled.`,
       )
     }
     const now = new Date()
@@ -389,7 +405,7 @@ export async function payOrder(
       throw new ApiError(
         409,
         'ORDER_NOT_PAYABLE',
-        `Order is ${order.status} and cannot be paid`,
+        `This order is ${statusInSentence(order.status)} and can't be paid.`,
       )
     }
 

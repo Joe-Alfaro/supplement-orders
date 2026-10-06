@@ -120,6 +120,35 @@ main {
   max-width: 24rem;
 }
 
+.filters {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin: 0.5rem 0 1rem;
+}
+
+.filters .search {
+  margin: 0;
+}
+
+.filter {
+  min-width: 14rem;
+}
+
+/* The MultiSelect header slot renders above the header row; sit its visible
+   "Select all" label beside the select-all checkbox. */
+.status-overlay {
+  position: relative;
+}
+
+.select-all-label {
+  position: absolute;
+  top: 0.6rem;
+  left: 2.75rem;
+  cursor: pointer;
+}
+
 .field {
   display: flex;
   flex-direction: column;

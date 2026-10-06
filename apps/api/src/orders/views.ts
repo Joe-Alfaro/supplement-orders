@@ -3,7 +3,7 @@ import {
   markupBpsFromPrice,
   minUnitPriceCents,
   SplitValidationError,
-  type OrderListStatusFilter,
+  type OrderStatusSelection,
   type ProviderOrderListItemDto,
   type ProviderOrderListPageDto,
   type LedgerEntryDto,
@@ -353,9 +353,11 @@ export async function loadPatientOrderDetail(
 export const orderActivityAt = sql<Date>`coalesce(${orders.paidAt}, ${orders.cancelledAt}, ${orders.sentAt}, ${orders.createdAt})`
 
 /**
- * Provider order list (Orders tab, dashboard Awaiting payment). Pending orders
- * list the oldest sent first, served by (provider_id, status, sent_at, id).
- * Every other filter, `all` included, lists the most recent activity first.
+ * Provider order list (Orders tab, dashboard Awaiting payment). Exactly
+ * [pending_payment] lists the oldest sent first, served by (provider_id, status,
+ * sent_at, id). Any other selection, `all` included, lists the most recent
+ * activity first: one status uses orders_provider_status_activity_idx, several
+ * (status IN ...) or all walk orders_provider_activity_idx in order and filter.
  */
 export async function listProviderOrderPage(
   db: Db,
@@ -366,7 +368,7 @@ export async function listProviderOrderPage(
     offset,
     limit,
   }: {
-    status: OrderListStatusFilter
+    status: OrderStatusSelection
     patientId?: number
     offset: number
     limit: number
@@ -374,13 +376,14 @@ export async function listProviderOrderPage(
 ): Promise<ProviderOrderListPageDto> {
   const where = and(
     eq(orders.providerId, providerId),
-    status === 'all' ? undefined : eq(orders.status, status),
+    status === 'all' ? undefined : inArray(orders.status, status),
     patientId === undefined ? undefined : eq(orders.patientId, patientId),
   )
-  const ordering =
-    status === 'pending_payment'
-      ? [asc(orders.sentAt), asc(orders.id)]
-      : [desc(orderActivityAt), desc(orders.id)]
+  const awaitingOnly =
+    status !== 'all' && status.length === 1 && status[0] === 'pending_payment'
+  const ordering = awaitingOnly
+    ? [asc(orders.sentAt), asc(orders.id)]
+    : [desc(orderActivityAt), desc(orders.id)]
   const [rows, [counted]] = await Promise.all([
     db
       .select({

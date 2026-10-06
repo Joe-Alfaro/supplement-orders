@@ -97,6 +97,16 @@ export function usePagedSearch<T>(
     return load()
   }
 
+  /**
+   * Back to the first page and fetch again, keeping the current query. Use
+   * when a filter outside the search box changes (fetchPage reads it).
+   */
+  function restart() {
+    cancelPending()
+    offset.value = 0
+    return load()
+  }
+
   /** Jump to a page by its first row, e.g. from DataTable's `@page`. */
   function goTo(first: number) {
     const target = Math.max(0, first)
@@ -125,5 +135,6 @@ export function usePagedSearch<T>(
     next,
     previous,
     goTo,
+    restart,
   }
 }

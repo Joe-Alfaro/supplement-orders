@@ -74,7 +74,7 @@ describe('listOrdersQuerySchema', () => {
         offset: '25',
         limit: '25',
       }),
-    ).toEqual({ status: 'pending_payment', offset: 25, limit: 25 })
+    ).toEqual({ status: ['pending_payment'], offset: 25, limit: 25 })
   })
 
   it('keeps the plain patient filter working', () => {
@@ -85,16 +85,35 @@ describe('listOrdersQuerySchema', () => {
     })
   })
 
-  it.each(['draft', 'pending_payment', 'paid', 'cancelled', 'all'])(
-    'accepts status %s (revision 8)',
+  it.each(['draft', 'pending_payment', 'paid', 'cancelled'])(
+    'accepts the single status %s as a one-item set',
     (status) => {
-      expect(listOrdersQuerySchema.parse({ status }).status).toBe(status)
+      expect(listOrdersQuerySchema.parse({ status }).status).toEqual([status])
     },
   )
+
+  it('accepts all on its own', () => {
+    expect(listOrdersQuerySchema.parse({ status: 'all' }).status).toBe('all')
+  })
+
+  it('parses a comma-separated set and ignores duplicates (revision 8b)', () => {
+    expect(
+      listOrdersQuerySchema.parse({
+        status: 'draft,pending_payment,cancelled,draft',
+      }).status,
+    ).toEqual(['draft', 'pending_payment', 'cancelled'])
+  })
 
   it.each([
     [{ status: 'bogus' }, 'status'],
     [{ status: 'PAID' }, 'status'],
+    [{ status: '' }, 'status'],
+    [{ status: 'draft,' }, 'status'],
+    [{ status: ',draft' }, 'status'],
+    [{ status: 'draft, paid' }, 'status'],
+    [{ status: 'draft,bogus' }, 'status'],
+    [{ status: 'all,paid' }, 'status'],
+    [{ status: ['draft', 'paid'] }, 'status'],
     [{ status: 'pending_payment', limit: '0' }, 'limit'],
   ])('rejects %j on %s', (input, field) => {
     const result = listOrdersQuerySchema.safeParse(input)

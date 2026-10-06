@@ -67,3 +67,17 @@ export const primeVueOptions: PrimeVueConfiguration = {
     options: { darkModeSelector: false },
   },
 }
+
+/**
+ * Passthrough for every PrimeVue Select, from axe in a real browser with the
+ * list open: its focus-wrap sentinels are aria-hidden yet tabbable, and the
+ * scrolling list has nothing focusable. Tab already closes the list through
+ * Select's own key handling, so the sentinels need not be tab stops; the list
+ * container becomes keyboard-scrollable. Pair with append-to="self" so the list
+ * stays inside its landmark.
+ */
+export const accessibleSelectPt = {
+  hiddenFirstFocusableEl: { tabindex: -1 },
+  hiddenLastFocusableEl: { tabindex: -1 },
+  listContainer: { tabindex: 0 },
+}
