@@ -18,8 +18,8 @@ import type {
   AwaitingPaymentOrderDto,
   AwaitingPaymentPageDto,
   DashboardDto,
-  DashboardPaidOrderDto,
   OrderLineInput,
+  PayOrderRequest,
   PatientOrderDetailDto,
   PatientOrderSummaryDto,
   PatientPageDto,
@@ -64,6 +64,7 @@ const PROVIDER_SUMMARY_KEYS = [
   'sentAt',
   'paidAt',
   'cancelledAt',
+  'revision',
   'view',
   'split',
 ]
@@ -79,6 +80,7 @@ const PATIENT_SUMMARY_KEYS = [
   'sentAt',
   'paidAt',
   'cancelledAt',
+  'revision',
   'view',
   'totalCents',
 ]
@@ -159,23 +161,7 @@ const AWAITING_KEYS = [
   'cancelledAt',
 ]
 
-const DASHBOARD_KEYS = [
-  'gmvCents',
-  'providerMarginCents',
-  'platformFeeCents',
-  'paidOrders',
-]
-
-const PAID_ORDER_KEYS = [
-  'orderId',
-  'patientId',
-  'patientName',
-  'paidAt',
-  'totalCents',
-  'cogsCents',
-  'providerMarginCents',
-  'platformFeeCents',
-]
+const DASHBOARD_KEYS = ['gmvCents', 'providerMarginCents', 'platformFeeCents']
 
 interface ContextHolder {
   ctx?: TestContext
@@ -383,18 +369,7 @@ function expectPatientPage(body: unknown): PatientPageDto {
 
 function expectDashboard(body: unknown): DashboardDto {
   expectExactKeys(body, DASHBOARD_KEYS)
-  const record = asRecord(body)
-  if (!Array.isArray(record.paidOrders)) {
-    throw new Error('paidOrders must be an array')
-  }
-  record.paidOrders.forEach((order) => {
-    expectExactKeys(order, PAID_ORDER_KEYS)
-  })
-  const dashboard = dashboardDtoSchema.parse(body)
-  dashboard.paidOrders.forEach((order) => {
-    expectIsoTimestamp(order.paidAt)
-  })
-  return dashboard
+  return dashboardDtoSchema.parse(body)
 }
 
 function requireSentAt(item: AwaitingPaymentOrderDto): string {
@@ -514,23 +489,6 @@ function stockPairs(products: readonly ProductDto[]): StockPair[] {
       stockQuantity: product.stockQuantity,
     }))
     .sort((left, right) => left.id - right.id)
-}
-
-function sumBy(
-  orders: readonly DashboardPaidOrderDto[],
-  field: 'totalCents' | 'providerMarginCents' | 'platformFeeCents',
-): number {
-  return orders.reduce((sum, order) => sum + order[field], 0)
-}
-
-function expectTilesMatchRows(dashboard: DashboardDto): void {
-  expect(dashboard.gmvCents).toBe(sumBy(dashboard.paidOrders, 'totalCents'))
-  expect(dashboard.providerMarginCents).toBe(
-    sumBy(dashboard.paidOrders, 'providerMarginCents'),
-  )
-  expect(dashboard.platformFeeCents).toBe(
-    sumBy(dashboard.paidOrders, 'platformFeeCents'),
-  )
 }
 
 function expectPaidLedger(detail: ProviderOrderDetailDto): void {
@@ -662,11 +620,15 @@ async function cancelOrder(orderId: number): Promise<ProviderOrderDetailDto> {
   return expectProviderDetail(response.body)
 }
 
-function pay(orderId: number) {
+function pay(order: ProviderOrderDetailDto) {
+  const body: PayOrderRequest = {
+    expectedRevision: order.revision,
+    expectedTotalCents: requireSplit(order).totalCents,
+  }
   return context()
-    .request.post(`/api/orders/${orderId}/pay`)
+    .request.post(`/api/orders/${order.id}/pay`)
     .set(USER_ID_HEADER, String(context().seed.patientUserId))
-    .send({})
+    .send(body)
 }
 
 async function placePayableOrder(
@@ -821,7 +783,7 @@ describe('POST /api/orders/:id/cancel', () => {
   it('refuses to cancel a paid order and leaves its three ledger entries', async () => {
     const placed = await placePayableOrder()
     const beforePay = stockPairs(await listProducts())
-    const paidResponse = await pay(placed.detail.id)
+    const paidResponse = await pay(placed.detail)
     expect(paidResponse.status).toBe(200)
     const patientPaid = expectPatientDetail(paidResponse.body)
     expect(patientPaid.status).toBe('paid')
@@ -925,7 +887,7 @@ describe('POST /api/orders/:id/pay', () => {
     expect(cancelled.payment).toBeNull()
     expect(cancelled.ledger).toEqual([])
 
-    const refused = await pay(placed.detail.id)
+    const refused = await pay(placed.detail)
     expectError(
       { status: refused.status, body: refused.body },
       409,
@@ -1009,7 +971,7 @@ describe('GET /api/orders?status=pending_payment', () => {
     const third = await placePayableOrder()
     const draft = await createDraft()
     const paid = await placePayableOrder()
-    const paidResponse = await pay(paid.detail.id)
+    const paidResponse = await pay(paid.detail)
     expect(paidResponse.status).toBe(200)
     const cancelled = await cancelOrder((await placePayableOrder()).detail.id)
     const foreign = await placePayableOrder(
@@ -1117,7 +1079,7 @@ describe('GET /api/orders?status=pending_payment', () => {
     const draft = await createDraft()
     const pending = await placePayableOrder()
     const paidPlaced = await placePayableOrder()
-    const paidResponse = await pay(paidPlaced.detail.id)
+    const paidResponse = await pay(paidPlaced.detail)
     expect(paidResponse.status).toBe(200)
     const paid = await getProviderOrder(paidPlaced.detail.id)
     const cancelled = await cancelOrder((await placePayableOrder()).detail.id)
@@ -1209,32 +1171,16 @@ describe('GET /api/orders?status=pending_payment', () => {
 describe('GET /api/dashboard', () => {
   it('leaves GMV, margin, and fees unchanged when orders are cancelled', async () => {
     const placed = await placePayableOrder()
-    const paidResponse = await pay(placed.detail.id)
+    const paidResponse = await pay(placed.detail)
     expect(paidResponse.status).toBe(200)
     const paid = await getProviderOrder(placed.detail.id)
     const split = requireSplit(paid)
     expect(paid.paidAt).not.toBeNull()
-    if (paid.paidAt === null) {
-      throw new Error('paid order is missing paidAt')
-    }
 
     const before = await getDashboard()
-    expectTilesMatchRows(before)
     expect(before.gmvCents).toBe(split.totalCents)
     expect(before.providerMarginCents).toBe(split.providerMarginCents)
     expect(before.platformFeeCents).toBe(split.platformFeeCents)
-    expect(before.paidOrders).toEqual([
-      {
-        orderId: paid.id,
-        patientId: paid.patientId,
-        patientName: paid.patientName,
-        paidAt: paid.paidAt,
-        totalCents: split.totalCents,
-        cogsCents: split.cogsCents,
-        providerMarginCents: split.providerMarginCents,
-        platformFeeCents: split.platformFeeCents,
-      },
-    ])
 
     const draft = await createDraft()
     const cancelled = await cancelOrder((await placePayableOrder()).detail.id)
@@ -1242,14 +1188,6 @@ describe('GET /api/dashboard', () => {
     expect(cancelled.status).toBe('cancelled')
 
     const after = await getDashboard()
-    expect(after.gmvCents).toBe(before.gmvCents)
-    expect(after.providerMarginCents).toBe(before.providerMarginCents)
-    expect(after.platformFeeCents).toBe(before.platformFeeCents)
-    expect(after.paidOrders).toEqual(before.paidOrders)
-    expectTilesMatchRows(after)
-    const paidIds = after.paidOrders.map((order) => order.orderId)
-    expect(paidIds).toContain(paid.id)
-    expect(paidIds).not.toContain(draft.id)
-    expect(paidIds).not.toContain(cancelled.id)
+    expect(after).toEqual(before)
   })
 })

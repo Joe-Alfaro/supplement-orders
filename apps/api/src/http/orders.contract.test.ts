@@ -38,6 +38,7 @@ const PROVIDER_DETAIL_KEYS = [
   'sentAt',
   'paidAt',
   'cancelledAt',
+  'revision',
   'view',
   'split',
   'patientDateOfBirth',

@@ -6,38 +6,19 @@ import {
 } from '@supplement-orders/domain'
 import type {
   DashboardDto,
-  DashboardPaidOrderDto,
   OrderLineInput,
+  PayOrderRequest,
   ProviderOrderDetailDto,
 } from '@supplement-orders/domain'
 import { createTestContext } from '../testing/harness'
 import type { TestContext } from '../testing/harness'
 
-// Tiles are all-time sums for the acting provider. Pending orders are absent
-// from paidOrders and do not move the tiles. The order just paid is newest.
-// Revision 2: the patient pays the subtotal, so GMV is that subtotal. Margin
-// on a paid row is subtotal - wholesale cost - fee.
+// Tiles are all-time sums for the acting provider. A pending order does not
+// move them. Revision 9 drops paidOrders; the paid list is
+// GET /api/orders?status=paid. Revision 2: the patient pays the subtotal, so
+// GMV is that subtotal. Margin is subtotal - wholesale cost - fee.
 
-const ISO_TIMESTAMP =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
-
-const DASHBOARD_KEYS = [
-  'gmvCents',
-  'providerMarginCents',
-  'platformFeeCents',
-  'paidOrders',
-]
-
-const PAID_ORDER_KEYS = [
-  'orderId',
-  'patientId',
-  'patientName',
-  'paidAt',
-  'totalCents',
-  'cogsCents',
-  'providerMarginCents',
-  'platformFeeCents',
-]
+const DASHBOARD_KEYS = ['gmvCents', 'providerMarginCents', 'platformFeeCents']
 
 const PROVIDER_DETAIL_KEYS = [
   'id',
@@ -50,6 +31,7 @@ const PROVIDER_DETAIL_KEYS = [
   'sentAt',
   'paidAt',
   'cancelledAt',
+  'revision',
   'view',
   'split',
   'patientDateOfBirth',
@@ -92,18 +74,7 @@ function expectExactKeys(value: unknown, keys: readonly string[]): void {
 
 function expectDashboard(body: unknown): DashboardDto {
   expectExactKeys(body, DASHBOARD_KEYS)
-  const record = asRecord(body)
-  if (!Array.isArray(record.paidOrders)) {
-    throw new Error('paidOrders must be an array')
-  }
-  record.paidOrders.forEach((order) => {
-    expectExactKeys(order, PAID_ORDER_KEYS)
-  })
-  const dashboard = dashboardDtoSchema.parse(body)
-  dashboard.paidOrders.forEach((order) => {
-    expect(order.paidAt).toMatch(ISO_TIMESTAMP)
-  })
-  return dashboard
+  return dashboardDtoSchema.parse(body)
 }
 
 function ceilUnitFeeCents(priceCents: number): number {
@@ -207,23 +178,6 @@ function requireSplit(
   return detail.split
 }
 
-function sumBy(
-  orders: readonly DashboardPaidOrderDto[],
-  field: 'totalCents' | 'providerMarginCents' | 'platformFeeCents',
-): number {
-  return orders.reduce((sum, order) => sum + order[field], 0)
-}
-
-function expectTilesMatchRows(dashboard: DashboardDto): void {
-  expect(dashboard.gmvCents).toBe(sumBy(dashboard.paidOrders, 'totalCents'))
-  expect(dashboard.providerMarginCents).toBe(
-    sumBy(dashboard.paidOrders, 'providerMarginCents'),
-  )
-  expect(dashboard.platformFeeCents).toBe(
-    sumBy(dashboard.paidOrders, 'platformFeeCents'),
-  )
-}
-
 beforeAll(async () => {
   holder.ctx = await createTestContext()
 })
@@ -241,23 +195,23 @@ afterAll(async () => {
 describe('GET /api/dashboard', () => {
   it('leaves the tiles unchanged while an order is pending payment', async () => {
     const before = await getDashboard()
-    expectTilesMatchRows(before)
-    const pending = await sendExample()
+    await sendExample()
     const after = await getDashboard()
 
     expect(after).toEqual(before)
-    expect(after.paidOrders.map((order) => order.orderId)).not.toContain(
-      pending.id,
-    )
   })
 
   it('adds a paid order to GMV, margin, and fees', async () => {
     const before = await getDashboard()
     const pending = await sendExample()
+    const quote: PayOrderRequest = {
+      expectedRevision: pending.revision,
+      expectedTotalCents: requireSplit(pending).totalCents,
+    }
     const paid = await context()
       .request.post(`/api/orders/${pending.id}/pay`)
       .set(USER_ID_HEADER, String(context().seed.patientUserId))
-      .send({})
+      .send(quote)
     expect(paid.status).toBe(200)
 
     const provider = await context()
@@ -267,16 +221,12 @@ describe('GET /api/dashboard', () => {
     const detail = providerOrderDetailDtoSchema.parse(provider.body)
     const split = requireSplit(detail)
     expect(detail.paidAt).not.toBeNull()
-    if (detail.paidAt === null) {
-      throw new Error('paid order is missing paidAt')
-    }
     expect(split.totalCents).toBe(split.subtotalCents)
     expect(split.providerMarginCents).toBe(
       split.subtotalCents - split.cogsCents - split.platformFeeCents,
     )
 
     const dashboard = await getDashboard()
-    expectTilesMatchRows(dashboard)
     expect(dashboard.gmvCents).toBe(before.gmvCents + split.totalCents)
     expect(dashboard.providerMarginCents).toBe(
       before.providerMarginCents + split.providerMarginCents,
@@ -284,17 +234,5 @@ describe('GET /api/dashboard', () => {
     expect(dashboard.platformFeeCents).toBe(
       before.platformFeeCents + split.platformFeeCents,
     )
-    expect(dashboard.paidOrders[0]?.orderId).toBe(detail.id)
-    expect(dashboard.paidOrders[0]).toEqual({
-      orderId: detail.id,
-      patientId: detail.patientId,
-      patientName: detail.patientName,
-      paidAt: detail.paidAt,
-      totalCents: split.totalCents,
-      cogsCents: split.cogsCents,
-      providerMarginCents: split.providerMarginCents,
-      platformFeeCents: split.platformFeeCents,
-    })
-    expect(dashboard.paidOrders[0]?.paidAt).toMatch(ISO_TIMESTAMP)
   })
 })
