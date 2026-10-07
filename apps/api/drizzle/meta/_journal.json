@@ -57,6 +57,13 @@
       "when": 1791330210060,
       "tag": "0007_rev9_payment_attempts",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791331083279,
+      "tag": "0008_rev9_attempt_stock_hold",
+      "breakpoints": true
     }
   ]
 }

@@ -119,7 +119,7 @@ describe('POST /api/orders/:id/pay', () => {
     expect((await pay(ctx, orderId)).status).toBe(200)
   })
 
-  it('rolls back the payment, ledger and stock when a failure follows the ledger insert', async () => {
+  it("rolls back the payment and ledger when a failure follows the ledger insert, keeping the charge's stock", async () => {
     const orderId = await createSentOrder(ctx)
     const before = await moneyState(ctx, orderId)
     ctx.payHooks.afterLedgerInsert = async () => {
@@ -133,13 +133,20 @@ describe('POST /api/orders/:id/pay', () => {
     const after = await moneyState(ctx, orderId)
     expect(after.payments).toHaveLength(0)
     expect(after.ledger).toHaveLength(0)
-    expect(after.stock).toEqual(before.stock)
     expect(after.order).toEqual({ status: 'pending_payment', paidAt: null })
+    // The charge succeeded, so its attempt keeps the stock it reserved before
+    // charging: the unreconciled charge can always complete.
+    const reserved = sampleLines(ctx).map((l) => l.quantity)
+    expect(after.stock.slice(0, 2).map((p) => p.stockQuantity)).toEqual(
+      before.stock.slice(0, 2).map((p, i) => p.stockQuantity - reserved[i]!),
+    )
 
-    // A retry reuses the idempotency key, so the gateway returns the original charge.
+    // A retry reuses the idempotency key, so the gateway returns the original charge,
+    // and the reserved stock becomes the sale without being taken twice.
     delete ctx.payHooks.afterLedgerInsert
     const retry = await pay(ctx, orderId)
     expect(retry.status).toBe(200)
+    expect((await moneyState(ctx, orderId)).stock).toEqual(after.stock)
     const keys = new Set(ctx.gateway.charges.map((c) => c.idempotencyKey))
     expect(keys.size).toBe(1)
   })

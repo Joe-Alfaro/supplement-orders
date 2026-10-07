@@ -463,34 +463,17 @@ async function loadPayLines(tx: Tx, orderId: number): Promise<PayLine[]> {
   )
 }
 
-/** Reads stock without changing it, so a short order is refused before any charge. */
-async function assertStockAvailable(tx: Tx, lines: PayLine[]) {
-  if (lines.length === 0) return
-  const stock = await tx
-    .select({ id: products.id, stockQuantity: products.stockQuantity })
-    .from(products)
-    .where(
-      inArray(
-        products.id,
-        lines.map((l) => l.productId),
-      ),
-    )
-  const byId = new Map(stock.map((p) => [p.id, p.stockQuantity]))
-  lines.forEach((line) => {
-    const available = byId.get(line.productId) ?? 0
-    if (line.quantity > available)
-      throw insufficientStock(line.index, available)
-  })
+function byProductId(lines: PayLine[]) {
+  return [...lines].sort((a, b) => a.productId - b.productId)
 }
 
 /**
- * Decrements stock in ascending product id (M2), so two orders sharing products
- * always lock product rows in the same order and cannot deadlock. Errors still
- * name the original line index.
+ * Takes the order's stock, conditionally and in ascending product id (M2), so two
+ * orders sharing products always lock product rows in the same order and cannot
+ * deadlock. Throws 422 INSUFFICIENT_STOCK naming the original line index.
  */
 async function decrementStock(tx: Tx, lines: PayLine[]) {
-  const ordered = [...lines].sort((a, b) => a.productId - b.productId)
-  await ordered.reduce(async (prev, line) => {
+  await byProductId(lines).reduce(async (prev, line) => {
     await prev
     const [updated] = await tx
       .update(products)
@@ -512,6 +495,17 @@ async function decrementStock(tx: Tx, lines: PayLine[]) {
   }, Promise.resolve())
 }
 
+/** Gives back stock taken by decrementStock, in the same product-id order. */
+async function releaseStock(tx: Tx, lines: PayLine[]) {
+  await byProductId(lines).reduce(async (prev, line) => {
+    await prev
+    await tx
+      .update(products)
+      .set({ stockQuantity: sql`${products.stockQuantity} + ${line.quantity}` })
+      .where(eq(products.id, line.productId))
+  }, Promise.resolve())
+}
+
 export interface PayRequest {
   expectedRevision: number
   expectedTotalCents: number
@@ -522,9 +516,11 @@ type Attempt = typeof paymentAttempts.$inferSelect
 
 /**
  * Step 1 (one committed transaction): lock and validate the order against the
- * quote the patient saw (H1), refuse a short stock up front, then insert or reuse
- * the attempt for this revision. Returns null when the order is already paid at
- * this revision, which makes pay idempotent.
+ * quote the patient saw (H1), insert or reuse the attempt for this revision, and
+ * reserve the order's stock for it unless the attempt already holds it. A short
+ * stock is a 422 here, before any charge, and rolls the attempt back with it, so
+ * a charge that succeeds can always complete. Returns null when the order is
+ * already paid at this revision, which makes pay idempotent.
  */
 async function preparePayment(
   db: Db,
@@ -556,7 +552,18 @@ async function preparePayment(
     ) {
       throw orderChanged()
     }
-    await assertStockAvailable(tx, await loadPayLines(tx, orderId))
+    const lines = await loadPayLines(tx, orderId)
+    /** The reservation belongs to the attempt: taken once, never twice. */
+    async function holdStock(attempt: Attempt): Promise<Attempt> {
+      if (attempt.stockHeld) return attempt
+      await decrementStock(tx, lines)
+      const [held] = await tx
+        .update(paymentAttempts)
+        .set({ stockHeld: true, updatedAt: new Date() })
+        .where(eq(paymentAttempts.id, attempt.id))
+        .returning()
+      return held ?? { ...attempt, stockHeld: true }
+    }
 
     const [existing] = await tx
       .select()
@@ -570,13 +577,13 @@ async function preparePayment(
     if (existing) {
       // Cannot differ while H1 holds (a revision's total is fixed); defensive.
       if (existing.amountCents !== order.totalCents) throw orderChanged()
-      if (existing.status !== 'failed') return existing
+      if (existing.status !== 'failed') return holdStock(existing)
       const [retry] = await tx
         .update(paymentAttempts)
         .set({ status: 'pending', updatedAt: new Date() })
         .where(eq(paymentAttempts.id, existing.id))
         .returning()
-      return retry ?? existing
+      return holdStock(retry ?? existing)
     }
     const [created] = await tx
       .insert(paymentAttempts)
@@ -591,7 +598,30 @@ async function preparePayment(
       throw new Error(
         `Payment attempt insert for order ${orderId} returned no row`,
       )
-    return created
+    return holdStock(created)
+  })
+}
+
+/**
+ * Marks a declined attempt failed and gives its stock back, in one transaction
+ * under the order lock. Only a still-pending attempt is failed: if a concurrent
+ * pay already recorded a success for it, that charge keeps the stock.
+ */
+async function recordFailure(db: Db, attempt: Attempt) {
+  await db.transaction(async (tx) => {
+    await lockOrder(tx, attempt.orderId)
+    const [current] = await tx
+      .select()
+      .from(paymentAttempts)
+      .where(eq(paymentAttempts.id, attempt.id))
+    if (!current || current.status !== 'pending') return
+    if (current.stockHeld) {
+      await releaseStock(tx, await loadPayLines(tx, attempt.orderId))
+    }
+    await tx
+      .update(paymentAttempts)
+      .set({ status: 'failed', stockHeld: false, updatedAt: new Date() })
+      .where(eq(paymentAttempts.id, attempt.id))
   })
 }
 
@@ -620,10 +650,7 @@ async function chargeAttempt(
     { simulateFailure: allowSimulatedFailure && simulateFailure },
   )
   if (charge.status === 'failed') {
-    await db
-      .update(paymentAttempts)
-      .set({ status: 'failed', updatedAt: new Date() })
-      .where(eq(paymentAttempts.id, attempt.id))
+    await recordFailure(db, attempt)
     if (charge.failureCode === 'IDEMPOTENCY_KEY_REUSED') {
       throw new ApiError(409, 'IDEMPOTENCY_KEY_REUSED', charge.failureMessage)
     }
@@ -648,8 +675,8 @@ async function chargeAttempt(
 
 /**
  * Step 5 (one transaction): lock, re-check the order still matches the attempt,
- * decrement stock, record the payment against the attempt, write and verify the
- * three ledger rows, mark paid. If this rolls back after a successful charge, the
+ * record the payment against the attempt (its reserved stock becomes the sale),
+ * write and verify the three ledger rows, mark paid. If this rolls back after a successful charge, the
  * attempt stays succeeded without a payment (an unreconciled charge) and a retried
  * pay at the same revision completes it.
  */
@@ -682,7 +709,19 @@ async function recordPayment(
         `Order ${order.id} lines no longer match the sent total (${split.totalCents} != ${order.totalCents})`,
       )
     }
-    await decrementStock(tx, lines)
+    // Normally the attempt reserved the stock in step 1. It holds none only if a
+    // concurrent decline released it while this charge succeeded; take it now.
+    const [current] = await tx
+      .select({ stockHeld: paymentAttempts.stockHeld })
+      .from(paymentAttempts)
+      .where(eq(paymentAttempts.id, attempt.id))
+    if (!current?.stockHeld) {
+      await decrementStock(tx, lines)
+      await tx
+        .update(paymentAttempts)
+        .set({ stockHeld: true, updatedAt: new Date() })
+        .where(eq(paymentAttempts.id, attempt.id))
+    }
 
     const [payment] = await tx
       .insert(payments)

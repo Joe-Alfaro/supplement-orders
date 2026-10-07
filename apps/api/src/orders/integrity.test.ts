@@ -8,7 +8,7 @@ import {
   it,
   vi,
 } from 'vitest'
-import { orderItems, orders, paymentAttempts } from '../db/schema'
+import { orderItems, orders, paymentAttempts, products } from '../db/schema'
 import {
   as,
   createDraft,
@@ -16,6 +16,7 @@ import {
   moneyState,
   pay,
   patientQuote,
+  setStock,
 } from '../testing/flows'
 import {
   createInternalTestContext,
@@ -228,9 +229,11 @@ describe('revision 9: payment integrity and hardening', () => {
       expect(after.payments[0]!.gatewayReference).toBe(
         attempt!.gatewayReference,
       )
-      // Stock moved exactly once, by the completing write.
-      expect(after.stock[0]!.stockQuantity).toBe(
-        before.stock[0]!.stockQuantity - 1,
+      // The stock was reserved with the attempt and kept through the rollback;
+      // completing the payment does not take it a second time.
+      expect(after.stock).toEqual(before.stock)
+      expect(before.stock[0]!.stockQuantity).toBe(
+        ctx.seed.products[0]!.stockQuantity - 1,
       )
     })
 
@@ -308,6 +311,122 @@ describe('revision 9: payment integrity and hardening', () => {
 
       expect(res.status).toBe(204)
       expect(await attemptsFor(orderId)).toEqual([])
+    })
+  })
+
+  describe('stock is reserved with the payment attempt', () => {
+    /** Two orders for one unit each of a product with exactly one in stock. */
+    async function lastUnit() {
+      const product = ctx.seed.products[0]!
+      const line = { productId: product.id, quantity: 1, unitPriceCents: 2000 }
+      const first = await createSentOrder(ctx, [line])
+      const second = await createSentOrder(ctx, [line])
+      await setStock(ctx, product.id, 1)
+      return { productId: product.id, first, second }
+    }
+
+    async function stockOf(productId: number) {
+      const [row] = await ctx.db
+        .select({ stock: products.stockQuantity })
+        .from(products)
+        .where(eq(products.id, productId))
+      return row!.stock
+    }
+
+    it('lets exactly one of two concurrent pays take the last unit; the other is refused before charging', async () => {
+      const { productId, first, second } = await lastUnit()
+
+      const results = await Promise.all([pay(ctx, first), pay(ctx, second)])
+
+      expect(results.map((r) => r.status).sort()).toEqual([200, 422])
+      const loser = results.find((r) => r.status === 422)!
+      expect(loser.body.error).toMatchObject({
+        code: 'INSUFFICIENT_STOCK',
+        field: 'lines.0.quantity',
+      })
+      expect(ctx.gateway.charges).toHaveLength(1)
+      expect(await stockOf(productId)).toBe(0)
+      const loserId = results[0]!.status === 422 ? first : second
+      expect(await attemptsFor(loserId)).toEqual([])
+    })
+
+    it('holds the unit while a charge is in flight, so another order is refused without charging', async () => {
+      const { productId, first, second } = await lastUnit()
+      const charge = ctx.gateway.charge.bind(ctx.gateway)
+      const release = { resolve: () => {} }
+      const held = new Promise<void>((resolve) => {
+        release.resolve = resolve
+      })
+      vi.spyOn(ctx.gateway, 'charge').mockImplementationOnce(
+        async (...args) => {
+          await held
+          return charge(...args)
+        },
+      )
+
+      const paying = pay(ctx, first)
+      // Wait until the first attempt has committed its reservation.
+      await vi.waitFor(async () => expect(await stockOf(productId)).toBe(0))
+      const refused = await pay(ctx, second)
+      release.resolve()
+      const paid = await paying
+
+      expect([refused.status, refused.body.error.code]).toEqual([
+        422,
+        'INSUFFICIENT_STOCK',
+      ])
+      expect(paid.status).toBe(200)
+      expect(ctx.gateway.charges).toHaveLength(1)
+      expect(await stockOf(productId)).toBe(0)
+    })
+
+    it('gives the stock back exactly when the charge is declined', async () => {
+      const orderId = await sentAt(2000)
+      const before = (await moneyState(ctx, orderId)).stock
+
+      const declined = await pay(ctx, orderId, { simulateFailure: true })
+
+      expect(declined.status).toBe(402)
+      expect((await moneyState(ctx, orderId)).stock).toEqual(before)
+      expect((await attemptsFor(orderId))[0]).toMatchObject({
+        status: 'failed',
+        stockHeld: false,
+      })
+    })
+
+    it('reserves once per attempt across a decline, a retry and a double click', async () => {
+      const orderId = await sentAt(2000)
+      const productId = ctx.seed.products[0]!.id
+      const start = await stockOf(productId)
+
+      await pay(ctx, orderId, { simulateFailure: true })
+      const results = await Promise.all([pay(ctx, orderId), pay(ctx, orderId)])
+
+      expect(results.map((r) => r.status)).toEqual([200, 200])
+      expect(await stockOf(productId)).toBe(start - 1)
+      expect((await attemptsFor(orderId))[0]).toMatchObject({
+        status: 'succeeded',
+        stockHeld: true,
+      })
+    })
+
+    it('keeps the reservation of an unreconciled charge, so the unit cannot be sold twice', async () => {
+      const { productId, first, second } = await lastUnit()
+      ctx.payHooks.afterLedgerInsert = async () => {
+        throw new Error('database failure after the charge')
+      }
+      expect((await pay(ctx, first)).status).toBe(500)
+      delete ctx.payHooks.afterLedgerInsert
+
+      const other = await pay(ctx, second)
+      const completed = await pay(ctx, first)
+
+      expect([other.status, other.body.error.code]).toEqual([
+        422,
+        'INSUFFICIENT_STOCK',
+      ])
+      expect(completed.status).toBe(200)
+      expect(await stockOf(productId)).toBe(0)
     })
   })
 
