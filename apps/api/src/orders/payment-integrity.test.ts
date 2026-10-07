@@ -10,6 +10,11 @@ import {
 } from 'vitest'
 import { sql } from 'drizzle-orm'
 import pg from 'pg'
+import {
+  apiErrorResponseSchema,
+  providerOrderDetailDtoSchema,
+} from '@supplement-orders/domain'
+import type { ApiErrorCode, PayOrderRequest } from '@supplement-orders/domain'
 import { FakePaymentGateway } from '../seams'
 import type { ChargeResult } from '../seams'
 import { testDatabaseUrl } from '../db/databases'
@@ -105,9 +110,15 @@ function clearGatewayMemory(gateway: FakePaymentGateway): void {
   }
 }
 
-function orderTotal(body: unknown): number {
-  const split = asRecord(body).split
-  return numberValue(asRecord(split).totalCents, 'totalCents')
+function quoteFrom(body: unknown): PayOrderRequest {
+  const detail = providerOrderDetailDtoSchema.parse(body)
+  if (detail.split === null) {
+    throw new Error('sent order has no total')
+  }
+  return {
+    expectedRevision: detail.revision,
+    expectedTotalCents: detail.split.totalCents,
+  }
 }
 
 async function providerDetail(orderId: number): Promise<HttpResult> {
@@ -118,8 +129,11 @@ async function providerDetail(orderId: number): Promise<HttpResult> {
   )
 }
 
-function payBody(revision: number, totalCents: number) {
-  return { expectedRevision: revision, expectedTotalCents: totalCents }
+function payBody(
+  expectedRevision: number,
+  expectedTotalCents: number,
+): PayOrderRequest {
+  return { expectedRevision, expectedTotalCents }
 }
 
 async function loadAttempts(orderId: number): Promise<Attempt[]> {
@@ -181,14 +195,28 @@ async function loadPaymentLink(orderId: number): Promise<{
   }
 }
 
-function expectReconciliation(response: HttpResult): void {
-  expect(response.status).toBe(409)
+function expectApiError(
+  response: HttpResult,
+  status: number,
+  code: ApiErrorCode,
+  message?: string,
+): void {
+  expect(response.status).toBe(status)
+  const parsed = apiErrorResponseSchema.parse(response.body)
+  expect(parsed.error.code).toBe(code)
+  if (message !== undefined) {
+    expect(parsed.error.message).toBe(message)
+  }
+  expect(parsed.error.field).toBeUndefined()
   expect(Object.keys(asRecord(response.body))).toEqual(['error'])
-  const error = asRecord(asRecord(response.body).error)
-  expect(error.code).toBe('PAYMENT_NEEDS_RECONCILIATION')
-  expect(error.message).toBe(RECONCILIATION)
-  expect(error.field).toBeUndefined()
-  expect(Object.keys(error).sort()).toEqual(['code', 'message'])
+  expect(Object.keys(asRecord(asRecord(response.body).error)).sort()).toEqual([
+    'code',
+    'message',
+  ])
+}
+
+function expectReconciliation(response: HttpResult): void {
+  expectApiError(response, 409, 'PAYMENT_NEEDS_RECONCILIATION', RECONCILIATION)
 }
 
 async function unreconciledCharge(): Promise<Unreconciled> {
@@ -196,8 +224,9 @@ async function unreconciledCharge(): Promise<Unreconciled> {
   const orderId = await createSentOrder(ctx)
   const detail = await providerDetail(orderId)
   expect(detail.status).toBe(200)
-  const totalCents = orderTotal(detail.body)
-  const revision = 1
+  const quote = quoteFrom(detail.body)
+  expect(quote.expectedRevision).toBe(1)
+  const { expectedRevision: revision, expectedTotalCents: totalCents } = quote
   const before = await moneyState(ctx, orderId)
   ctx.payHooks.afterLedgerInsert = async () => {
     throw new Error('boom after ledger insert')
@@ -205,8 +234,7 @@ async function unreconciledCharge(): Promise<Unreconciled> {
 
   const failed = result(await pay(ctx, orderId, payBody(revision, totalCents)))
 
-  expect(failed.status).toBe(500)
-  expect(asRecord(asRecord(failed.body).error).code).toBe('INTERNAL')
+  expectApiError(failed, 500, 'INTERNAL')
   const attempts = await loadAttempts(orderId)
   expect(attempts).toHaveLength(1)
   const attempt = attempts[0]
@@ -535,8 +563,9 @@ describe('payment integrity inside the order service', () => {
     const ctx = context()
     const orderId = await createSentOrder(ctx)
     const detail = await providerDetail(orderId)
-    const totalCents = orderTotal(detail.body)
-    const revision = 1
+    const quote = quoteFrom(detail.body)
+    expect(quote.expectedRevision).toBe(1)
+    const { expectedRevision: revision, expectedTotalCents: totalCents } = quote
     const key = `order-${orderId}-r${revision}`
     const seeded = await ctx.gateway.charge({
       amountCents: totalCents + 1,
@@ -550,9 +579,7 @@ describe('payment integrity inside the order service', () => {
       await pay(ctx, orderId, payBody(revision, totalCents)),
     )
 
-    expect(rejected.status).toBe(409)
-    const error = asRecord(asRecord(rejected.body).error)
-    expect(error.code).toBe('IDEMPOTENCY_KEY_REUSED')
+    expectApiError(rejected, 409, 'IDEMPOTENCY_KEY_REUSED')
     expect(rejected.status).not.toBe(200)
     const after = await moneyState(ctx, orderId)
     expect(after.payments).toHaveLength(0)
@@ -585,6 +612,12 @@ describe('payment integrity inside the order service', () => {
       const reverse = pricedLines([second, first])
       const orderAb = await createSentOrder(ctx, forward.lines)
       const orderBa = await createSentOrder(ctx, reverse.lines)
+      const forwardQuote = quoteFrom((await providerDetail(orderAb)).body)
+      const reverseQuote = quoteFrom((await providerDetail(orderBa)).body)
+      expect(forwardQuote.expectedRevision).toBe(1)
+      expect(reverseQuote.expectedRevision).toBe(1)
+      expect(forwardQuote.expectedTotalCents).toBe(forward.totalCents)
+      expect(reverseQuote.expectedTotalCents).toBe(reverse.totalCents)
       const before = await moneyState(ctx, orderAb)
 
       const client = new pg.Client({ connectionString: databaseUrl() })
@@ -595,8 +628,8 @@ describe('payment integrity inside the order service', () => {
         await installStockGate(client)
         await client.query('select pg_advisory_lock($1::bigint)', [STOCK_GATE])
         pending = Promise.all([
-          pay(ctx, orderAb, payBody(1, forward.totalCents)).then(result),
-          pay(ctx, orderBa, payBody(1, reverse.totalCents)).then(result),
+          pay(ctx, orderAb, forwardQuote).then(result),
+          pay(ctx, orderBa, reverseQuote).then(result),
         ])
         await waitForStockOverlap(client, pending)
         await client.query('select pg_advisory_unlock($1::bigint)', [

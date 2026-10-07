@@ -1,12 +1,22 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { USER_ID_HEADER, patientOrderDetailDtoSchema } from '@supplement-orders/domain'
-import type { PatientOrderDetailDto } from '@supplement-orders/domain'
+import {
+  MAX_LINE_QUANTITY,
+  MAX_UNIT_PRICE_CENTS,
+  USER_ID_HEADER,
+  apiErrorResponseSchema,
+  dashboardDtoSchema,
+  patientOrderDetailDtoSchema,
+  patientOrderSummaryDtoSchema,
+  providerOrderDetailDtoSchema,
+  providerOrderSummaryDtoSchema,
+} from '@supplement-orders/domain'
+import type { PatientOrderDetailDto, PayOrderRequest } from '@supplement-orders/domain'
 import { createTestContext } from '../testing/harness'
 import type { TestContext } from '../testing/harness'
 
-// Revision 9, black-box. Pay carries the revision and total the patient saw.
-// A draft quantity is an integer from 1 to 1000, and a unit price is an integer
-// from 0 to 1_000_000 cents. The dashboard no longer returns paidOrders.
+// Revision 9, black-box. Pay is PayOrderRequest: the revision and total the
+// patient saw. Draft lines use the domain bounds. Order and dashboard bodies
+// are the domain DTOs. The dashboard no longer returns paidOrders.
 
 const ORDER_CHANGED =
   'This order changed since you opened it. Review the new total before paying.'
@@ -113,7 +123,7 @@ const DRAFT_CASES: readonly DraftCase[] = [
   },
   {
     label: 'quantity 1001',
-    quantity: 1_001,
+    quantity: MAX_LINE_QUANTITY + 1,
     unitPriceCents: FIRST_TOTAL_CENTS,
     field: 'lines.0.quantity',
   },
@@ -126,7 +136,7 @@ const DRAFT_CASES: readonly DraftCase[] = [
   {
     label: 'unitPriceCents 1000001',
     quantity: 1,
-    unitPriceCents: 1_000_001,
+    unitPriceCents: MAX_UNIT_PRICE_CENTS + 1,
     field: 'lines.0.unitPriceCents',
   },
   {
@@ -203,31 +213,49 @@ function expectExactKeys(value: unknown, keys: readonly string[]): void {
   expect(Object.keys(asRecord(value)).sort()).toEqual([...keys].sort())
 }
 
+function parsedRevision(body: unknown): number {
+  const record = asRecord(body)
+  if (record.view === 'provider' && 'ledger' in record) {
+    return providerOrderDetailDtoSchema.parse(body).revision
+  }
+  if (record.view === 'provider') {
+    return providerOrderSummaryDtoSchema.parse(body).revision
+  }
+  if ('patientAddress' in record) {
+    return patientOrderDetailDtoSchema.parse(body).revision
+  }
+  return patientOrderSummaryDtoSchema.parse(body).revision
+}
+
 function expectRevision(body: unknown, revision: number): void {
-  expect(asRecord(body).revision).toBe(revision)
+  expect(parsedRevision(body)).toBe(revision)
 }
 
 function expectOrderChanged(response: HttpResult): void {
   expect(response.status).toBe(409)
+  const parsed = apiErrorResponseSchema.parse(response.body)
+  expect(parsed.error.code).toBe('ORDER_CHANGED')
+  expect(parsed.error.message).toBe(ORDER_CHANGED)
+  expect(parsed.error.field).toBeUndefined()
   expectExactKeys(response.body, ['error'])
-  const error = asRecord(asRecord(response.body).error)
-  expect(error.code).toBe('ORDER_CHANGED')
-  expect(error.message).toBe(ORDER_CHANGED)
-  expect(error.field).toBeUndefined()
-  expect(Object.keys(error).sort()).toEqual(['code', 'message'])
+  expect(Object.keys(asRecord(asRecord(response.body).error)).sort()).toEqual([
+    'code',
+    'message',
+  ])
 }
 
 function expectFieldError(response: HttpResult, field: string): void {
   expect(response.status).toBe(400)
+  const parsed = apiErrorResponseSchema.parse(response.body)
+  expect(parsed.error.code).toBe('VALIDATION_ERROR')
+  expect(parsed.error.message.length).toBeGreaterThan(0)
+  expect(parsed.error.field).toBe(field)
   expectExactKeys(response.body, ['error'])
-  const error = asRecord(asRecord(response.body).error)
-  expect(error.code).toBe('VALIDATION_ERROR')
-  expect(typeof error.message).toBe('string')
-  if (typeof error.message === 'string') {
-    expect(error.message.length).toBeGreaterThan(0)
-  }
-  expect(Object.keys(error).sort()).toEqual(['code', 'field', 'message'])
-  expect(error.field).toBe(field)
+  expect(Object.keys(asRecord(asRecord(response.body).error)).sort()).toEqual([
+    'code',
+    'field',
+    'message',
+  ])
 }
 
 function result(response: { status: number; body: unknown }): HttpResult {
@@ -381,9 +409,16 @@ async function getPatient(orderId: number): Promise<HttpResult> {
   )
 }
 
+function quote(
+  expectedRevision: number,
+  expectedTotalCents: number,
+): PayOrderRequest {
+  return { expectedRevision, expectedTotalCents }
+}
+
 async function pay(
   orderId: number,
-  body: Record<string, unknown>,
+  body: PayOrderRequest | Record<string, unknown>,
 ): Promise<HttpResult> {
   return result(
     await context()
@@ -541,10 +576,7 @@ describe('payment integrity over HTTP', () => {
     const stockBefore = lineStock((await getProvider(order.orderId)).body)
     const gmvBefore = await gmvCents()
 
-    const rejected = await pay(order.orderId, {
-      expectedRevision: 1,
-      expectedTotalCents: order.firstTotalCents,
-    })
+    const rejected = await pay(order.orderId, quote(1, order.firstTotalCents))
 
     expectOrderChanged(rejected)
     const patient = await getPatient(order.orderId)
@@ -563,10 +595,7 @@ describe('payment integrity over HTTP', () => {
     await repriceAndResend(order)
     const gmvBefore = await gmvCents()
 
-    const paid = await pay(order.orderId, {
-      expectedRevision: 2,
-      expectedTotalCents: order.revisedTotalCents,
-    })
+    const paid = await pay(order.orderId, quote(2, order.revisedTotalCents))
 
     expect(paid.status).toBe(200)
     expectExactKeys(paid.body, PATIENT_DETAIL_KEYS)
@@ -591,31 +620,23 @@ describe('payment integrity over HTTP', () => {
   it('replays a paid order only when the revision and total still match', async () => {
     const order = await placeAt(FIRST_TOTAL_CENTS)
     await repriceAndResend(order)
-    const paid = await pay(order.orderId, {
-      expectedRevision: 2,
-      expectedTotalCents: order.revisedTotalCents,
-    })
+    const confirmed = quote(2, order.revisedTotalCents)
+    const paid = await pay(order.orderId, confirmed)
     expect(paid.status).toBe(200)
     const payment = asRecord(paid.body).payment
     const paidId = numberField(payment, 'id')
     const gmvAfterPay = await gmvCents()
 
-    const replay = await pay(order.orderId, {
-      expectedRevision: 2,
-      expectedTotalCents: order.revisedTotalCents,
-    })
+    const replay = await pay(order.orderId, confirmed)
     expect(replay.status).toBe(200)
     expect(replay.body).toEqual(paid.body)
 
-    const wrongRevision = await pay(order.orderId, {
-      expectedRevision: 1,
-      expectedTotalCents: order.revisedTotalCents,
-    })
+    const wrongRevision = await pay(
+      order.orderId,
+      quote(1, order.revisedTotalCents),
+    )
     expectOrderChanged(wrongRevision)
-    const wrongTotal = await pay(order.orderId, {
-      expectedRevision: 2,
-      expectedTotalCents: order.firstTotalCents,
-    })
+    const wrongTotal = await pay(order.orderId, quote(2, order.firstTotalCents))
     expectOrderChanged(wrongTotal)
 
     const patient = await getPatient(order.orderId)
@@ -681,12 +702,9 @@ describe('payment integrity over HTTP', () => {
     expect(response.status).toBe(200)
     expectExactKeys(response.body, DASHBOARD_KEYS)
     expect(asRecord(response.body).paidOrders).toBeUndefined()
-    expect(Number.isInteger(numberField(response.body, 'gmvCents'))).toBe(true)
-    expect(
-      Number.isInteger(numberField(response.body, 'providerMarginCents')),
-    ).toBe(true)
-    expect(
-      Number.isInteger(numberField(response.body, 'platformFeeCents')),
-    ).toBe(true)
+    const dashboard = dashboardDtoSchema.parse(response.body)
+    expect(Number.isInteger(dashboard.gmvCents)).toBe(true)
+    expect(Number.isInteger(dashboard.providerMarginCents)).toBe(true)
+    expect(Number.isInteger(dashboard.platformFeeCents)).toBe(true)
   })
 })
