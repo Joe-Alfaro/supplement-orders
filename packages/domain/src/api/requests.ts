@@ -262,3 +262,54 @@ export const payOrderRequestSchema: z.ZodType<PayOrderRequest> = z.strictObject(
     simulateFailure: z.boolean().optional(),
   },
 )
+
+/** Raw query-string values for GET /api/dashboard as Express delivers them. */
+export interface DashboardQueryParams {
+  from?: unknown
+  to?: unknown
+}
+
+/** GET /api/dashboard window on orders.paid_at; a null bound is open. */
+export interface DashboardQuery {
+  /** Inclusive. */
+  from: Date | null
+  /** Exclusive. */
+  to: Date | null
+}
+
+/** ISO 8601 date-time with an explicit offset or `Z`, parsed to an instant. */
+const instantParam = z
+  .string()
+  .regex(
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/,
+    'Must be an ISO 8601 date-time with an explicit offset, such as 2026-10-01T00:00:00Z',
+  )
+  .transform((raw, ctx) => {
+    const instant = new Date(raw)
+    const calendarDay = raw.slice(0, 10)
+    const isRealDay =
+      !Number.isNaN(instant.getTime()) &&
+      new Date(`${calendarDay}T00:00:00Z`).toISOString().startsWith(calendarDay)
+    if (!isRealDay) {
+      ctx.addIssue({ code: 'custom', message: 'Must be a real date and time' })
+      return z.NEVER
+    }
+    return instant
+  })
+  .nullish()
+  .transform((v) => v ?? null)
+
+/**
+ * Query schema for GET /api/dashboard (revision 11a). Both bounds are optional;
+ * with neither, totals are lifetime. When both are present `from` must be
+ * strictly before `to`, and the error is reported on `to`.
+ */
+export const dashboardQuerySchema: z.ZodType<
+  DashboardQuery,
+  DashboardQueryParams
+> = z
+  .object({ from: instantParam, to: instantParam })
+  .refine(({ from, to }) => !from || !to || from.getTime() < to.getTime(), {
+    path: ['to'],
+    message: '`to` must be after `from`',
+  })

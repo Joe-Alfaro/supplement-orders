@@ -1,10 +1,11 @@
-import type { DashboardDto } from '@supplement-orders/domain'
+import { dashboardQuerySchema, type DashboardDto } from '@supplement-orders/domain'
 import { sql } from 'drizzle-orm'
 import { Router } from 'express'
 import { ledgerEntries, orders, payments } from '../db/schema'
 import { requireRole } from '../seams'
 import type { AppContext } from '../server'
 import { ApiError } from './errors'
+import { parseOrThrow } from './validate'
 
 interface DashboardRow extends Record<string, unknown> {
   gmv_cents: string
@@ -32,14 +33,20 @@ function exactCents(value: string, field: string) {
  * GMV is what patients actually paid (payments); margin and fees come from the
  * ledger, so the dashboard reports the audited figures rather than recomputing
  * them. All three are read in one statement, so they describe one snapshot even
- * while payments commit concurrently (revision 9, M4).
+ * while payments commit concurrently (revision 9, M4). Optional `from` (inclusive)
+ * and `to` (exclusive) bound all three on orders.paid_at (revision 11a).
  */
 export function dashboardRouter({ db, auth }: AppContext) {
   const router = Router()
 
   router.get('/', async (req, res) => {
     const user = requireRole(await auth.getCurrentUser(req), 'provider')
-    const paid = sql`${orders.providerId} = ${user.providerId} and ${orders.status} = 'paid'`
+    const range = parseOrThrow(dashboardQuerySchema, req.query)
+    const from = range.from?.toISOString() ?? null
+    const to = range.to?.toISOString() ?? null
+    const paid = sql`${orders.providerId} = ${user.providerId} and ${orders.status} = 'paid'
+      and (${from}::timestamptz is null or ${orders.paidAt} >= ${from}::timestamptz)
+      and (${to}::timestamptz is null or ${orders.paidAt} < ${to}::timestamptz)`
     const result = await db.execute<DashboardRow>(sql`
       select
         (select coalesce(sum(${payments.amountCents}), 0)::text

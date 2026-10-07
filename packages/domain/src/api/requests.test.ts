@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  dashboardQuerySchema,
   idParamSchema,
   POSTGRES_INTEGER_MAX,
   payOrderRequestSchema,
@@ -139,5 +140,66 @@ describe('API request schemas', () => {
     expect(idParamSchema.parse('42')).toBe(42)
     expect(idParamSchema.safeParse('abc').success).toBe(false)
     expect(idParamSchema.safeParse('1.5').success).toBe(false)
+  })
+})
+
+describe('dashboardQuerySchema', () => {
+  it('parses no params as lifetime (both bounds null)', () => {
+    expect(dashboardQuerySchema.parse({})).toEqual({ from: null, to: null })
+  })
+
+  it('parses instants with Z or an explicit offset', () => {
+    const parsed = dashboardQuerySchema.parse({
+      from: '2026-10-01T00:00:00Z',
+      to: '2026-10-08T00:00:00-07:00',
+    })
+    expect(parsed.from?.toISOString()).toBe('2026-10-01T00:00:00.000Z')
+    expect(parsed.to?.toISOString()).toBe('2026-10-08T07:00:00.000Z')
+  })
+
+  it('accepts only one bound', () => {
+    expect(
+      dashboardQuerySchema.parse({ from: '2026-10-01T00:00:00Z' }).to,
+    ).toBeNull()
+    expect(
+      dashboardQuerySchema.parse({ to: '2026-10-01T00:00:00Z' }).from,
+    ).toBeNull()
+  })
+
+  it.each([
+    ['no offset', '2026-10-01T00:00:00'],
+    ['date only', '2026-10-01'],
+    ['garbage', 'yesterday'],
+    ['empty', ''],
+    ['impossible date', '2026-02-30T00:00:00Z'],
+  ])('rejects %s on from and to', (_label, value) => {
+    const from = dashboardQuerySchema.safeParse({ from: value })
+    const to = dashboardQuerySchema.safeParse({ to: value })
+    expect(from.success).toBe(false)
+    expect(to.success).toBe(false)
+    expect(from.error?.issues[0]?.path).toEqual(['from'])
+    expect(to.error?.issues[0]?.path).toEqual(['to'])
+  })
+
+  it('rejects repeated params', () => {
+    expect(
+      dashboardQuerySchema.safeParse({
+        from: ['2026-10-01T00:00:00Z', '2026-10-02T00:00:00Z'],
+      }).success,
+    ).toBe(false)
+  })
+
+  it('requires from strictly before to, reporting the error on to', () => {
+    const same = dashboardQuerySchema.safeParse({
+      from: '2026-10-01T00:00:00Z',
+      to: '2026-10-01T00:00:00Z',
+    })
+    const reversed = dashboardQuerySchema.safeParse({
+      from: '2026-10-02T00:00:00Z',
+      to: '2026-10-01T00:00:00Z',
+    })
+    expect(same.success).toBe(false)
+    expect(reversed.success).toBe(false)
+    expect(reversed.error?.issues[0]?.path).toEqual(['to'])
   })
 })
