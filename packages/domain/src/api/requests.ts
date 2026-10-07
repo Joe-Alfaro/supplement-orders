@@ -4,7 +4,14 @@ import { ORDER_STATUSES, type OrderStatus } from './responses'
 /** Every request except GET /api/users and GET /api/health carries this header. */
 export const USER_ID_HEADER = 'X-User-Id'
 
-const id = z.int().positive()
+/**
+ * Ids are Postgres integer columns: anything above this cannot exist, and
+ * passing it to a query is a database error. Revision 11 (N6) rejects it as a
+ * 400 instead.
+ */
+export const POSTGRES_INTEGER_MAX = 2_147_483_647
+
+const id = z.int().positive().max(POSTGRES_INTEGER_MAX)
 
 /** Route params such as `:id` and `:patientId` arrive as strings. */
 export const idParamSchema = z.coerce.number().pipe(id)

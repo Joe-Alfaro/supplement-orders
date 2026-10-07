@@ -19,6 +19,9 @@ import { z } from 'zod'
  *   cancel, reopen, delete and line edits are blocked until a retried pay completes it
  * - 409 IDEMPOTENCY_KEY_REUSED: the gateway refused a known key with a different amount
  * - 402 PAYMENT_FAILED: the gateway declined; nothing was persisted
+ * - 413 PAYLOAD_TOO_LARGE: the request body exceeds the server's limit
+ * - other client errors from reading the body (e.g. 415 for an unsupported charset)
+ *   keep their 4xx status with VALIDATION_ERROR
  * - 500 INTERNAL: unexpected failure; nothing was persisted
  */
 export const API_ERROR_CODES = [
@@ -43,6 +46,7 @@ export const API_ERROR_CODES = [
   'UNKNOWN_PRODUCT',
   'INSUFFICIENT_STOCK',
   'PAYMENT_FAILED',
+  'PAYLOAD_TOO_LARGE',
   'INTERNAL',
 ] as const
 

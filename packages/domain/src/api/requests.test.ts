@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   idParamSchema,
+  POSTGRES_INTEGER_MAX,
   payOrderRequestSchema,
   replaceOrderLinesRequestSchema,
 } from './requests'
@@ -118,6 +119,20 @@ describe('API request schemas', () => {
     expect(line({ unitPriceCents: Number.MAX_SAFE_INTEGER }).success).toBe(
       false,
     )
+  })
+
+  it('bounds ids to the Postgres integer range (revision 11)', () => {
+    expect(idParamSchema.parse(String(POSTGRES_INTEGER_MAX))).toBe(
+      POSTGRES_INTEGER_MAX,
+    )
+    expect(
+      idParamSchema.safeParse(String(POSTGRES_INTEGER_MAX + 1)).success,
+    ).toBe(false)
+    expect(
+      replaceOrderLinesRequestSchema.safeParse({
+        lines: [{ productId: POSTGRES_INTEGER_MAX + 1 }],
+      }).error?.issues[0]?.path,
+    ).toEqual(['lines', 0, 'productId'])
   })
 
   it('coerces numeric route params and rejects junk', () => {
