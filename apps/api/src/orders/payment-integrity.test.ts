@@ -31,7 +31,7 @@ import {
 } from '../testing/flows'
 
 // Revision 9, white-box. A succeeded charge whose payment did not commit stays
-// unreconciled under order-<id>-r<revision>, with its stock still reserved.
+// unreconciled under order-<id>-r<revision>-e<execution>, with its stock still reserved.
 // The same key and amount finishes it and does not take that stock again.
 // The same key with another amount is IDEMPOTENCY_KEY_REUSED and never a
 // success. Stock rows are locked in product-id order, so reversed lines cannot
@@ -245,7 +245,7 @@ async function unreconciledCharge(): Promise<Unreconciled> {
   expect(attempt).toMatchObject({
     orderId,
     revision,
-    idempotencyKey: `order-${orderId}-r${revision}`,
+    idempotencyKey: `order-${orderId}-r${revision}-e1`,
     amountCents: totalCents,
     status: 'succeeded',
   })
@@ -601,7 +601,7 @@ describe('payment integrity inside the order service', () => {
     const quote = quoteFrom(detail.body)
     expect(quote.expectedRevision).toBe(1)
     const { expectedRevision: revision, expectedTotalCents: totalCents } = quote
-    const key = `order-${orderId}-r${revision}`
+    const key = `order-${orderId}-r${revision}-e1`
     const seeded = await ctx.gateway.charge({
       amountCents: totalCents + 1,
       idempotencyKey: key,

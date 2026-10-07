@@ -37,7 +37,7 @@ describe('POST /api/orders/:id/pay', () => {
     expect(after.payments).toHaveLength(1)
     const [payment] = after.payments
     expect(payment!.amountCents).toBe(res.body.totalCents)
-    expect(payment!.idempotencyKey).toBe(`order-${orderId}-r1`)
+    expect(payment!.idempotencyKey).toBe(`order-${orderId}-r1-e1`)
     expect(payment!.paymentAttemptId).not.toBeNull()
     expect(after.ledger.map((e) => e.type).sort()).toEqual([
       'cogs',

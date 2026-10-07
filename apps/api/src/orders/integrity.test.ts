@@ -185,7 +185,7 @@ describe('revision 9: payment integrity and hardening', () => {
       const { payments } = await moneyState(ctx, orderId)
       expect(attempt).toMatchObject({
         revision: 1,
-        idempotencyKey: `order-${orderId}-r1`,
+        idempotencyKey: `order-${orderId}-r1-e1`,
         amountCents: 2000,
         status: 'succeeded',
       })
@@ -229,7 +229,7 @@ describe('revision 9: payment integrity and hardening', () => {
       expect(after.payments).toHaveLength(1)
       expect(after.ledger).toHaveLength(3)
       const keys = new Set(ctx.gateway.charges.map((c) => c.idempotencyKey))
-      expect([...keys]).toEqual([`order-${orderId}-r1`])
+      expect([...keys]).toEqual([`order-${orderId}-r1-e1`])
       const [attempt] = await attemptsFor(orderId)
       expect(after.payments[0]!.gatewayReference).toBe(
         attempt!.gatewayReference,
@@ -274,8 +274,8 @@ describe('revision 9: payment integrity and hardening', () => {
       expect(retry.status).toBe(200)
       expect(retry.body.payment.reference).toBe(original!.gatewayReference)
       expect(ctx.gateway.charges.map((c) => c.idempotencyKey)).toEqual([
-        `order-${orderId}-r1`,
-        `order-${orderId}-r1`,
+        `order-${orderId}-r1-e1`,
+        `order-${orderId}-r1-e1`,
       ])
     })
 
@@ -283,7 +283,7 @@ describe('revision 9: payment integrity and hardening', () => {
       const orderId = await sentAt(2000)
       await ctx.gateway.charge({
         amountCents: 1500,
-        idempotencyKey: `order-${orderId}-r1`,
+        idempotencyKey: `order-${orderId}-r1-e1`,
         description: 'an earlier charge under the same key',
       })
 
@@ -419,7 +419,7 @@ describe('revision 9: payment integrity and hardening', () => {
       expect(declined.status).toBe(402)
       expect((await moneyState(ctx, orderId)).stock).toEqual(before)
       expect((await attemptsFor(orderId))[0]).toMatchObject({
-        status: 'failed',
+        status: 'declined',
         stockHeld: false,
       })
     })
