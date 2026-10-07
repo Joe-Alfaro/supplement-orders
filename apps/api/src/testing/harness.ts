@@ -44,6 +44,12 @@ export interface InternalTestContext extends TestContext {
   notifier: RecordingNotifier
   /** Mutable: assign hooks in a test; reset() clears them. */
   payHooks: PayHooks
+  /**
+   * Simulates a process restart (revision 10, N2): a freshly constructed
+   * gateway and app against the same database, with no in-process state
+   * carried over. Replaces `request` and `gateway`; pay hooks are cleared.
+   */
+  restart(): void
 }
 
 /** This checkout's root; its path keys the test database when no session id is set. */
@@ -105,6 +111,20 @@ export async function createInternalTestContext(
     gateway,
     notifier,
     payHooks,
+    restart() {
+      delete payHooks.afterLedgerInsert
+      ctx.gateway = new FakePaymentGateway(db)
+      ctx.request = supertest(
+        createApp({
+          db,
+          gateway: ctx.gateway,
+          notifier,
+          pingDb: ping,
+          nodeEnv: options.nodeEnv ?? 'test',
+          payHooks,
+        }),
+      )
+    },
     async reset() {
       ctx.seed = await reseed()
       ctx.gateway.reset()
@@ -119,24 +139,9 @@ export async function createInternalTestContext(
   return ctx
 }
 
-/**
- * Simulates a process restart (revision 10, N2): a freshly constructed gateway
- * and app against the same database, with no in-process state carried over.
- * Replaces the context's `request` and `gateway` and clears its pay hooks.
- */
-export function restartContext(ctx: InternalTestContext, nodeEnv = 'test') {
-  delete ctx.payHooks.afterLedgerInsert
-  ctx.gateway = new FakePaymentGateway(ctx.db)
-  ctx.request = supertest(
-    createApp({
-      db: ctx.db,
-      gateway: ctx.gateway,
-      notifier: ctx.notifier,
-      pingDb: async () => {},
-      nodeEnv,
-      payHooks: ctx.payHooks,
-    }),
-  )
+/** Same as ctx.restart(); kept for suites written against the helper. */
+export function restartContext(ctx: InternalTestContext) {
+  ctx.restart()
 }
 
 export async function createTestContext(): Promise<TestContext> {
