@@ -39,7 +39,9 @@ function inventoryToUrl({ q, offset }: InventoryUrlState) {
 }
 
 const sales = useResource(getDashboard)
-// Read-only: stock only changes when orders are paid.
+// Read-only: shows available stock. A payment attempt reserves an order's
+// quantities before charging, a decline gives them back, and a recorded payment
+// keeps them as the sale. Nobody edits stock by hand.
 const initial = inventoryFromUrl(route.query)
 const inventory = usePagedSearch(searchProducts, {
   initialQuery: initial.q,
