@@ -856,16 +856,6 @@ describe('OrderBuilderView as the one draft page', () => {
       screen.queryByRole('button', { name: 'Save draft' }),
     ).not.toBeInTheDocument()
   })
-
-  it('redirects the legacy ?orderId= URL to the canonical draft URL', async () => {
-    vi.mocked(api.getOrder).mockResolvedValue(draftDetail([]))
-    const { router } = await renderRoutes('/patients/7/orders/new?orderId=99')
-
-    expect(
-      await screen.findByRole('heading', { name: /Draft order #99/ }),
-    ).toBeInTheDocument()
-    expect(router.currentRoute.value.fullPath).toBe('/patients/7/orders/99')
-  })
 })
 
 describe('OrderBuilderView delete draft', () => {

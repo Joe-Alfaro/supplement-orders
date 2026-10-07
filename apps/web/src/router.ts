@@ -46,14 +46,6 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('./views/OrderBuilderView.vue'),
     meta: provider,
     props: true,
-    // Old bookmarks: /orders/new?orderId=:id is now /orders/:id.
-    beforeEnter: (to) => {
-      const legacyId = to.query.orderId
-      if (to.params.orderId !== 'new') return true
-      if (typeof legacyId !== 'string' || !/^\d+$/.test(legacyId)) return true
-      // A guard redirect never enters history, so the legacy URL is not kept.
-      return `/patients/${to.params.patientId}/orders/${legacyId}`
-    },
   },
   {
     path: '/orders',
