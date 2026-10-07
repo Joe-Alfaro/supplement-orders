@@ -31,8 +31,9 @@ import {
 } from '../testing/flows'
 
 // Revision 9, white-box. A succeeded charge whose payment did not commit stays
-// unreconciled under order-<id>-r<revision>. The same key and amount finishes
-// it. The same key with another amount is IDEMPOTENCY_KEY_REUSED and never a
+// unreconciled under order-<id>-r<revision>, with its stock still reserved.
+// The same key and amount finishes it and does not take that stock again.
+// The same key with another amount is IDEMPOTENCY_KEY_REUSED and never a
 // success. Stock rows are locked in product-id order, so reversed lines cannot
 // deadlock.
 
@@ -254,7 +255,8 @@ async function unreconciledCharge(): Promise<Unreconciled> {
   expect(state.payments).toHaveLength(0)
   expect(state.ledger).toHaveLength(0)
   expect(state.order).toEqual({ status: 'pending_payment', paidAt: null })
-  expect(state.stock).toEqual(before.stock)
+  const reserved = stockHeldFor(before.stock, orderedQuantities(detail.body))
+  expect(state.stock).toEqual(reserved)
   expect(ctx.gateway.charges).toEqual([
     expect.objectContaining({
       amountCents: totalCents,
@@ -266,7 +268,7 @@ async function unreconciledCharge(): Promise<Unreconciled> {
     revision,
     totalCents,
     attempt,
-    stock: before.stock,
+    stock: reserved,
   }
 }
 
@@ -335,10 +337,12 @@ async function lockCounts(client: pg.Client): Promise<LockCounts> {
   const rows = await client.query<{ n: number }>(
     `select count(*)::int as n
      from pg_locks waiter
-     join pg_class rel on rel.oid = waiter.relation
-     where waiter.locktype = 'tuple'
-       and not waiter.granted
-       and rel.relname = 'products'`,
+     left join pg_class rel on rel.oid = waiter.relation
+     where not waiter.granted
+       and (
+         (waiter.locktype = 'tuple' and rel.relname = 'products')
+         or waiter.locktype = 'transactionid'
+       )`,
   )
   return {
     advisoryWaiters: advisory.rows[0]?.n ?? 0,
@@ -364,9 +368,7 @@ async function waitForStockOverlap(
     if (settled) return
     const counts = await lockCounts(client)
     if (settled) return
-    const overlapped =
-      counts.advisoryWaiters >= 2 ||
-      (counts.advisoryWaiters >= 1 && counts.rowWaiters >= 1)
+    const overlapped = counts.advisoryWaiters >= 2 || counts.rowWaiters >= 1
     if (overlapped) return
     if (Date.now() >= deadline) {
       throw new Error(
@@ -396,6 +398,38 @@ function pricedLines(
       0,
     ),
   }
+}
+
+function orderedQuantities(
+  body: unknown,
+): { productId: number; quantity: number }[] {
+  const lines = asRecord(body).lines
+  if (!Array.isArray(lines)) {
+    throw new Error('sent order has no lines')
+  }
+  return lines.map((line) => {
+    const record = asRecord(line)
+    const productId = record.productId
+    if (typeof productId !== 'number') {
+      throw new Error('sent line is missing productId')
+    }
+    return {
+      productId,
+      quantity: numberValue(record.quantity, 'quantity'),
+    }
+  })
+}
+
+function stockHeldFor(
+  before: readonly { id: number; stockQuantity: number }[],
+  lines: readonly { productId: number; quantity: number }[],
+): { id: number; stockQuantity: number }[] {
+  return before.map((row) => {
+    const quantity = lines
+      .filter((line) => line.productId === row.id)
+      .reduce((sum, line) => sum + line.quantity, 0)
+    return { id: row.id, stockQuantity: row.stockQuantity - quantity }
+  })
 }
 
 function stockOf(
@@ -493,6 +527,7 @@ describe('payment integrity inside the order service', () => {
     const state = await moneyState(ctx, pending.orderId)
     expect(state.payments).toHaveLength(1)
     expect(state.ledger).toHaveLength(3)
+    expect(state.stock).toEqual(pending.stock)
     expect(state.payments[0]?.amountCents).toBe(pending.totalCents)
     expect(state.payments[0]?.gatewayReference).toBe(
       pending.attempt.gatewayReference,

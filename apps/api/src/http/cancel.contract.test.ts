@@ -941,6 +941,7 @@ describe('GET /api/orders', () => {
       sentAt: cancelled.sentAt,
       paidAt: null,
       cancelledAt: cancelled.cancelledAt,
+      revision: cancelled.revision,
       view: 'patient',
       totalCents: split.totalCents,
     })
