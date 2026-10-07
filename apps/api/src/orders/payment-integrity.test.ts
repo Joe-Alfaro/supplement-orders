@@ -15,7 +15,7 @@ import {
   providerOrderDetailDtoSchema,
 } from '@supplement-orders/domain'
 import type { ApiErrorCode, PayOrderRequest } from '@supplement-orders/domain'
-import { FakePaymentGateway } from '../seams'
+import { FakePaymentGateway, fakeGatewaySucceededReferences } from '../seams'
 import type { ChargeResult } from '../seams'
 import { testDatabaseUrl } from '../db/databases'
 import {
@@ -30,12 +30,14 @@ import {
   setStock,
 } from '../testing/flows'
 
-// Revision 9, white-box. A succeeded charge whose payment did not commit stays
-// unreconciled under order-<id>-r<revision>, with its stock still reserved.
-// The same key and amount finishes it and does not take that stock again.
-// The same key with another amount is IDEMPOTENCY_KEY_REUSED and never a
-// success. Stock rows are locked in product-id order, so reversed lines cannot
-// deadlock.
+// Revision 10, white-box. A succeeded charge whose payment did not commit stays
+// unreconciled under order-<id>-r<revision>-e<execution>, with its stock still
+// reserved. Retrying the same revision and amount looks that charge up and
+// finishes it; it does not charge again or take that stock again. A key
+// already bound to another amount stays in conflict: the reservation is kept
+// and the API returns PAYMENT_NEEDS_RECONCILIATION. The gateway itself still
+// answers IDEMPOTENCY_KEY_REUSED for that mismatched amount. Stock rows are
+// locked in product-id order, so reversed lines cannot deadlock.
 
 const RECONCILIATION =
   'A payment for this order is being finalized. Try again shortly or contact support.'
@@ -52,9 +54,11 @@ interface Attempt {
   id: number
   orderId: number
   revision: number
+  execution: number
   idempotencyKey: string
   amountCents: number
   status: string
+  stockHeld: boolean
   gatewayReference: string | null
 }
 
@@ -104,13 +108,6 @@ function numberValue(value: unknown, field: string): number {
   return parsed
 }
 
-function clearGatewayMemory(gateway: FakePaymentGateway): void {
-  const memory: unknown = Reflect.get(gateway, 'byKey')
-  if (memory instanceof Map) {
-    memory.clear()
-  }
-}
-
 function quoteFrom(body: unknown): PayOrderRequest {
   const detail = providerOrderDetailDtoSchema.parse(body)
   if (detail.split === null) {
@@ -143,9 +140,11 @@ async function loadAttempts(orderId: number): Promise<Attempt[]> {
       id::text as id,
       order_id::text as "orderId",
       revision::text as revision,
+      execution::text as execution,
       idempotency_key as "idempotencyKey",
       amount_cents::text as "amountCents",
       status,
+      stock_held as "stockHeld",
       gateway_reference as "gatewayReference"
     from payment_attempts
     where order_id = ${orderId}
@@ -158,9 +157,11 @@ async function loadAttempts(orderId: number): Promise<Attempt[]> {
       id: numberValue(record.id, 'id'),
       orderId: numberValue(record.orderId, 'orderId'),
       revision: numberValue(record.revision, 'revision'),
+      execution: numberValue(record.execution, 'execution'),
       idempotencyKey: String(record.idempotencyKey),
       amountCents: numberValue(record.amountCents, 'amountCents'),
       status: String(record.status),
+      stockHeld: record.stockHeld === true,
       gatewayReference:
         typeof gatewayReference === 'string' ? gatewayReference : null,
     }
@@ -245,7 +246,7 @@ async function unreconciledCharge(): Promise<Unreconciled> {
   expect(attempt).toMatchObject({
     orderId,
     revision,
-    idempotencyKey: `order-${orderId}-r${revision}`,
+    idempotencyKey: `order-${orderId}-r${revision}-e1`,
     amountCents: totalCents,
     status: 'succeeded',
   })
@@ -449,7 +450,6 @@ describe('payment integrity inside the order service', () => {
   })
   beforeEach(async () => {
     await context().reset()
-    clearGatewayMemory(context().gateway)
   })
   afterAll(async () => {
     await dropStockGate()
@@ -539,17 +539,17 @@ describe('payment integrity inside the order service', () => {
       paymentAttemptId: pending.attempt.id,
     })
     const key = pending.attempt.idempotencyKey
-    expect(ctx.gateway.charges.map((charge) => charge.idempotencyKey)).toEqual([
-      key,
-      key,
+    expect(ctx.gateway.charges).toEqual([
+      expect.objectContaining({
+        amountCents: pending.totalCents,
+        idempotencyKey: key,
+      }),
     ])
-    expect(ctx.gateway.charges.map((charge) => charge.amountCents)).toEqual([
-      pending.totalCents,
-      pending.totalCents,
-    ])
-    expect(
-      new Set(ctx.gateway.charges.map((charge) => charge.idempotencyKey)).size,
-    ).toBe(1)
+    expect(await ctx.gateway.lookup(key)).toEqual({
+      status: 'succeeded',
+      amountCents: pending.totalCents,
+      reference: pending.attempt.gatewayReference,
+    })
     const detail = await providerDetail(pending.orderId)
     const moved = asRecord(detail.body).lines
     if (!Array.isArray(moved)) {
@@ -572,7 +572,7 @@ describe('payment integrity inside the order service', () => {
   })
 
   it('rejects the same idempotency key with a different amount and never succeeds', async () => {
-    const gateway = new FakePaymentGateway()
+    const gateway = new FakePaymentGateway(context().db)
     const key = 'order-9-r1'
     const request = {
       idempotencyKey: key,
@@ -594,14 +594,14 @@ describe('payment integrity inside the order service', () => {
     expect(mismatch.status).not.toBe('succeeded')
   })
 
-  it('maps IDEMPOTENCY_KEY_REUSED to 409 and does not record a payment', async () => {
+  it('keeps the reservation when a key is already bound to another amount', async () => {
     const ctx = context()
     const orderId = await createSentOrder(ctx)
     const detail = await providerDetail(orderId)
     const quote = quoteFrom(detail.body)
     expect(quote.expectedRevision).toBe(1)
     const { expectedRevision: revision, expectedTotalCents: totalCents } = quote
-    const key = `order-${orderId}-r${revision}`
+    const key = `order-${orderId}-r${revision}-e1`
     const seeded = await ctx.gateway.charge({
       amountCents: totalCents + 1,
       idempotencyKey: key,
@@ -609,18 +609,68 @@ describe('payment integrity inside the order service', () => {
     })
     expect(seeded.status).toBe('succeeded')
     const before = await moneyState(ctx, orderId)
+    const provider = as(ctx.seed.providerUserId)
+    const product = ctx.seed.products[0]
+    if (!product) {
+      throw new Error('seed has no product')
+    }
 
     const rejected = result(
       await pay(ctx, orderId, payBody(revision, totalCents)),
     )
 
-    expectApiError(rejected, 409, 'IDEMPOTENCY_KEY_REUSED')
+    expectReconciliation(rejected)
     expect(rejected.status).not.toBe(200)
     const after = await moneyState(ctx, orderId)
     expect(after.payments).toHaveLength(0)
     expect(after.ledger).toHaveLength(0)
-    expect(after.order).toEqual(before.order)
-    expect(after.stock).toEqual(before.stock)
+    expect(after.order).toEqual({ status: 'pending_payment', paidAt: null })
+    const reserved = stockHeldFor(before.stock, orderedQuantities(detail.body))
+    expect(after.stock).toEqual(reserved)
+    expect(after.stock).not.toEqual(before.stock)
+    const attempts = await loadAttempts(orderId)
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        orderId,
+        revision,
+        execution: 1,
+        idempotencyKey: key,
+        amountCents: totalCents,
+        status: 'conflict',
+        stockHeld: true,
+        gatewayReference: null,
+      }),
+    ])
+    expect(await fakeGatewaySucceededReferences(ctx.db)).toEqual([
+      seeded.reference,
+    ])
+    const cancelled = result(
+      await ctx.request.post(`/api/orders/${orderId}/cancel`).set(provider),
+    )
+    const reopened = result(
+      await ctx.request.post(`/api/orders/${orderId}/reopen`).set(provider),
+    )
+    const removed = result(
+      await ctx.request.delete(`/api/orders/${orderId}`).set(provider),
+    )
+    const edited = result(
+      await ctx.request
+        .put(`/api/orders/${orderId}/lines`)
+        .set(provider)
+        .send({
+          lines: [
+            {
+              productId: product.id,
+              quantity: 1,
+              unitPriceCents: totalCents,
+            },
+          ],
+        }),
+    )
+    expectReconciliation(cancelled)
+    expectReconciliation(reopened)
+    expectReconciliation(removed)
+    expectReconciliation(edited)
     const again = await ctx.gateway.charge({
       amountCents: totalCents,
       idempotencyKey: key,
@@ -628,6 +678,11 @@ describe('payment integrity inside the order service', () => {
     })
     expect(again.status).toBe('failed')
     expect(again.failureMessage).toBe('IDEMPOTENCY_KEY_REUSED')
+    expect(await fakeGatewaySucceededReferences(ctx.db)).toEqual([
+      seeded.reference,
+    ])
+    expect((await moneyState(ctx, orderId)).payments).toHaveLength(0)
+    expect((await moneyState(ctx, orderId)).stock).toEqual(reserved)
   })
 
   describe('reversed product locks', () => {
