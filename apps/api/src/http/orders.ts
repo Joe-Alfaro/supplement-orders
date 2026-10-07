@@ -17,8 +17,8 @@ import {
   sendOrder,
 } from '../orders/service'
 import {
-  findOrderOwnership,
   listProviderOrderPage,
+  loadOrderDetailFor,
   listPatientOrders,
   listProviderOrders,
   loadPatientOrderDetail,
@@ -43,19 +43,6 @@ export function ordersRouter(ctx: AppContext) {
       .where(eq(patients.id, patientId))
     if (!patient) throw notFound('Patient')
     if (patient.providerId !== user.providerId) throw forbidden()
-  }
-
-  /** 404 if missing (or a draft, for its patient); 403 if not the caller's. */
-  async function assertCanView(user: CurrentUser, orderId: number) {
-    const order = await findOrderOwnership(db, orderId)
-    if (!order) throw notFound('Order')
-    if (user.role === 'provider') {
-      if (order.providerId !== user.providerId) throw forbidden()
-      return
-    }
-    if (order.patientId !== user.patientId) throw forbidden()
-    // Unsent orders (drafts, and drafts cancelled before sending) stay hidden.
-    if (order.sentAt === null) throw notFound('Order')
   }
 
   router.get('/', async (req, res) => {
@@ -98,12 +85,7 @@ export function ordersRouter(ctx: AppContext) {
   router.get('/:id', async (req, res) => {
     const user = await auth.getCurrentUser(req)
     const orderId = parseId(req.params.id)
-    await assertCanView(user, orderId)
-    res.json(
-      user.role === 'provider'
-        ? await loadProviderOrderDetail(db, orderId)
-        : await loadPatientOrderDetail(db, orderId),
-    )
+    res.json(await loadOrderDetailFor(db, user, orderId, ctx.readHooks))
   })
 
   router.put('/:id/lines', async (req, res) => {

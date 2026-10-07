@@ -11,6 +11,12 @@ import type { Auth, Notifier, PaymentGateway } from './seams'
 import { HeaderAuth } from './seams'
 
 /** Test-only fault injection points inside the pay transaction. */
+/** Test-only scheduling points inside an order detail read (revision 11, N5). */
+export interface ReadHooks {
+  /** Runs after the order header is read, before its lines and payment. */
+  afterOrderHeader?: () => Promise<void>
+}
+
 export interface PayHooks {
   /** Runs after the ledger rows are inserted, before the order is marked paid. */
   afterLedgerInsert?: () => Promise<void>
@@ -27,6 +33,7 @@ export interface AppDeps {
   /** `simulateFailure` on pay is ignored when this is 'production'. */
   nodeEnv?: string
   payHooks?: PayHooks
+  readHooks?: ReadHooks
   /** Built web app to serve outside /api (production); omitted in dev and tests. */
   webDist?: string
 }
@@ -38,6 +45,7 @@ export interface AppContext {
   auth: Auth
   allowSimulatedFailure: boolean
   payHooks: PayHooks
+  readHooks: ReadHooks
 }
 
 export function createApp(deps: AppDeps) {
@@ -48,6 +56,7 @@ export function createApp(deps: AppDeps) {
     auth: deps.auth ?? new HeaderAuth(deps.db),
     allowSimulatedFailure: deps.nodeEnv !== 'production',
     payHooks: deps.payHooks ?? {},
+    readHooks: deps.readHooks ?? {},
   }
 
   const app = express()

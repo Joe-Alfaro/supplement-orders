@@ -9,7 +9,7 @@ import {
   RecordingNotifier,
   useFakeGatewayDatabase,
 } from '../seams'
-import { createApp, type PayHooks } from '../server'
+import { createApp, type PayHooks, type ReadHooks } from '../server'
 
 // Contract: notes/DOMAIN_CONTRACT.md "API test harness". Black-box HTTP tests use
 // createTestContext(); white-box API tests may use createInternalTestContext().
@@ -44,6 +44,11 @@ export interface InternalTestContext extends TestContext {
   notifier: RecordingNotifier
   /** Mutable: assign hooks in a test; reset() clears them. */
   payHooks: PayHooks
+  /**
+   * Mutable test-only read scheduling points; reset() and restart() clear them.
+   * Optional so suites can build their own context; the harness always sets it.
+   */
+  readHooks?: ReadHooks
   /**
    * Simulates a process restart (revision 10, N2): a freshly constructed
    * gateway and app against the same database, with no in-process state
@@ -89,6 +94,7 @@ export async function createInternalTestContext(
   useFakeGatewayDatabase(db)
   const notifier = new RecordingNotifier()
   const payHooks: PayHooks = {}
+  const readHooks: ReadHooks = {}
   const gateway = new FakePaymentGateway(db)
   const app = createApp({
     db,
@@ -97,6 +103,7 @@ export async function createInternalTestContext(
     pingDb: ping,
     nodeEnv: options.nodeEnv ?? 'test',
     payHooks,
+    readHooks,
   })
 
   async function reseed() {
@@ -111,8 +118,10 @@ export async function createInternalTestContext(
     gateway,
     notifier,
     payHooks,
+    readHooks,
     restart() {
       delete payHooks.afterLedgerInsert
+      delete readHooks.afterOrderHeader
       ctx.gateway = new FakePaymentGateway(db)
       ctx.request = supertest(
         createApp({
@@ -122,6 +131,7 @@ export async function createInternalTestContext(
           pingDb: ping,
           nodeEnv: options.nodeEnv ?? 'test',
           payHooks,
+          readHooks,
         }),
       )
     },
@@ -131,6 +141,7 @@ export async function createInternalTestContext(
       notifier.sent.length = 0
       notifier.cancelled.length = 0
       delete payHooks.afterLedgerInsert
+      delete readHooks.afterOrderHeader
     },
     async close() {
       await pool.end()

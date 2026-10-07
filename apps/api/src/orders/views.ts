@@ -30,6 +30,24 @@ import {
 } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import type { Db } from '../db/client'
+import type { ReadHooks } from '../server'
+import { forbidden, notFound } from '../http/errors'
+import type { CurrentUser } from '../seams'
+
+/** A database handle or a transaction: anything the read helpers can query through. */
+type Reader = Db | Parameters<Parameters<Db['transaction']>[0]>[0]
+
+/**
+ * Runs `read` in one read-only REPEATABLE READ transaction, so every query in it
+ * sees the same snapshot (revision 11, N5): an order's header, lines, payment and
+ * ledger can never come from different moments.
+ */
+function inSnapshot<T>(db: Db, read: (tx: Reader) => Promise<T>): Promise<T> {
+  return db.transaction(read, {
+    isolationLevel: 'repeatable read',
+    accessMode: 'read only',
+  })
+}
 import {
   ledgerEntries,
   orderItems,
@@ -50,7 +68,7 @@ function iso(date: Date | null) {
   return date === null ? null : date.toISOString()
 }
 
-async function selectOrders(db: Db, where: SQL | undefined) {
+async function selectOrders(db: Reader, where: SQL | undefined) {
   return db
     .select({
       id: orders.id,
@@ -81,7 +99,7 @@ async function selectOrders(db: Db, where: SQL | undefined) {
 
 type OrderRow = Awaited<ReturnType<typeof selectOrders>>[number]
 
-async function selectLines(db: Db, orderIds: number[]) {
+async function selectLines(db: Reader, orderIds: number[]) {
   if (orderIds.length === 0) return []
   return db
     .select({
@@ -286,7 +304,7 @@ export async function listPatientOrders(db: Db, patientId: number) {
 }
 
 /** Ownership-check columns for an order, or undefined if it does not exist. */
-export async function findOrderOwnership(db: Db, orderId: number) {
+export async function findOrderOwnership(db: Reader, orderId: number) {
   const [row] = await db
     .select({
       id: orders.id,
@@ -300,7 +318,7 @@ export async function findOrderOwnership(db: Db, orderId: number) {
   return row
 }
 
-async function loadPayment(db: Db, orderId: number) {
+async function loadPayment(db: Reader, orderId: number) {
   const [row] = await db
     .select({
       id: payments.id,
@@ -315,18 +333,20 @@ async function loadPayment(db: Db, orderId: number) {
   return payment
 }
 
-async function loadOne(db: Db, orderId: number) {
+async function loadOne(db: Reader, orderId: number, hooks: ReadHooks = {}) {
   const [order] = await selectOrders(db, eq(orders.id, orderId))
   if (!order) throw new Error(`Order ${orderId} disappeared`)
+  await hooks.afterOrderHeader?.()
   const lines = await selectLines(db, [orderId])
   return { order, lines, payment: await loadPayment(db, orderId) }
 }
 
-export async function loadProviderOrderDetail(
-  db: Db,
+async function readProviderOrderDetail(
+  db: Reader,
   orderId: number,
+  hooks?: ReadHooks,
 ): Promise<ProviderOrderDetailDto> {
-  const { order, lines, payment } = await loadOne(db, orderId)
+  const { order, lines, payment } = await loadOne(db, orderId, hooks)
   const ledgerRows = await db
     .select({
       id: ledgerEntries.id,
@@ -351,17 +371,63 @@ export async function loadProviderOrderDetail(
   }
 }
 
-export async function loadPatientOrderDetail(
-  db: Db,
+async function readPatientOrderDetail(
+  db: Reader,
   orderId: number,
+  hooks?: ReadHooks,
 ): Promise<PatientOrderDetailDto> {
-  const { order, lines, payment } = await loadOne(db, orderId)
+  const { order, lines, payment } = await loadOne(db, orderId, hooks)
   return {
     ...patientSummary(order),
     patientAddress: order.patientAddress,
     lines: lines.map(patientLine),
     payment,
   }
+}
+
+/** The provider's view of an order, read in one snapshot. */
+export function loadProviderOrderDetail(
+  db: Db,
+  orderId: number,
+  hooks?: ReadHooks,
+): Promise<ProviderOrderDetailDto> {
+  return inSnapshot(db, (tx) => readProviderOrderDetail(tx, orderId, hooks))
+}
+
+/** The patient's view of an order, read in one snapshot. */
+export function loadPatientOrderDetail(
+  db: Db,
+  orderId: number,
+  hooks?: ReadHooks,
+): Promise<PatientOrderDetailDto> {
+  return inSnapshot(db, (tx) => readPatientOrderDetail(tx, orderId, hooks))
+}
+
+/**
+ * GET /api/orders/:id: the visibility decision and the whole detail come from
+ * one snapshot (revision 11, N5). A read overlapping a provider's cancel,
+ * reopen and edit therefore returns the coherent old sent order or a 404 to
+ * the patient, never lines from a newer, unsent draft.
+ * 404 if missing (or unsent, for its patient); 403 if not the caller's.
+ */
+export function loadOrderDetailFor(
+  db: Db,
+  user: CurrentUser,
+  orderId: number,
+  hooks?: ReadHooks,
+): Promise<ProviderOrderDetailDto | PatientOrderDetailDto> {
+  return inSnapshot(db, async (tx) => {
+    const order = await findOrderOwnership(tx, orderId)
+    if (!order) throw notFound('Order')
+    if (user.role === 'provider') {
+      if (order.providerId !== user.providerId) throw forbidden()
+      return readProviderOrderDetail(tx, orderId, hooks)
+    }
+    if (order.patientId !== user.patientId) throw forbidden()
+    // Unsent orders (drafts, and drafts cancelled before sending) stay hidden.
+    if (order.sentAt === null) throw notFound('Order')
+    return readPatientOrderDetail(tx, orderId, hooks)
+  })
 }
 
 /**
