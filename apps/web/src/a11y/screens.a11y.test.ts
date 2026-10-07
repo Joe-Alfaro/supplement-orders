@@ -106,6 +106,7 @@ const providerSummary: ProviderOrderSummaryDto = {
   sentAt: '2026-10-05T12:05:00.000Z',
   paidAt: '2026-10-05T12:10:00.000Z',
   cancelledAt: null,
+  revision: 1,
   split: paidSplit,
 }
 
@@ -160,6 +161,7 @@ const emptyDraft: ProviderOrderDetailDto = {
   status: 'draft',
   sentAt: null,
   paidAt: null,
+  revision: 0,
   split: null,
   lines: [],
   payment: null,
@@ -178,6 +180,7 @@ const pendingPatientOrder: PatientOrderDetailDto = {
   sentAt: '2026-10-05T12:05:00.000Z',
   paidAt: null,
   cancelledAt: null,
+  revision: 1,
   patientAddress: '214 Alder St, Portland, OR 97205',
   totalCents: 12000,
   lines: [
@@ -218,6 +221,7 @@ const myOrders: PatientOrderSummaryDto[] = [
     sentAt: '2026-10-05T12:00:00.000Z',
     paidAt: null,
     cancelledAt: null,
+    revision: 1,
     totalCents: 12000,
   },
 ]
@@ -226,18 +230,6 @@ const dashboard: DashboardDto = {
   gmvCents: 6951,
   providerMarginCents: 3499,
   platformFeeCents: 52,
-  paidOrders: [
-    {
-      orderId: 7,
-      patientId: 7,
-      patientName: 'Jordan Lee',
-      paidAt: '2026-10-05T12:00:00.000Z',
-      totalCents: 6951,
-      cogsCents: 3400,
-      providerMarginCents: 3499,
-      platformFeeCents: 52,
-    },
-  ],
 }
 
 function productPage(query: ListQuery): ProductPageDto {
