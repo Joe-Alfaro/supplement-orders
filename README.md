@@ -2,7 +2,7 @@
 
 A working vertical slice of in-house supplement ordering inside an EHR. A provider assembles a supplement order for a patient and sets the patient-facing price per item. The patient pays through a stubbed gateway. The system splits every paid order into wholesale cost, provider margin and a 75 bps processing fee (ledger type `platform_fee`), and records the split as three immutable ledger entries that sum exactly to the amount paid. Providers also get an Orders tab with a status filter, and a dashboard with sales totals (GMV, margin earned, processing fees) and read-only stock.
 
-**Live demo: <https://web-production-b7c8c.up.railway.app>.** Auth is stubbed: pick any seeded user on the sign-in screen, no password. All data is fake.
+**Live demo: <https://web-production-b7c8c.up.railway.app>.** Auth is stubbed: pick any seeded user on the sign-in screen, no password. All data is fake. The live demo was last deployed before revisions 9 and 10, so it still runs the older payment flow: pay isn't bound to the quote on screen, and the gateway call happens inside one database transaction. This README and the docs describe the code on `main`.
 
 Stack: TypeScript end to end. Vue 3 + Vite + PrimeVue 4 on the front end, an Express 5 REST API with Zod validation, Drizzle ORM, and Postgres 16. npm workspaces share one domain package, so the money logic lives in exactly one place.
 
@@ -40,10 +40,12 @@ Captured from the live demo at 1440x900, signed in as Dr. Maya Rivera.
 
 Prerequisites: Node 22 LTS, 22.13 or later (`engines` in `package.json` is `>=22.13 <23`, which also pins Railway to Node 22), npm, and Docker. Parts of the app were developed on Node 23 with npm 10.9; npm warns about the engines range there, but the tests pass.
 
+`npm ci` and `npm install` from the committed lockfile work on npm 10. Changing the Vitest version is different: npm 10.9 crashes while resolving Vitest 4, so regenerate the lockfile with npm 11 (for example `npx npm@11 install`).
+
 ```sh
 npm install
 npm run db:up        # Postgres 16 in Docker on localhost:54329; waits until healthy
-npm run db:migrate   # applies migrations 0000-0006 (includes the pg_trgm extension)
+npm run db:migrate   # applies migrations 0000-0009 (includes the pg_trgm extension)
 npm run db:seed      # wipes the dev database and loads the demo seed
 npm run dev          # API on http://localhost:3000, web on http://localhost:5173
 ```
@@ -68,7 +70,7 @@ Authentication is stubbed. The `/login` dropdown lists every user in the databas
 
 A demo path: sign in as Dr. Maya Rivera, open Jordan Lee, click **New order**, add a product through **Add line**, set Markup % or Patient price, **Send to patient**. Sign out, sign in as Jordan Lee, open the order under My orders and click **Pay**. Sign back in as Dr. Rivera to see the order's ledger, find it under Orders, and check the dashboard. On the live demo, other visitors may have created orders too.
 
-In development builds the patient pay screen has a "Simulate gateway failure (dev only)" checkbox. A simulated decline rolls back everything: no payment, no ledger rows, no stock change.
+In development builds the patient pay screen has a "Simulate gateway failure (dev only)" checkbox. A simulated decline records no payment and no ledger rows, and gives back the stock the attempt had reserved. The order stays payable; paying again starts a new attempt with a new idempotency key.
 
 ## Scripts
 
@@ -109,6 +111,12 @@ Worked example: a product with a $5.81 wholesale cost has a minimum price of $5.
 
 When the patient pays, the API writes three ledger entries (`cogs`, `provider_margin`, `platform_fee`) whose sum is asserted to equal the payment amount before they're inserted. The provider's order detail shows them with a "Total of entries" row. The dashboard's GMV comes from payments, and its margin and fee totals come from the ledger.
 
+Pay is bound to the quote the patient saw: the request carries the order's `revision` and total, and a stale screen gets 409 `ORDER_CHANGED` and isn't charged. Each charge goes through a durable payment attempt that reserves stock first and has its own idempotency key, so a retry or a restart can't charge twice. The full sequence is in [Architecture §6](docs/ARCHITECTURE.md#6-core-flow).
+
+### Stock
+
+Stock is read-only in the app. Requirement 5 of the brief asks for the dashboard to "update inventory", while its out-of-scope list puts inventory mechanics out of scope (no need to model warehouses or stock levels). The product owner reads "update inventory" as stock going down automatically when orders are paid, with no restocking or manual adjustment, since neither providers nor the platform control stock in this slice, and accepted that interpretation after an independent audit flagged the wording. The dashboard shows each product's available stock. A pay attempt reserves the order's quantities before charging, a decline gives them back, and a recorded payment keeps them as the sale. So an order whose payment is in progress, or waiting for reconciliation, already counts against the stock shown.
+
 ## Deployment
 
 Public demo: <https://web-production-b7c8c.up.railway.app>
@@ -125,7 +133,7 @@ The app runs on [Railway](https://railway.com) as one service plus a Railway Pos
 Service variables:
 
 - `DATABASE_URL`: a reference to the Postgres service's private URL, `${{Postgres.DATABASE_URL}}`.
-- `NODE_ENV=production`: turns on static serving and turns off **Simulate gateway failure**. The decline and rollback path is demonstrated locally.
+- `NODE_ENV=production`: turns on static serving and turns off **Simulate gateway failure**. The decline path is demonstrated locally.
 - `PORT`: provided by Railway.
 
 Production static serving: hashed files under `/assets/` are cached for a year, a missing `/assets/` file is a plain 404, `index.html` is `no-cache`, and any other non-`/api` GET returns `index.html` so deep links such as `/orders?status=paid` work. Unknown `/api` routes still return a JSON 404.
@@ -136,23 +144,23 @@ To deploy, run `railway up` from the repo root on an up-to-date `main`. Railway'
 
 ## What's stubbed
 
-| Concern          | Stub                                                                                                                                                                                                                                          |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Payments         | `FakePaymentGateway` (in-process) always succeeds unless failure is forced, and replays the original result for a repeated idempotency key. `{ simulateFailure: true }` on the pay request forces a decline unless `NODE_ENV` is `production` |
-| Auth             | The login screen stores the chosen user id in localStorage; the client sends it as `X-User-Id`. `HeaderAuth` looks the user up and takes the role from the database. Unknown or missing id is a 401. No passwords or sessions                 |
-| Notifications    | `ConsoleNotifier` logs `[notifier] order <id> is ready for patient payment` and `[notifier] order <id> was cancelled by the provider` to the API console                                                                                      |
-| Shipping and tax | Not modeled. The patient's address is shown as a plain string                                                                                                                                                                                 |
+| Concern          | Stub                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Payments         | `FakePaymentGateway` stands in for a processor with durable idempotency. It keeps every charge in its own table, `fake_gateway_charges`, written in its own committed statements. The first call for a key decides the outcome; later calls with the same key and amount replay it, a different amount is refused, and `lookup` never charges. It always succeeds unless failure is forced: `{ simulateFailure: true }` on the pay request forces a decline unless `NODE_ENV` is `production` |
+| Auth             | The login screen stores the chosen user id in localStorage; the client sends it as `X-User-Id`. `HeaderAuth` looks the user up and takes the role from the database. Unknown or missing id is a 401. No passwords or sessions                                                                                                                                                                                                                                                                 |
+| Notifications    | `ConsoleNotifier` logs `[notifier] order <id> is ready for patient payment` and `[notifier] order <id> was cancelled by the provider` to the API console                                                                                                                                                                                                                                                                                                                                      |
+| Shipping and tax | Not modeled. The patient's address is shown as a plain string                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 Each stub sits behind an interface in `apps/api/src/seams/` and is injected through `createApp`, so a real implementation replaces the fake without touching domain code.
 
 ## Testing
 
-| Suite                                         | Count            | Notes                                                                                                                                                                                                |
-| --------------------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/domain` (Vitest)                    | 308              | Fee, minimum price, split, ledger, markup conversions, money parsing and formatting, request schemas                                                                                                 |
-| `apps/api` (Vitest + Supertest)               | 195              | Against a real Postgres: HTTP contract tests, pay rollback and idempotency, concurrent pay/cancel, delete and reopen, order list filters, search, SPA serving                                        |
-| `apps/web` (Vitest + Testing Library + jsdom) | 144              | Views and components, 16 axe-core accessibility scans, 23 loading/error/empty/persona state tests                                                                                                    |
-| `e2e/` (Playwright)                           | 5 files, 8 tests | Happy path (order, pay, ledger, exact dashboard and stock deltas), simulated gateway failure, cancel, order lifecycle (delete draft, cancel, reopen, status filters), URL-state navigation (4 cases) |
+| Suite                                         | Count            | Notes                                                                                                                                                                                                                                                                                                                                     |
+| --------------------------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/domain` (Vitest)                    | 316              | Fee, minimum price, split, ledger, markup conversions, money parsing and formatting, request schemas and draft bounds                                                                                                                                                                                                                     |
+| `apps/api` (Vitest + Supertest)               | 263 in 27 files  | Against a real Postgres: HTTP contract tests, stale-quote and payment-integrity tests (fenced outcomes, overlapping and held gateway responses, key conflicts, restart recovery with a fresh gateway and app on the same database), concurrent pay/cancel, delete and reopen, order list filters, search, dashboard snapshot, SPA serving |
+| `apps/web` (Vitest + Testing Library + jsdom) | 147              | Views and components, 16 axe-core accessibility scans, 23 loading/error/empty/persona state tests                                                                                                                                                                                                                                         |
+| `e2e/` (Playwright)                           | 6 files, 9 tests | Happy path (order, pay, ledger, exact dashboard and stock deltas), simulated gateway failure, cancel, order lifecycle (delete draft, cancel, reopen, status filters), a stale patient page that must reload before paying the new total, URL-state navigation (4 cases)                                                                   |
 
 Counts are from `npm test` and `npm run test:e2e` at the time of writing.
 
@@ -172,7 +180,7 @@ apps/api              Express REST API
   src/orders/         order service (send, pay, cancel, delete, reopen) and read views
   src/seams/          Auth, PaymentGateway, Notifier interfaces and fakes
   src/db/             Drizzle schema, migration runner, seed, test/e2e database helpers
-  drizzle/            SQL migrations 0000-0006
+  drizzle/            SQL migrations 0000-0009
   scripts/            explain-search.ts
 apps/web              Vue 3 + Vite + PrimeVue SPA (views, components, api client, a11y and state tests)
 e2e/                  Playwright specs

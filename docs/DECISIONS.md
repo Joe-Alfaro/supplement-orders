@@ -67,20 +67,39 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 ## Payment flow
 
-**Stock is decremented before the charge**
+**Pay is bound to the quote the patient saw (revision 9)**
 
-- **Decision:** inside the pay transaction the order is locked `FOR UPDATE`, then stock is conditionally decremented, then the gateway is charged.
-- **Why:** with the decrement after the charge, an insufficient-stock rollback would happen after the patient had been charged. Moving it first means every expected failure happens before money moves.
-- **Alternative:** charge outside the transaction with an outbox. That's the right production design, but too much machinery for the slice.
-- **Tradeoff:** a row lock is held across an external call, and a charge whose transaction later fails needs reconciliation. The fake replays by idempotency key; a real integration needs a reconciliation job.
+- **Decision:** every send adds one to the order's `revision`. Pay must send back the `expectedRevision` and `expectedTotalCents` the patient's screen showed; if either differs under the order lock, the API returns 409 `ORDER_CHANGED` and charges nothing, and the pay screen reloads the order and shows the new total.
+- **Why:** an independent audit reproduced a stale screen paying a new price: cancel, reopen, reprice and resend, and a page opened before all that paid the new total.
+- **Alternative:** a client-side check only. Rejected, because the server has to enforce the patient's consent to the price.
+
+**Reversed: one transaction with the charge under the lock -> durable payment attempts (revisions 9 and 10)**
+
+- **First decision:** pay ran in one transaction: lock the order, decrement stock, charge the gateway with the key `order-<id>-payment`, write the payment and ledger, mark it paid. Any error rolled everything back.
+- **Why it changed:** the audit showed that a rollback after a successful charge, followed by cancel, reopen and reprice, reused the same key and gateway reference for a different amount. Revision 9 committed a `payment_attempts` row (key `order-<id>-r<revision>`) with its stock reservation before charging, and called the gateway outside the lock. A re-audit then found that this created new holes: two overlapping pays of one attempt could get a decline and a success, and the decline released the stock and unblocked cancel while the success was still in flight; and because the fake gateway kept its idempotency in process memory, verifying a saved success after a restart charged again.
+- **Final decision (revision 10):** each attempt has executions, with the key `order-<id>-r<revision>-e<execution>`. An unresolved execution (`pending`, `succeeded` without a payment, or `conflict`) is always reused with its key; a new execution and key start only after a decline. Stock is reserved with the execution, before any charge. Outcomes are applied with a fenced update (same attempt, same execution, still `pending` or `conflict`), so a stale or duplicate response changes nothing, and a decline releases stock only if its update matched. A succeeded execution is verified with the gateway's non-charging `lookup`, never by charging again. Payment, ledger and paid status are then written in one transaction. While any execution is unresolved, cancel, reopen, delete and edits return 409 `PAYMENT_NEEDS_RECONCILIATION`.
+- **Alternatives:** minting a new key whenever an order is reopened (rejected: it can charge twice while the first success is unresolved); an in-process mutex per attempt (rejected: it doesn't hold across restarts or more than one API process); an outbox and webhook flow (the right production design, but more machinery than the slice needs).
+- **Tradeoff:** stock is held while a payment is unresolved, so the inventory shows available stock, not just sold stock. Nothing resolves an attempt except the patient paying again; there's no reconciliation job, and a `conflict` needs manual reconciliation.
+
+**A durable fake gateway: the first call decides (revision 10)**
+
+- **Decision:** `FakePaymentGateway` keeps its charges in its own table, `fake_gateway_charges`, written in its own committed statements, never inside the API's transactions. The first call for a key atomically decides the outcome (insert, or read the existing row); every later call with the same key and amount replays it, decline included; the same key with another amount is refused with `IDEMPOTENCY_KEY_REUSED`. `lookup` never charges.
+- **Why:** a real processor's idempotency survives the caller's restarts, and the re-audit's restart double charge came from a fake that didn't. With the first call deciding, a decline and a success can't both exist for one key.
+- **Alternative:** keep the fake in memory and accept the restart gap. Rejected, because the money path's recovery depends on it.
+- **Tradeoff:** the fake shares the app's database for convenience, which a real processor wouldn't. The migration that creates it also copies in the successes the app already recorded, so `lookup` can verify them.
+
+**A key conflict is unresolved, not a decline**
+
+- **Decision:** when the gateway answers `IDEMPOTENCY_KEY_REUSED`, or reports a success for a different amount, the attempt becomes `conflict`: its stock stays reserved, the order stays blocked, and pay returns 409 `PAYMENT_NEEDS_RECONCILIATION`.
+- **Why:** revision 9 treated the conflict as a decline, releasing stock and allowing cancel and delete. But the error means a charge already exists for that key, so the order would have been erased with money taken.
 
 **Idempotent pay**
 
-- **Decision:** the idempotency key is `order-<id>-payment`. Paying a paid order returns the existing result, with no new charge or ledger rows. Uniqueness on `payments.order_id` and `ledger_entries(payment_id, type)` backs this up.
+- **Decision:** paying a paid order returns the existing result, with no new charge or ledger rows, as long as the request names the paid revision and total. Uniqueness on `payments.order_id`, `payments.payment_attempt_id` and `ledger_entries(payment_id, type)` backs this up.
 
 **Cancel shares pay's row lock**
 
-- **Decision:** cancel takes the same `FOR UPDATE` lock as pay, so exactly one of a racing cancel and pay wins and the other gets a 409. A test runs six concurrent pairs. (Which orders can be cancelled changed in revision 8; see the next section.)
+- **Decision:** cancel takes the same `FOR UPDATE` lock as pay's transactions, so exactly one of a racing cancel and pay wins and the other gets a 409. A test runs six concurrent pairs. Once pay has committed an attempt, cancel is refused with `PAYMENT_NEEDS_RECONCILIATION` until the attempt is declined or paid. (Which orders can be cancelled changed in revision 8; see the next section.)
 - **Tradeoff:** cancelling a paid order (a refund) is not supported.
 
 ## Order lifecycle (revision 8)
@@ -95,7 +114,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 **Reopen a cancelled order as a draft**
 
-- **Decision:** `POST /api/orders/:id/reopen` moves `cancelled` back to `draft`. It clears `sentAt`, `cancelledAt` and the stored totals, keeps the lines, and takes the provider to the builder. The patient no longer sees the order until it's sent again. Stock isn't touched, because only payment moves stock.
+- **Decision:** `POST /api/orders/:id/reopen` moves `cancelled` back to `draft`. It clears `sentAt`, `cancelledAt` and the stored totals, keeps the lines, and takes the provider to the builder. The patient no longer sees the order until it's sent again. Stock isn't touched, because only pay attempts move stock.
 - **Why:** product owner request. Keeping the lines means a cancelled order can be corrected and re-sent without rebuilding it.
 - **Alternative:** allow reopening paid orders. That would need refunds, which are out of scope.
 - **Tradeoff:** an order's history is overwritten in place: after a reopen, the earlier send and cancel times are gone. A full status history would need an events table.
@@ -161,7 +180,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 - **Decision:** the dashboard keeps its three tiles and the inventory, and replaces its awaiting-payment and paid-orders tables with "See paid orders →" and "See orders awaiting payment →" links into the Orders tab with that filter applied.
 - **Why:** once the Orders tab existed, the dashboard tables duplicated it. One list is the single source of truth.
-- **Tradeoff:** the dashboard loses its at-a-glance list of pending orders; it's one click away. The dashboard API still returns the unused paid-orders list, left in place to avoid contract-test churn during integration.
+- **Tradeoff:** the dashboard loses its at-a-glance list of pending orders; it's one click away. The dashboard API kept returning the unused paid-orders list at first, to avoid contract-test churn during integration; revision 9 removed it.
 
 **All list state in the URL**
 
@@ -179,14 +198,14 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 **Cross-model, test-first development**
 
-- **Decision:** written contracts first. A different model (Grok) writes failing tests from the contract, and Claude implements. The implementer may not edit tests without the orchestrator's approval; disputes go to the orchestrator. In practice that approval was given three times, for two type-only and formatting-only fixes and one stale expected value. One domain test file, `fee-guard.test.ts`, was written by the implementer.
+- **Decision:** written contracts first. A different model (Grok) writes failing tests from the contract, and Claude implements. The implementer may not edit tests without the orchestrator's approval; disputes go to the orchestrator. In practice that approval was given three times, for two type-only and formatting-only fixes and one stale expected value. One domain test file, `fee-guard.test.ts`, was written by the implementer. For revision 10, Codex took over test authoring after Grok's usage credits ran out, which kept the test author and the implementer on different models.
 - **Why:** when the same model writes tests and code, the tests tend to share the code's assumptions.
 - **Tradeoff:** a contract document and an extra round trip per disagreement. Covered in detail in [AI_USAGE.md](AI_USAGE.md).
 
 **Reversed: manual end-to-end checks -> Playwright**
 
 - **First decision:** the end-to-end flow was checked by hand in a browser, to keep the suite small.
-- **Final decision:** five Playwright specs (happy path, gateway failure, cancel, order lifecycle, and URL-state navigation) on a dedicated `supplement_orders_e2e` database, run with `npm run test:e2e` and kept out of `npm test`.
+- **Final decision:** six Playwright specs (happy path, gateway failure, cancel, order lifecycle, a stale patient page, and URL-state navigation) on a dedicated `supplement_orders_e2e` database, run with `npm run test:e2e` and kept out of `npm test`.
 - **Why it changed:** the product owner asked whether there was an end-to-end test. After half a dozen revisions to pricing rules, manual checks clearly weren't catching regressions. The happy path asserts exact dashboard and stock deltas, not just "something changed".
 - **Tradeoff:** a browser download and about 30 seconds per run.
 
@@ -212,8 +231,8 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 **Simulated gateway failure off in production**
 
 - **Decision:** `NODE_ENV=production` on the deployed service, which disables the "Simulate gateway failure (dev only)" control.
-- **Why:** a public URL shouldn't expose a test hook. The decline and rollback path is demonstrated locally and covered by tests.
-- **Tradeoff:** the rollback can't be shown on the live demo.
+- **Why:** a public URL shouldn't expose a test hook. The decline path is demonstrated locally and covered by tests.
+- **Tradeoff:** a decline can't be shown on the live demo.
 
 **Full demo seed, loaded only into an empty database**
 
@@ -233,7 +252,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 - Provider payouts. The ledger records what's owed; nothing moves money to providers.
 - Real payments, auth, email, shipping, tax.
 - Date-range filters, CSV export and charts on the dashboard. A platform-wide (admin) revenue view.
-- Inventory management. Stock only goes down on payment; there's no restocking path in the app.
+- Inventory management. The brief's requirement 5 asks the dashboard to "update inventory", but its out-of-scope list says warehouses and stock levels needn't be modeled. The product owner reads "update inventory" as stock going down automatically with sales, with no restocking or manual adjustment, since neither providers nor the platform control stock here, and accepted that reading after the audit raised it. Stock is reserved when a pay attempt starts and kept when the payment is recorded; there's no restocking path in the app.
 - A database-level guard against ledger updates or deletes.
 - Automated deploys. Deploys run `railway up` by hand because Railway's auto-deploy supports only GitHub.
 - Order status history. Reopen overwrites the earlier send and cancel times.
@@ -242,11 +261,11 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 ## What we'd do next
 
 1. Deploy from CI (a GitHub mirror or a CI job with a Railway token) instead of `railway up` by hand.
-2. Payment reconciliation for a charge whose transaction never committed, or move to an outbox and webhook flow.
+2. A reconciliation job or support tool for unresolved payment attempts (including `conflict`), backed by a real processor's lookup and webhooks.
 3. Refunds as negative ledger entries, and a payout report per provider.
 4. Real authentication and role-based access behind the existing `Auth` interface, with audit logging on PHI reads.
 5. A database trigger that makes `ledger_entries` append-only and checks each payment's entries sum to its amount.
 6. Rate limiting, structured logging with order and payment ids, and alerting on ledger imbalance or post-charge rollback.
 7. Date filters on the dashboard and a platform-level GMV and fee report.
-8. Remove the unused paid-orders list from the dashboard API and the unused `lower(name)` indexes.
+8. Remove the unused `lower(name)` indexes.
 9. An order events table, so reopen and cancel keep a full status history.
