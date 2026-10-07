@@ -36,9 +36,6 @@ function openOrder(event: DataTableRowClickEvent<ProviderOrderSummaryDto>) {
 }
 
 function orderLink(order: ProviderOrderSummaryDto) {
-  if (order.status === 'draft') {
-    return `/patients/${order.patientId}/orders/new?orderId=${order.id}`
-  }
   return `/orders/${order.id}`
 }
 </script>

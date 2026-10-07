@@ -313,7 +313,10 @@ describe('ProviderOrderView delete draft', () => {
     await expectNoDialog('Delete draft')
     expect(api.deleteOrder).not.toHaveBeenCalled()
     expect(router.currentRoute.value.path).toBe('/orders/42')
-    expect(screen.getByRole('link', { name: 'Edit draft' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Edit draft' })).toHaveAttribute(
+      'href',
+      '/patients/7/orders/42',
+    )
   })
 
   it('shows a 409 in the error banner and re-fetches the order', async () => {
@@ -354,7 +357,7 @@ describe('ProviderOrderView reopen', () => {
 
     await vi.waitFor(() =>
       expect(router.currentRoute.value.fullPath).toBe(
-        '/patients/7/orders/new?orderId=42',
+        '/patients/7/orders/42',
       ),
     )
     expect(api.reopenOrder).toHaveBeenCalledTimes(1)

@@ -29,6 +29,11 @@ test('a draft can be deleted, and a cancelled order can be reopened and paid', a
     await addProduct(page, DRAFT_SKU, { quantity: 1 })
     await page.getByRole('button', { name: 'Save draft' }).click()
     await expect(page.getByText('Draft saved.')).toBeVisible()
+    // The first save swaps /new for the draft's own address, in place.
+    await expect(page).toHaveURL(/\/patients\/\d+\/orders\/\d+$/)
+    await expect(
+      page.getByRole('heading', { level: 1, name: /^Draft order #\d+/ }),
+    ).toBeVisible()
 
     await openOrders(page)
     await showOnly(page, 'Draft')
@@ -103,6 +108,7 @@ test('a draft can be deleted, and a cancelled order can be reopened and paid', a
     await expect(page.getByRole('heading', { level: 1 })).toContainText(
       'Draft order',
     )
+    await expect(page).toHaveURL(/\/patients\/\d+\/orders\/\d+$/)
     await expect(page.getByRole('heading', { level: 1 })).toContainText(PATIENT)
     await expect(
       page

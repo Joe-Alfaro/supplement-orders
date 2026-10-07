@@ -9,7 +9,9 @@ import userEvent, { type UserEvent } from '@testing-library/user-event'
 import { screen, within } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
+import { renderRoutes } from '../test/renderRoutes'
 import { renderWithRouter } from '../test/renderWithRouter'
+import { clearNoticeUnlessOn, notice } from '../user'
 import OrderBuilderView from './OrderBuilderView.vue'
 
 vi.mock('../api', async (importOriginal) => {
@@ -22,6 +24,7 @@ vi.mock('../api', async (importOriginal) => {
     createOrder: vi.fn(),
     replaceOrderLines: vi.fn(),
     sendOrder: vi.fn(),
+    deleteOrder: vi.fn(),
   }
 })
 
@@ -61,9 +64,9 @@ const patient: PatientDto = {
   latestOrderStatus: null,
 }
 
-async function renderBuilder(orderId?: string) {
+async function renderBuilder(orderId = 'new') {
   const view = await renderWithRouter(OrderBuilderView, {
-    path: '/patients/7/orders/new',
+    path: `/patients/7/orders/${orderId}`,
     props: { patientId: '7', orderId },
   })
   await screen.findByRole('heading', { name: /New order|Draft order/ })
@@ -160,6 +163,12 @@ beforeEach(() => {
     .mockReset()
     .mockImplementation(async (query = {}) => productPage(query))
   vi.mocked(api.getPatient).mockResolvedValue(patient)
+  vi.mocked(api.getOrder).mockReset()
+  vi.mocked(api.createOrder).mockReset()
+  vi.mocked(api.deleteOrder).mockReset()
+  vi.mocked(api.replaceOrderLines).mockReset()
+  vi.mocked(api.sendOrder).mockReset()
+  clearNoticeUnlessOn('__reset__')
 })
 
 describe('OrderBuilderView', () => {
@@ -739,5 +748,247 @@ describe('OrderBuilderView patient and stock', () => {
     expect(sendButton()).toBeDisabled()
     await fill(user, 'Patient price (each) Omega-3', '10000')
     expect(sendButton()).toBeEnabled()
+  })
+})
+
+describe('OrderBuilderView as the one draft page', () => {
+  const lines = draftDetail([]).lines
+
+  it('replaces /new with /:orderId on the first save and keeps what was entered', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.createOrder).mockResolvedValue(draftDetail([]))
+    vi.mocked(api.replaceOrderLines).mockResolvedValue(draftDetail(lines))
+    const { router } = await renderRoutes('/patients/7/orders/new')
+    await screen.findByRole('heading', { name: /New order/ })
+    await addProduct(user, 'Vitamin D3', { qty: '3', price: '20' })
+    const replace = vi.spyOn(router, 'replace')
+    const push = vi.spyOn(router, 'push')
+    // A line the server would not echo back, to prove the page is not reloaded.
+    vi.mocked(api.replaceOrderLines).mockImplementation(async () =>
+      draftDetail([
+        {
+          productId: 1,
+          productName: 'Vitamin D3',
+          sku: 'VITD',
+          quantity: 3,
+          unitPriceCents: 2000,
+          lineTotalCents: 6000,
+          unitCogsCents: 1200,
+          markupBps: 4000,
+          minUnitPriceCents: 1210,
+          stockQuantity: 10,
+        },
+      ]),
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Save draft' }))
+
+    expect(await screen.findByText('Draft saved.')).toBeInTheDocument()
+    expect(replace).toHaveBeenCalledWith('/patients/7/orders/99')
+    expect(push).not.toHaveBeenCalled()
+    expect(router.currentRoute.value.fullPath).toBe('/patients/7/orders/99')
+    expect(
+      screen.getByRole('heading', { name: /Draft order #99/ }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Qty Vitamin D3' })).toHaveValue(
+      '3',
+    )
+    // No remount: the saved draft was not fetched again.
+    expect(api.getOrder).not.toHaveBeenCalled()
+    expect(api.createOrder).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not create a second order when saving again after the URL changed', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.createOrder).mockResolvedValue(draftDetail([]))
+    vi.mocked(api.replaceOrderLines).mockResolvedValue(draftDetail([]))
+    await renderRoutes('/patients/7/orders/new')
+    await screen.findByRole('heading', { name: /New order/ })
+    await addProduct(user, 'Vitamin D3', { price: '20' })
+
+    await user.click(screen.getByRole('button', { name: 'Save draft' }))
+    await screen.findByText('Draft saved.')
+    await user.click(screen.getByRole('button', { name: 'Save draft' }))
+
+    await vi.waitFor(() =>
+      expect(api.replaceOrderLines).toHaveBeenCalledTimes(2),
+    )
+    expect(api.createOrder).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens a saved draft at /patients/:patientId/orders/:orderId', async () => {
+    vi.mocked(api.getOrder).mockResolvedValue(draftDetail([]))
+    const { router } = await renderRoutes('/patients/7/orders/99')
+
+    expect(
+      await screen.findByRole('heading', { name: /Draft order #99/ }),
+    ).toBeInTheDocument()
+    expect(router.currentRoute.value.fullPath).toBe('/patients/7/orders/99')
+  })
+
+  it.each(['pending_payment', 'paid', 'cancelled'] as const)(
+    'redirects a %s order to its detail page',
+    async (status) => {
+      vi.mocked(api.getOrder).mockResolvedValue({
+        ...draftDetail([]),
+        status,
+      })
+      const { router } = await renderRoutes('/patients/7/orders/99')
+
+      await vi.waitFor(() =>
+        expect(router.currentRoute.value.fullPath).toBe('/orders/99'),
+      )
+    },
+  )
+
+  it('treats an order of another patient as not found', async () => {
+    vi.mocked(api.getOrder).mockResolvedValue({
+      ...draftDetail([]),
+      patientId: 8,
+    })
+    const { router } = await renderRoutes('/patients/7/orders/99')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Order not found',
+    )
+    expect(router.currentRoute.value.fullPath).toBe('/patients/7/orders/99')
+    expect(
+      screen.queryByRole('button', { name: 'Save draft' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('redirects the legacy ?orderId= URL to the canonical draft URL', async () => {
+    vi.mocked(api.getOrder).mockResolvedValue(draftDetail([]))
+    const { router } = await renderRoutes('/patients/7/orders/new?orderId=99')
+
+    expect(
+      await screen.findByRole('heading', { name: /Draft order #99/ }),
+    ).toBeInTheDocument()
+    expect(router.currentRoute.value.fullPath).toBe('/patients/7/orders/99')
+  })
+})
+
+describe('OrderBuilderView delete draft', () => {
+  const dialogName = 'Delete draft'
+
+  function confirmDialog() {
+    return screen.findByRole('alertdialog', { name: dialogName })
+  }
+
+  it('is not offered for a new, unsaved order', async () => {
+    await renderBuilder()
+
+    expect(
+      screen.queryByRole('button', { name: 'Delete draft' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('appears once the first save has created the draft', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.createOrder).mockResolvedValue(draftDetail([]))
+    vi.mocked(api.replaceOrderLines).mockResolvedValue(draftDetail([]))
+    await renderBuilder()
+    await addProduct(user, 'Vitamin D3', { price: '20' })
+
+    await user.click(screen.getByRole('button', { name: 'Save draft' }))
+
+    expect(
+      await screen.findByRole('button', { name: 'Delete draft' }),
+    ).toBeInTheDocument()
+  })
+
+  it('confirms, deletes once, and returns to the patient with a notice', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.getOrder).mockResolvedValue(draftDetail([]))
+    vi.mocked(api.deleteOrder).mockResolvedValue(undefined)
+    const { router } = await renderBuilder('99')
+
+    await user.click(screen.getByRole('button', { name: 'Delete draft' }))
+    const dialog = await confirmDialog()
+    expect(dialog).toHaveTextContent(
+      "Delete draft order #99 for Jordan Lee? This can't be undone.",
+    )
+    expect(
+      within(dialog).getByRole('button', { name: 'Keep draft' }),
+    ).toHaveFocus()
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Delete draft' }),
+    )
+
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.path).toBe('/patients/7'),
+    )
+    expect(api.deleteOrder).toHaveBeenCalledTimes(1)
+    expect(api.deleteOrder).toHaveBeenCalledWith(99)
+    expect(notice.value).toEqual({
+      message: 'Draft deleted',
+      path: '/patients/7',
+    })
+  })
+
+  it('does nothing on Keep draft', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.getOrder).mockResolvedValue(draftDetail([]))
+    const { router } = await renderBuilder('99')
+
+    await user.click(screen.getByRole('button', { name: 'Delete draft' }))
+    await user.click(
+      within(await confirmDialog()).getByRole('button', { name: 'Keep draft' }),
+    )
+
+    await vi.waitFor(() =>
+      expect(
+        screen.queryByRole('alertdialog', { name: dialogName }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(api.deleteOrder).not.toHaveBeenCalled()
+    expect(router.currentRoute.value.path).toBe('/patients/7/orders/99')
+    expect(notice.value).toBeNull()
+  })
+
+  it('shows the error in the banner and stays on the page when delete fails', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.getOrder).mockResolvedValue(draftDetail([]))
+    vi.mocked(api.deleteOrder).mockRejectedValue(
+      new api.ApiRequestError(
+        409,
+        'ORDER_NOT_DRAFT',
+        'Only a draft can be deleted',
+      ),
+    )
+    const { router } = await renderBuilder('99')
+
+    await user.click(screen.getByRole('button', { name: 'Delete draft' }))
+    await user.click(
+      within(await confirmDialog()).getByRole('button', {
+        name: 'Delete draft',
+      }),
+    )
+
+    expect(
+      await screen.findByText('Only a draft can be deleted'),
+    ).toBeInTheDocument()
+    expect(router.currentRoute.value.path).toBe('/patients/7/orders/99')
+    expect(notice.value).toBeNull()
+  })
+
+  it('is disabled while a save is in flight', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.getOrder).mockResolvedValue(draftDetail([]))
+    let finish: (order: ProviderOrderDetailDto) => void = () => undefined
+    vi.mocked(api.replaceOrderLines).mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+    )
+    await renderBuilder('99')
+    await addProduct(user, 'Vitamin D3', { price: '20' })
+
+    await user.click(screen.getByRole('button', { name: 'Save draft' }))
+
+    expect(screen.getByRole('button', { name: 'Delete draft' })).toBeDisabled()
+    finish(draftDetail([]))
+    await screen.findByText('Draft saved.')
+    expect(screen.getByRole('button', { name: 'Delete draft' })).toBeEnabled()
   })
 })

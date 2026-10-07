@@ -2,14 +2,17 @@
 import type { PatientDto } from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import Column from 'primevue/column'
+import ConfirmDialog from 'primevue/confirmdialog'
 import DataTable from 'primevue/datatable'
 import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
-import { computed, nextTick, onMounted, ref, useId } from 'vue'
+import { useConfirm } from 'primevue/useconfirm'
+import { computed, nextTick, onMounted, ref, useId, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   ApiRequestError,
   createOrder,
+  deleteOrder,
   handleApiError,
   getOrder,
   getPatient,
@@ -25,18 +28,24 @@ import {
 } from '../components'
 import { formatDateOfBirth } from '../format'
 import { formatCents, PLATFORM_FEE_BPS } from '../money'
+import { showNotice } from '../user'
 
 interface Props {
   patientId: string
-  /** Set when reopening an existing draft. */
-  orderId?: string
+  /** `new` for an unsaved order, otherwise the id of a saved draft. */
+  orderId: string
 }
 
 const props = defineProps<Props>()
 const router = useRouter()
 
 const patientId = computed(() => Number(props.patientId))
-const orderId = ref<number | null>(props.orderId ? Number(props.orderId) : null)
+
+function savedOrderId(param: string) {
+  return param === 'new' ? null : Number(param)
+}
+
+const orderId = ref<number | null>(savedOrderId(props.orderId))
 
 const patient = ref<PatientDto | null>(null)
 const loading = ref(true)
@@ -60,6 +69,9 @@ async function load() {
     ])
     patient.value = loadedPatient
     if (existing) {
+      if (existing.patientId !== patientId.value) {
+        throw new ApiRequestError(404, 'NOT_FOUND', 'Order not found')
+      }
       if (existing.status !== 'draft' || existing.view !== 'provider') {
         await router.replace(`/orders/${existing.id}`)
         return
@@ -74,13 +86,28 @@ async function load() {
 }
 onMounted(load)
 
+// The first save swaps /new for /:orderId, which arrives here as an id this
+// page already holds. Anything else is a different draft: start over.
+watch(
+  () => props.orderId,
+  (param) => {
+    if (savedOrderId(param) === orderId.value) return
+    orderId.value = savedOrderId(param)
+    draft.loadFromServer([])
+    status.value = null
+    banner.value = null
+    load()
+  },
+)
+
 /** Creates the draft on first save, then replaces its lines. */
 async function persist() {
   if (orderId.value === null) {
     const created = await createOrder(patientId.value)
     orderId.value = created.id
-    // Keep the URL pointing at the draft so a retry or reload does not create another.
-    await router.replace({ query: { orderId: String(created.id) } })
+    // Keep the URL pointing at the draft so a retry or reload does not create
+    // another. Same route record, so the builder keeps its state.
+    await router.replace(`/patients/${patientId.value}/orders/${created.id}`)
   }
   return replaceOrderLines(orderId.value, draft.toInputs())
 }
@@ -132,6 +159,39 @@ function sendToPatient() {
   })
 }
 
+const confirm = useConfirm()
+const deleting = ref(false)
+
+function confirmDelete() {
+  const id = orderId.value
+  if (id === null || !patient.value) return
+  confirm.require({
+    header: 'Delete draft',
+    message: `Delete draft order #${id} for ${patient.value.name}? This can't be undone.`,
+    // Destructive: start on the safe choice.
+    defaultFocus: 'reject',
+    rejectProps: { label: 'Keep draft', severity: 'secondary' },
+    acceptProps: { label: 'Delete draft', severity: 'danger' },
+    accept: () => removeDraft(id),
+  })
+}
+
+async function removeDraft(id: number) {
+  if (deleting.value) return
+  deleting.value = true
+  banner.value = null
+  try {
+    await deleteOrder(id)
+    const patientPath = `/patients/${patientId.value}`
+    showNotice('Draft deleted', patientPath)
+    await router.push(patientPath)
+  } catch (err) {
+    banner.value = handleApiError(err)
+  } finally {
+    deleting.value = false
+  }
+}
+
 const dialogOpen = ref(false)
 
 function openAddProduct() {
@@ -175,6 +235,7 @@ function rowIndex(row: EvaluatedLine) {
 </script>
 
 <template>
+  <ConfirmDialog />
   <p v-if="loading">Loading…</p>
   <ErrorBanner
     v-else-if="loadError"
@@ -392,13 +453,21 @@ function rowIndex(row: EvaluatedLine) {
       <Button
         label="Save draft"
         severity="secondary"
-        :disabled="saving"
+        :disabled="saving || deleting"
         @click="saveDraft"
       />
       <Button
         label="Send to patient"
-        :disabled="saving || !canSend"
+        :disabled="saving || deleting || !canSend"
         @click="sendToPatient"
+      />
+      <Button
+        v-if="orderId !== null"
+        label="Delete draft"
+        severity="danger"
+        outlined
+        :disabled="saving || deleting"
+        @click="confirmDelete"
       />
     </div>
     <p aria-live="polite" class="status">{{ status }}</p>

@@ -96,7 +96,7 @@ const ACTIONS: Partial<Record<OrderStatus, OrderAction>> = {
     destructive: false,
     run: async (o) => {
       await reopenOrder(o.id)
-      await router.push(`/patients/${o.patientId}/orders/new?orderId=${o.id}`)
+      await router.push(`/patients/${o.patientId}/orders/${o.id}`)
     },
   },
 }
@@ -184,7 +184,7 @@ async function perform(chosen: OrderAction, current: ProviderOrderDetailDto) {
 
     <p v-if="order.status === 'draft'">
       <RouterLink
-        :to="`/patients/${order.patientId}/orders/new?orderId=${order.id}`"
+        :to="`/patients/${order.patientId}/orders/${order.id}`"
         >Edit draft</RouterLink
       >
     </p>

@@ -40,17 +40,20 @@ export const routes: RouteRecordRaw[] = [
     props: true,
   },
   {
-    path: '/patients/:patientId/orders/new',
+    // One record for `new` and a saved draft id, so the first save can swap the
+    // URL without remounting the builder (FRONTEND_DESIGN §4.4c).
+    path: '/patients/:patientId/orders/:orderId(new|\\d+)',
     component: () => import('./views/OrderBuilderView.vue'),
     meta: provider,
-    // ?orderId= reopens an existing draft in the builder.
-    props: (route) => ({
-      patientId: route.params.patientId,
-      orderId:
-        typeof route.query.orderId === 'string'
-          ? route.query.orderId
-          : undefined,
-    }),
+    props: true,
+    // Old bookmarks: /orders/new?orderId=:id is now /orders/:id.
+    beforeEnter: (to) => {
+      const legacyId = to.query.orderId
+      if (to.params.orderId !== 'new') return true
+      if (typeof legacyId !== 'string' || !/^\d+$/.test(legacyId)) return true
+      // A guard redirect never enters history, so the legacy URL is not kept.
+      return `/patients/${to.params.patientId}/orders/${legacyId}`
+    },
   },
   {
     path: '/orders',
