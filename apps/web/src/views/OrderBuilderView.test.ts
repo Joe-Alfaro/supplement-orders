@@ -7,7 +7,7 @@ import type {
 } from '@supplement-orders/domain'
 import userEvent, { type UserEvent } from '@testing-library/user-event'
 import { screen, within } from '@testing-library/vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
 import { renderRoutes } from '../test/renderRoutes'
 import { renderWithRouter } from '../test/renderWithRouter'
@@ -158,6 +158,27 @@ async function addProduct(
   await user.click(screen.getByRole('button', { name: 'Add to order' }))
 }
 
+/** Opens the Edit dialog for a line's product, straight on its pricing step. */
+async function openEdit(user: UserEvent, name: string) {
+  await user.click(screen.getByRole('button', { name: `Edit ${name}` }))
+  await screen.findByRole('heading', { name: `Edit ${name}` })
+}
+
+/** Changes a line's pricing through the Edit dialog and saves it. */
+async function editLine(
+  user: UserEvent,
+  name: string,
+  fields: { qty?: string; markup?: string; price?: string },
+) {
+  await openEdit(user, name)
+  if (fields.qty !== undefined) await fill(user, 'Qty', fields.qty)
+  if (fields.markup !== undefined) await fill(user, 'Markup %', fields.markup)
+  if (fields.price !== undefined) {
+    await fill(user, 'Patient price (each)', fields.price)
+  }
+  await user.click(screen.getByRole('button', { name: 'Save changes' }))
+}
+
 beforeEach(() => {
   vi.mocked(api.searchProducts)
     .mockReset()
@@ -172,52 +193,231 @@ beforeEach(() => {
 })
 
 describe('OrderBuilderView', () => {
-  it('shows a red Min hint and disables Send when priced below the minimum', async () => {
+  it('flags a legacy below-minimum price in the error list and disables Send until edited', async () => {
     const user = userEvent.setup()
-    await renderBuilder()
-    await addProduct(user, 'Vitamin D3')
+    vi.mocked(api.getOrder).mockResolvedValue(
+      draftDetail([
+        {
+          productId: 1,
+          productName: 'Vitamin D3',
+          sku: 'VITD',
+          quantity: 1,
+          unitPriceCents: 1205,
+          lineTotalCents: 1205,
+          unitCogsCents: 1200,
+          markupBps: 0,
+          minUnitPriceCents: 1210,
+          stockQuantity: 10,
+        },
+      ]),
+    )
+    await renderBuilder('99')
 
-    expect(screen.getByTestId('product-0')).toHaveTextContent('Vitamin D3')
-    await fill(user, 'Patient price (each) Vitamin D3', '12.05')
-    expect(
-      screen.getByRole('table', { name: 'Order lines' }),
-    ).toBeInTheDocument()
-
-    const hint = screen.getByTestId('min-0')
-    expect(hint).toHaveTextContent('Min $12.10')
-    expect(hint).toHaveClass('negative')
-    expect(
-      screen.getByRole('textbox', { name: 'Patient price (each) Vitamin D3' }),
-    ).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByTestId('price-0')).toHaveTextContent('$12.05')
+    expect(screen.getByTestId('price-0')).toHaveClass('negative')
+    const items = within(
+      screen.getByRole('list', { name: 'Order line errors' }),
+    ).getAllByRole('listitem')
+    expect(items.map((item) => item.textContent)).toEqual([
+      'Patient price (Vitamin D3) - Price must be at least $12.10',
+    ])
+    expect(screen.queryByText(/^Min \$/)).not.toBeInTheDocument()
     expect(sendButton()).toBeDisabled()
 
-    await fill(user, 'Patient price (each) Vitamin D3', '12.10')
-    expect(screen.getByTestId('min-0')).not.toHaveClass('negative')
+    await editLine(user, 'Vitamin D3', { price: '12.10' })
+    await expectDialogClosed()
+    expect(screen.getByTestId('price-0')).not.toHaveClass('negative')
+    expect(
+      screen.queryByRole('list', { name: 'Order line errors' }),
+    ).not.toBeInTheDocument()
     expect(sendButton()).toBeEnabled()
   })
 
-  it('links Markup % and Patient price both ways without overwriting the typed field', async () => {
+  it('shows markup, fee and price as read-only text and keeps Qty an input', async () => {
+    const user = userEvent.setup()
+    await renderBuilder()
+    await addProduct(user, 'Omega-3', { markup: '300' })
+
+    expect(screen.getByTestId('markup-0')).toHaveTextContent('300.00')
+    expect(screen.getByTestId('price-0')).toHaveTextContent('$40.30')
+    expect(screen.getByTestId('fee-0')).toHaveTextContent('$0.31')
+    expect(screen.getByRole('textbox', { name: 'Qty Omega-3' })).toBeVisible()
+    expect(screen.getAllByRole('textbox')).toHaveLength(1)
+    expect(screen.queryByText(/^Min \$/)).not.toBeInTheDocument()
+  })
+
+  it('shows "—" for an unset price and markup, and 0.00 for the fee', async () => {
+    const user = userEvent.setup()
+    await renderBuilder()
+    await addProduct(user, 'Vitamin D3', { price: '' })
+
+    expect(screen.getByTestId('markup-0')).toHaveTextContent('—')
+    expect(screen.getByTestId('price-0')).toHaveTextContent('—')
+    expect(screen.getByTestId('fee-0')).toHaveTextContent('$0.00')
+  })
+
+  it('edits a line in the dialog: prefilled, no Back, Save changes updates the line', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.createOrder).mockResolvedValue(draftDetail([]))
+    vi.mocked(api.replaceOrderLines).mockResolvedValue(draftDetail([]))
+    await renderBuilder()
+    await addProduct(user, 'Omega-3', { qty: '2' })
+
+    await openEdit(user, 'Omega-3')
+    expect(screen.getByRole('textbox', { name: 'Qty' })).toHaveValue('2')
+    expect(screen.getByRole('textbox', { name: 'Markup %' })).toHaveValue(
+      '0.04',
+    )
+    expect(
+      screen.getByRole('textbox', { name: 'Patient price (each)' }),
+    ).toHaveValue('10.08')
+    expect(
+      screen.queryByRole('button', { name: 'Back' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Add to order' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('searchbox', { name: 'Search products' }),
+    ).not.toBeInTheDocument()
+
+    await fill(user, 'Markup %', '300')
+    await fill(user, 'Qty', '3')
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    await expectDialogClosed()
+    expect(screen.getAllByTestId('product-0')).toHaveLength(1)
+    expect(screen.getByRole('textbox', { name: 'Qty Omega-3' })).toHaveValue(
+      '3',
+    )
+    expect(screen.getByTestId('markup-0')).toHaveTextContent('300.00')
+    expect(screen.getByTestId('price-0')).toHaveTextContent('$40.30')
+
+    await user.click(screen.getByRole('button', { name: 'Save draft' }))
+    await vi.waitFor(() =>
+      expect(api.replaceOrderLines).toHaveBeenCalledWith(99, [
+        { productId: 4, quantity: 3, unitPriceCents: 4030 },
+      ]),
+    )
+  })
+
+  it('discards edits on Cancel', async () => {
     const user = userEvent.setup()
     await renderBuilder()
     await addProduct(user, 'Omega-3')
 
-    // 300% net markup on a $10.00 cost is $40.30 (contract reference value).
-    await fill(user, 'Markup % Omega-3', '300')
-    expect(
-      screen.getByRole('textbox', { name: 'Patient price (each) Omega-3' }),
-    ).toHaveValue('40.30')
-    expect(
-      screen.getByRole('textbox', { name: 'Markup % Omega-3' }),
-    ).toHaveValue('300')
+    await openEdit(user, 'Omega-3')
+    await fill(user, 'Markup %', '300')
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
 
-    // $40.00 on $10.00: (9925 * 4000 - 10000 * 1000) / 1000 = 297.00%.
-    await fill(user, 'Patient price (each) Omega-3', '40')
+    await expectDialogClosed()
+    expect(screen.getByTestId('price-0')).toHaveTextContent('$10.08')
+    await openEdit(user, 'Omega-3')
     expect(
-      screen.getByRole('textbox', { name: 'Markup % Omega-3' }),
-    ).toHaveValue('297.00')
+      screen.getByRole('textbox', { name: 'Patient price (each)' }),
+    ).toHaveValue('10.08')
+  })
+
+  it('lists edit-dialog errors in one list and blocks Save changes', async () => {
+    const user = userEvent.setup()
+    await renderBuilder()
+    await addProduct(user, 'Omega-3')
+
+    await openEdit(user, 'Omega-3')
+    await fill(user, 'Qty', '0')
+    await fill(user, 'Patient price (each)', '10.05')
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    const items = within(
+      within(dialog()).getByRole('list', { name: 'Errors' }),
+    ).getAllByRole('listitem')
+    expect(items.map((item) => item.textContent)).toEqual([
+      'Qty - Enter a whole number of 1 or more',
+      'Patient price (each) - Price must be at least $10.08',
+    ])
+    expect(dialog()).toBeInTheDocument()
+    expect(screen.getByTestId('price-0')).toHaveTextContent('$10.08')
+  })
+
+  it('shows a read-only "Your margin" output after the price, in add and edit modes', async () => {
+    const user = userEvent.setup()
+    await renderBuilder()
+    await openAddProduct(user)
+    await chooseProduct(user, 'Vitamin D3')
+
+    const margin = screen.getByRole('status', { name: 'Your margin' })
+    expect(margin.tagName).toBe('OUTPUT')
+    expect(margin).toHaveAttribute('aria-live', 'polite')
     expect(
-      screen.getByRole('textbox', { name: 'Patient price (each) Omega-3' }),
-    ).toHaveValue('40')
+      screen.queryByRole('textbox', { name: 'Your margin' }),
+    ).not.toBeInTheDocument()
+
+    // 3 x $20.00 = $60.00, less 3 x $12.00 cost and the $0.45 line fee.
+    await fill(user, 'Qty', '3')
+    await fill(user, 'Patient price (each)', '20')
+    expect(margin).toHaveTextContent('$23.55')
+    expect(margin).not.toHaveClass('negative')
+
+    // Below the minimum the computed value shows, in the negative style.
+    await fill(user, 'Patient price (each)', '12')
+    expect(margin).toHaveTextContent('-$0.27')
+    expect(margin).toHaveClass('negative')
+
+    await fill(user, 'Patient price (each)', '')
+    expect(margin).toHaveTextContent('$0.00')
+    await fill(user, 'Patient price (each)', '20')
+    await user.click(screen.getByRole('button', { name: 'Add to order' }))
+    await expectDialogClosed()
+
+    await openEdit(user, 'Vitamin D3')
+    expect(
+      screen.getByRole('status', { name: 'Your margin' }),
+    ).toHaveTextContent('$23.55')
+  })
+
+  it('names Edit and Remove buttons by product', async () => {
+    const user = userEvent.setup()
+    await renderBuilder()
+    await addProduct(user, 'Magnesium')
+
+    expect(screen.getByRole('button', { name: 'Edit Magnesium' })).toBeVisible()
+  })
+
+  it('puts inline Qty errors in one live list below the table, wired by aria-describedby', async () => {
+    const user = userEvent.setup()
+    await renderBuilder()
+    await addProduct(user, 'Omega-3')
+    await addProduct(user, 'Magnesium')
+
+    await fill(user, 'Qty Omega-3', '1001')
+    await fill(user, 'Qty Magnesium', '9')
+
+    const list = screen.getByRole('list', { name: 'Order line errors' })
+    const items = within(list).getAllByRole('listitem')
+    expect(items.map((item) => item.textContent)).toEqual([
+      'Qty (Omega-3) - Enter a quantity of at most 1000',
+      'Qty (Magnesium) - Only 5 in stock',
+    ])
+    expect(screen.getByTestId('order-line-errors')).toHaveAttribute(
+      'aria-live',
+      'polite',
+    )
+    const table = screen.getByRole('table', { name: 'Order lines' })
+    expect(table).not.toContainElement(list)
+    ;['Qty Omega-3', 'Qty Magnesium'].forEach((name, index) => {
+      const input = screen.getByRole('textbox', { name })
+      expect(input).toHaveAttribute('aria-invalid', 'true')
+      expect(input.getAttribute('aria-describedby')).toBe(items[index]?.id)
+    })
+
+    await fill(user, 'Qty Omega-3', '1')
+    await fill(user, 'Qty Magnesium', '1')
+    expect(
+      screen.queryByRole('list', { name: 'Order line errors' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('textbox', { name: 'Qty Omega-3' }),
+    ).not.toHaveAttribute('aria-describedby')
   })
 
   it('saves incomplete lines as a draft and restores them on reload', async () => {
@@ -261,7 +461,7 @@ describe('OrderBuilderView', () => {
     expect(save).toBeEnabled()
     await user.click(save)
 
-    expect(await screen.findByText('Draft saved.')).toBeInTheDocument()
+    expect(await screen.findByText('Draft saved')).toBeInTheDocument()
     expect(api.replaceOrderLines).toHaveBeenCalledWith(99, [
       { productId: 1, quantity: 2, unitPriceCents: null },
     ])
@@ -273,17 +473,11 @@ describe('OrderBuilderView', () => {
     expect(screen.getByRole('textbox', { name: 'Qty Vitamin D3' })).toHaveValue(
       '2',
     )
-    expect(
-      screen.getByRole('textbox', { name: 'Patient price (each) Vitamin D3' }),
-    ).toHaveValue('')
+    expect(screen.getByTestId('price-0')).toHaveTextContent('—')
     expect(
       screen.getByText('No product (remove this line)'),
     ).toBeInTheDocument()
-    expect(
-      screen.getByRole('textbox', {
-        name: 'Patient price (each) No product (remove this line)',
-      }),
-    ).toHaveValue('25.00')
+    expect(screen.getByTestId('price-1')).toHaveTextContent('$25.00')
     expect(sendButton()).toBeDisabled()
   })
 
@@ -298,7 +492,7 @@ describe('OrderBuilderView', () => {
     await addProduct(user, 'Magnesium', { price: '' })
     expect(sendButton()).toBeDisabled()
 
-    await fill(user, 'Patient price (each) Magnesium', '20')
+    await editLine(user, 'Magnesium', { price: '20' })
     expect(sendButton()).toBeEnabled()
   })
 
@@ -318,7 +512,9 @@ describe('OrderBuilderView', () => {
 
     await user.click(screen.getByRole('button', { name: 'Save draft' }))
 
-    expect(await screen.findByText('Only 3 left')).toBeInTheDocument()
+    expect(
+      await screen.findByText('Qty (Vitamin D3) - Only 3 left'),
+    ).toBeInTheDocument()
     expect(
       screen.getByRole('textbox', { name: 'Qty Vitamin D3' }),
     ).toHaveAttribute('aria-invalid', 'true')
@@ -344,16 +540,9 @@ describe('OrderBuilderView', () => {
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('An order needs at least one line')
     expect(screen.getAllByRole('alert')).toHaveLength(1)
-    ;[
-      'Qty Vitamin D3',
-      'Markup % Vitamin D3',
-      'Patient price (each) Vitamin D3',
-    ].forEach((label) =>
-      expect(screen.getByRole('textbox', { name: label })).not.toHaveAttribute(
-        'aria-invalid',
-        'true',
-      ),
-    )
+    expect(
+      screen.getByRole('textbox', { name: 'Qty Vitamin D3' }),
+    ).not.toHaveAttribute('aria-invalid', 'true')
   })
 })
 
@@ -450,9 +639,7 @@ describe('Add-product modal', () => {
     expect(screen.getByRole('textbox', { name: 'Qty Omega-3' })).toHaveValue(
       '3',
     )
-    expect(
-      screen.getByRole('textbox', { name: 'Patient price (each) Omega-3' }),
-    ).toHaveValue('40.30')
+    expect(screen.getByTestId('price-0')).toHaveTextContent('$40.30')
     await vi.waitFor(() =>
       expect(
         screen.getByRole('textbox', { name: 'Qty Omega-3' }),
@@ -556,7 +743,7 @@ describe('Add-product modal', () => {
 })
 
 describe('OrderBuilderView in-row input names', () => {
-  it('names each in-row input by its visible column header and product', async () => {
+  it('names the Qty input by its visible column header and product', async () => {
     const user = userEvent.setup()
     await renderBuilder()
     await addProduct(user, 'Magnesium')
@@ -567,14 +754,10 @@ describe('OrderBuilderView in-row input names', () => {
     expect(
       screen.getByRole('textbox', { name: /^Qty Magnesium/ }),
     ).toHaveAccessibleName('Qty Magnesium')
+    // Markup and price are text now, not named controls.
     expect(
-      screen.getByRole('textbox', { name: /^Markup % Magnesium/ }),
-    ).toHaveAccessibleName('Markup % Magnesium')
-    expect(
-      screen.getByRole('textbox', {
-        name: /^Patient price \(each\) Magnesium/,
-      }),
-    ).toHaveAccessibleName('Patient price (each) Magnesium')
+      screen.queryByRole('textbox', { name: /Markup|Patient price/ }),
+    ).not.toBeInTheDocument()
     // No visually hidden "… for line N" labels remain.
     expect(screen.queryByLabelText(/for line \d/)).not.toBeInTheDocument()
   })
@@ -616,7 +799,9 @@ describe('OrderBuilderView patient and stock', () => {
     expect(sendButton()).toBeEnabled()
 
     await fill(user, 'Qty Vitamin D3', '4')
-    expect(screen.getByText('Only 3 in stock')).toBeInTheDocument()
+    expect(
+      screen.getByText('Qty (Vitamin D3) - Only 3 in stock'),
+    ).toBeInTheDocument()
     expect(sendButton()).toBeDisabled()
   })
 
@@ -643,12 +828,7 @@ describe('OrderBuilderView patient and stock', () => {
     await user.click(screen.getByRole('button', { name: 'Add to order' }))
 
     expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument()
-    expect(
-      screen.getByRole('textbox', { name: 'Patient price (each) Vitamin D3' }),
-    ).toHaveValue('12.50')
-    expect(
-      screen.getByRole('textbox', { name: 'Markup % Vitamin D3' }),
-    ).toBeInTheDocument()
+    expect(screen.getByTestId('price-0')).toHaveTextContent('$12.50')
 
     await user.click(screen.getByRole('button', { name: 'Save draft' }))
     await vi.waitFor(() =>
@@ -679,25 +859,16 @@ describe('OrderBuilderView patient and stock', () => {
     ).toHaveValue('8.57')
 
     await user.click(screen.getByRole('button', { name: 'Add to order' }))
-    expect(
-      screen.getByRole('textbox', { name: 'Patient price (each) B-Complex' }),
-    ).toHaveValue('8.57')
+    expect(screen.getByTestId('price-0')).toHaveTextContent('$8.57')
     expect(sendButton()).toBeEnabled()
   })
 
   it('accepts markup above 100% and shows it with two decimals', async () => {
     const user = userEvent.setup()
     await renderBuilder()
-    await addProduct(user, 'Omega-3')
+    await addProduct(user, 'Omega-3', { markup: '300' })
 
-    await fill(user, 'Markup % Omega-3', '300')
-    await user.tab()
-    expect(
-      screen.getByRole('textbox', { name: 'Markup % Omega-3' }),
-    ).toHaveValue('300.00')
-    expect(
-      screen.getByRole('textbox', { name: 'Markup % Omega-3' }),
-    ).not.toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByTestId('markup-0')).toHaveTextContent('300.00')
     expect(sendButton()).toBeEnabled()
   })
 
@@ -718,15 +889,8 @@ describe('OrderBuilderView patient and stock', () => {
     expect(markup).toHaveValue('')
     await user.click(screen.getByRole('button', { name: 'Add to order' }))
 
-    expect(
-      screen.getByRole('textbox', { name: 'Markup % Sample Pack' }),
-    ).toBeDisabled()
-    expect(
-      screen.getByRole('textbox', { name: 'Markup % Sample Pack' }),
-    ).toHaveAttribute('placeholder', '—')
-    expect(
-      screen.getByRole('textbox', { name: 'Patient price (each) Sample Pack' }),
-    ).toHaveValue('5.00')
+    expect(screen.getByTestId('markup-0')).toHaveTextContent('—')
+    expect(screen.getByTestId('price-0')).toHaveTextContent('$5.00')
     expect(sendButton()).toBeEnabled()
   })
 
@@ -783,22 +947,16 @@ describe('OrderBuilderView patient and stock', () => {
     await expectDialogClosed()
     expect(sendButton()).toBeEnabled()
 
-    // Lines table: the same bounds, and Send stays off until they're met.
+    // Lines table: the qty bound lists in the table error list, and Send stays off.
     await fill(user, 'Qty Omega-3', '1001')
     expect(
       screen.getByRole('textbox', { name: 'Qty Omega-3' }),
     ).toHaveAttribute('aria-invalid', 'true')
     expect(
-      screen.getByText('Enter a quantity of at most 1000'),
+      screen.getByText('Qty (Omega-3) - Enter a quantity of at most 1000'),
     ).toBeInTheDocument()
     expect(sendButton()).toBeDisabled()
     await fill(user, 'Qty Omega-3', '2')
-    await fill(user, 'Patient price (each) Omega-3', '10000.01')
-    expect(
-      screen.getByText('Price can be at most $10,000.00'),
-    ).toBeInTheDocument()
-    expect(sendButton()).toBeDisabled()
-    await fill(user, 'Patient price (each) Omega-3', '10000')
     expect(sendButton()).toBeEnabled()
   })
 })
@@ -835,7 +993,7 @@ describe('OrderBuilderView as the one draft page', () => {
 
     await user.click(screen.getByRole('button', { name: 'Save draft' }))
 
-    expect(await screen.findByText('Draft saved.')).toBeInTheDocument()
+    expect(await screen.findByText('Draft saved')).toBeInTheDocument()
     expect(replace).toHaveBeenCalledWith('/patients/7/orders/99')
     expect(push).not.toHaveBeenCalled()
     expect(router.currentRoute.value.fullPath).toBe('/patients/7/orders/99')
@@ -859,7 +1017,7 @@ describe('OrderBuilderView as the one draft page', () => {
     await addProduct(user, 'Vitamin D3', { price: '20' })
 
     await user.click(screen.getByRole('button', { name: 'Save draft' }))
-    await screen.findByText('Draft saved.')
+    await screen.findByText('Draft saved')
     await user.click(screen.getByRole('button', { name: 'Save draft' }))
 
     await vi.waitFor(() =>
@@ -939,7 +1097,7 @@ describe('OrderBuilderView delete draft', () => {
     ).toBeInTheDocument()
   })
 
-  it('confirms, deletes once, and returns to the patient with a notice', async () => {
+  it('confirms, deletes once, and returns to the patient with a success toast', async () => {
     const user = userEvent.setup()
     vi.mocked(api.getOrder).mockResolvedValue(draftDetail([]))
     vi.mocked(api.deleteOrder).mockResolvedValue(undefined)
@@ -962,10 +1120,9 @@ describe('OrderBuilderView delete draft', () => {
     )
     expect(api.deleteOrder).toHaveBeenCalledTimes(1)
     expect(api.deleteOrder).toHaveBeenCalledWith(99)
-    expect(notice.value).toEqual({
-      message: 'Draft deleted',
-      path: '/patients/7',
-    })
+    // The toast outlives the route change and shows on the patient page.
+    expect(await screen.findByText('Draft deleted')).toBeInTheDocument()
+    expect(notice.value).toBeNull()
   })
 
   it('does nothing on Keep draft', async () => {
@@ -1030,7 +1187,62 @@ describe('OrderBuilderView delete draft', () => {
 
     expect(screen.getByRole('button', { name: 'Delete draft' })).toBeDisabled()
     finish(draftDetail([]))
-    await screen.findByText('Draft saved.')
+    await screen.findByText('Draft saved')
     expect(screen.getByRole('button', { name: 'Delete draft' })).toBeEnabled()
+  })
+})
+
+describe('OrderBuilderView success toasts', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  async function addPricedLine() {
+    const user = userEvent.setup({ delay: null })
+    vi.mocked(api.createOrder).mockResolvedValue(draftDetail([]))
+    vi.mocked(api.replaceOrderLines).mockResolvedValue(draftDetail([]))
+    await renderBuilder()
+    await addProduct(user, 'Vitamin D3', { price: '20' })
+    return user
+  }
+
+  it('confirms a save with a success toast and no inline status text', async () => {
+    const user = await addPricedLine()
+
+    await user.click(screen.getByRole('button', { name: 'Save draft' }))
+
+    // PrimeVue Toast announces through role="alert".
+    const toast = await screen.findByRole('alert')
+    expect(toast).toHaveTextContent('Draft saved')
+    expect(toast).toHaveClass('p-toast-message-success')
+    expect(screen.queryByText('Draft saved.')).not.toBeInTheDocument()
+  })
+
+  it('removes the toast after about 3 seconds', async () => {
+    const user = await addPricedLine()
+    vi.useFakeTimers()
+    await user.click(screen.getByRole('button', { name: 'Save draft' }))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(screen.getByText('Draft saved')).toBeInTheDocument()
+
+    await vi.advanceTimersByTimeAsync(3500)
+    expect(screen.queryByText('Draft saved')).not.toBeInTheDocument()
+  })
+
+  it('shows errors in the banner, not as a toast', async () => {
+    const user = userEvent.setup({ delay: null })
+    vi.mocked(api.createOrder).mockResolvedValue(draftDetail([]))
+    vi.mocked(api.replaceOrderLines).mockRejectedValue(
+      new api.ApiRequestError(500, 'NETWORK', 'Boom'),
+    )
+    await renderBuilder()
+    await addProduct(user, 'Vitamin D3', { price: '20' })
+
+    await user.click(screen.getByRole('button', { name: 'Save draft' }))
+
+    // Exactly one alert: the banner, with no toast beside it.
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Boom')
+    expect(screen.queryByText('Draft saved')).not.toBeInTheDocument()
   })
 })

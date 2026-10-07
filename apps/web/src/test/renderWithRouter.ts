@@ -1,7 +1,9 @@
 import { render } from '@testing-library/vue'
 import PrimeVue from 'primevue/config'
 import ConfirmationService from 'primevue/confirmationservice'
-import type { Component } from 'vue'
+import Toast from 'primevue/toast'
+import ToastService from 'primevue/toastservice'
+import { defineComponent, h, type Component } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { primeVueOptions } from '../primevue'
 
@@ -18,10 +20,18 @@ export async function renderWithRouter(
   })
   await router.push(options.path ?? '/')
   await router.isReady()
-  const result = render(component, {
-    props: options.props,
+  // App.vue mounts the one Toast; views rendered alone need it beside them.
+  const Host = defineComponent({
+    render: () => [h(component, options.props), h(Toast)],
+  })
+  const result = render(Host, {
     global: {
-      plugins: [router, [PrimeVue, primeVueOptions], ConfirmationService],
+      plugins: [
+        router,
+        [PrimeVue, primeVueOptions],
+        ConfirmationService,
+        ToastService,
+      ],
     },
   })
   return { ...result, router }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import Button from 'primevue/button'
 import Message from 'primevue/message'
+import Toast from 'primevue/toast'
 import { watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { notice, roleLabel, useCurrentUser } from './user'
@@ -21,6 +22,7 @@ async function onSignOut() {
 </script>
 
 <template>
+  <Toast position="top-right" />
   <header v-if="currentUser" class="app-header">
     <div class="app-header-inner page-column">
       <strong>Supplement Orders</strong>

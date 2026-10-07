@@ -19,7 +19,13 @@ import {
   replaceOrderLines,
   sendOrder,
 } from '../api'
-import { useOrderDraft, type EvaluatedLine, type NewLine } from '../builder'
+import {
+  normalizedMarkupInput,
+  useOrderDraft,
+  type EvaluatedLine,
+  type LineEdit,
+  type NewLine,
+} from '../builder'
 import {
   AddProductDialog,
   ErrorBanner,
@@ -28,7 +34,7 @@ import {
 } from '../components'
 import { formatDateOfBirth } from '../format'
 import { formatCents, PLATFORM_FEE_BPS } from '../money'
-import { showNotice } from '../user'
+import { useSuccessToast } from '../toast'
 
 interface Props {
   patientId: string
@@ -52,9 +58,11 @@ const loading = ref(true)
 const loadError = ref<string | null>(null)
 
 const saving = ref(false)
+/** In-flight text only; success confirmations are toasts. */
 const status = ref<string | null>(null)
 const banner = ref<string | null>(null)
 
+const showSuccess = useSuccessToast()
 const draft = useOrderDraft()
 const { lines, evaluated, split, canSend } = draft
 const feePercent = `${PLATFORM_FEE_BPS / 100}%`
@@ -94,7 +102,6 @@ watch(
     if (savedOrderId(param) === orderId.value) return
     orderId.value = savedOrderId(param)
     draft.loadFromServer([])
-    status.value = null
     banner.value = null
     load()
   },
@@ -125,7 +132,6 @@ function handleError(err: unknown) {
 
 async function run(action: () => Promise<void>) {
   banner.value = null
-  status.value = null
   if (!draft.canSave.value) {
     banner.value = 'Fix the highlighted fields first.'
     return
@@ -135,9 +141,9 @@ async function run(action: () => Promise<void>) {
   try {
     await action()
   } catch (err) {
-    status.value = null
     handleError(err)
   } finally {
+    status.value = null
     saving.value = false
   }
 }
@@ -147,7 +153,7 @@ function saveDraft() {
     const saved = await persist()
     // The server is authoritative: show its saved lines and figures.
     draft.loadFromServer(saved.lines)
-    status.value = 'Draft saved.'
+    showSuccess('Draft saved')
   })
 }
 
@@ -183,7 +189,7 @@ async function removeDraft(id: number) {
   try {
     await deleteOrder(id)
     const patientPath = `/patients/${patientId.value}`
-    showNotice('Draft deleted', patientPath)
+    showSuccess('Draft deleted')
     await router.push(patientPath)
   } catch (err) {
     banner.value = handleApiError(err)
@@ -193,16 +199,46 @@ async function removeDraft(id: number) {
 }
 
 const dialogOpen = ref(false)
+/** The line being edited, or null when the dialog adds a product. */
+const editingLine = ref<NewLine | null>(null)
+const editingKey = ref<number | null>(null)
 
 function openAddProduct() {
+  editingLine.value = null
+  editingKey.value = null
   dialogOpen.value = true
 }
 
-/** Closing the modal any way returns focus to Add line. */
+function openEditLine(row: EvaluatedLine) {
+  const { product, line } = row
+  if (!product) return
+  editingKey.value = line.key
+  editingLine.value = {
+    product,
+    quantityInput: line.quantityInput,
+    priceInput: line.priceInput,
+    markupInput: line.markupInput,
+    source: line.source,
+  }
+  dialogOpen.value = true
+}
+
+/** Closing the modal any way returns focus to its opener: Add line, or the line's Edit. */
 async function closeAddProduct() {
   dialogOpen.value = false
+  const key = editingKey.value
   await nextTick()
-  document.getElementById('add-line')?.focus()
+  document
+    .getElementById(key === null ? 'add-line' : fieldId(key, 'edit'))
+    ?.focus()
+}
+
+/** Edit dialog saved: update the line in place, same draft-save path as any change. */
+async function saveFromDialog(edit: LineEdit) {
+  const key = editingKey.value
+  if (key === null) return
+  draft.updateLine(key, edit)
+  await closeAddProduct()
 }
 
 /** The new line appears in the table and its Qty input takes focus. */
@@ -227,6 +263,44 @@ function headerId(column: string) {
 
 function inputLabelledBy(key: number, column: string) {
   return `${headerId(column)} ${fieldId(key, 'name')}`
+}
+
+interface TableError {
+  id: string
+  text: string
+}
+
+/** One entry per problem across the lines, in line order; each id is its input's aria-describedby target. */
+const tableErrors = computed<TableError[]>(() =>
+  evaluated.value.flatMap((row) => {
+    const name = row.product?.name ?? 'No product'
+    const { quantity, unitPriceCents } = row.errors
+    const belowMinimum =
+      row.belowMinimum && row.minPriceCents !== null
+        ? `Price must be at least ${formatCents(row.minPriceCents)}`
+        : null
+    const price = unitPriceCents ?? belowMinimum
+    return [
+      quantity
+        ? {
+            id: fieldId(row.line.key, 'qty-error'),
+            text: `Qty (${name}) - ${quantity}`,
+          }
+        : null,
+      price
+        ? {
+            id: fieldId(row.line.key, 'price-error'),
+            text: `Patient price (${name}) - ${price}`,
+          }
+        : null,
+    ].filter((item): item is TableError => item !== null)
+  }),
+)
+
+/** Markup follows the price: blank until a price is set, and for a $0 cost. */
+function markupText(row: EvaluatedLine) {
+  if (row.priceCents === null) return '—'
+  return normalizedMarkupInput(row.line.markupInput) || '—'
 }
 
 function rowIndex(row: EvaluatedLine) {
@@ -313,92 +387,30 @@ function rowIndex(row: EvaluatedLine) {
             "
             @update:model-value="draft.setQuantity(row.line.key, $event ?? '')"
           />
-          <Message
-            v-if="row.errors.quantity"
-            :id="fieldId(row.line.key, 'qty-error')"
-            severity="error"
-            size="small"
-            variant="simple"
-            >{{ row.errors.quantity }}</Message
-          >
         </template>
       </Column>
-      <Column>
-        <template #header
-          ><span :id="headerId('markup')">Markup %</span></template
-        >
+      <Column header="Markup %">
         <template #body="{ data: row }">
-          <InputText
-            :id="fieldId(row.line.key, 'markup')"
-            :aria-labelledby="inputLabelledBy(row.line.key, 'markup')"
-            class="markup"
-            inputmode="decimal"
-            :placeholder="row.product?.cogsCents === 0 ? '—' : '0.00'"
-            :disabled="row.product?.cogsCents === 0"
-            :model-value="row.line.markupInput"
-            :class="{ negative: row.line.markupInput.startsWith('-') }"
-            :invalid="Boolean(row.errors.markup)"
-            :aria-describedby="
-              row.errors.markup
-                ? fieldId(row.line.key, 'markup-error')
-                : undefined
-            "
-            @update:model-value="draft.setMarkup(row.line.key, $event ?? '')"
-            @blur="draft.normalizeMarkup(row.line.key)"
-          />
-          <Message
-            v-if="row.errors.markup"
-            :id="fieldId(row.line.key, 'markup-error')"
-            severity="error"
-            size="small"
-            variant="simple"
-            >{{ row.errors.markup }}</Message
-          >
+          <span :data-testid="`markup-${rowIndex(row)}`">{{
+            markupText(row)
+          }}</span>
         </template>
       </Column>
       <Column :header="`Processing fee (${feePercent})`">
         <template #body="{ data: row }">
           <span :data-testid="`fee-${rowIndex(row)}`">
-            <MoneyText
-              v-if="row.lineFeeCents !== null"
-              :cents="row.lineFeeCents"
-            />
+            <MoneyText :cents="row.lineFeeCents ?? 0" />
           </span>
         </template>
       </Column>
-      <Column>
-        <template #header
-          ><span :id="headerId('price')">Patient price (each)</span></template
-        >
+      <Column header="Patient price (each)">
         <template #body="{ data: row }">
-          <InputText
-            :id="fieldId(row.line.key, 'price')"
-            :aria-labelledby="inputLabelledBy(row.line.key, 'price')"
-            class="price"
-            inputmode="decimal"
-            placeholder="0.00"
-            :model-value="row.line.priceInput"
-            :invalid="Boolean(row.errors.unitPriceCents) || row.belowMinimum"
-            :aria-describedby="`${fieldId(row.line.key, 'price-min')} ${fieldId(row.line.key, 'price-error')}`"
-            @update:model-value="draft.setPrice(row.line.key, $event ?? '')"
-            @blur="draft.normalizePrice(row.line.key)"
-          />
-          <small
-            v-if="row.minPriceCents !== null"
-            :id="fieldId(row.line.key, 'price-min')"
-            class="hint"
+          <span
+            :data-testid="`price-${rowIndex(row)}`"
             :class="{ negative: row.belowMinimum }"
-            :data-testid="`min-${rowIndex(row)}`"
-          >
-            Min {{ formatCents(row.minPriceCents) }}
-          </small>
-          <Message
-            v-if="row.errors.unitPriceCents"
-            :id="fieldId(row.line.key, 'price-error')"
-            severity="error"
-            size="small"
-            variant="simple"
-            >{{ row.errors.unitPriceCents }}</Message
+            >{{
+              row.priceCents === null ? '—' : formatCents(row.priceCents)
+            }}</span
           >
         </template>
       </Column>
@@ -412,8 +424,19 @@ function rowIndex(row: EvaluatedLine) {
         </template>
       </Column>
       <Column>
-        <template #header><span class="visually-hidden">Remove</span></template>
+        <template #header
+          ><span class="visually-hidden">Actions</span></template
+        >
         <template #body="{ data: row }">
+          <Button
+            v-if="row.product"
+            :id="fieldId(row.line.key, 'edit')"
+            icon="pi pi-pencil"
+            severity="secondary"
+            text
+            :aria-label="`Edit ${row.product.name}`"
+            @click="openEditLine(row)"
+          />
           <Button
             icon="pi pi-trash"
             severity="secondary"
@@ -425,6 +448,17 @@ function rowIndex(row: EvaluatedLine) {
       </Column>
     </DataTable>
     <p v-else>No lines yet. Add a product to start.</p>
+    <div aria-live="polite" data-testid="order-line-errors">
+      <ul
+        v-if="tableErrors.length"
+        class="errors"
+        aria-label="Order line errors"
+      >
+        <li v-for="item in tableErrors" :id="item.id" :key="item.id">
+          {{ item.text }}
+        </li>
+      </ul>
+    </div>
     <p>
       <Button
         id="add-line"
@@ -437,8 +471,10 @@ function rowIndex(row: EvaluatedLine) {
     <AddProductDialog
       :open="dialogOpen"
       :excluded-product-ids="draft.productIds.value"
+      :editing="editingLine"
       @close="closeAddProduct"
       @add="addFromDialog"
+      @save="saveFromDialog"
     />
 
     <h2>Split summary</h2>
@@ -470,6 +506,8 @@ function rowIndex(row: EvaluatedLine) {
         @click="confirmDelete"
       />
     </div>
-    <p aria-live="polite" class="status">{{ status }}</p>
+    <p aria-live="polite" class="status">
+      {{ status }}
+    </p>
   </template>
 </template>

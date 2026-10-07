@@ -28,7 +28,7 @@ test('a draft can be deleted, and a cancelled order can be reopened and paid', a
     await page.getByRole('link', { name: 'New order' }).click()
     await addProduct(page, DRAFT_SKU, { quantity: 1 })
     await page.getByRole('button', { name: 'Save draft' }).click()
-    await expect(page.getByText('Draft saved.')).toBeVisible()
+    await expect(page.getByText('Draft saved')).toBeVisible()
     // The first save swaps /new for the draft's own address, in place.
     await expect(page).toHaveURL(/\/patients\/\d+\/orders\/\d+$/)
     await expect(

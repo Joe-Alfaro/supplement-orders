@@ -53,6 +53,9 @@ export interface NewLine {
   source: 'price' | 'markup'
 }
 
+/** What the dialog hands back when an existing line is edited. */
+export type LineEdit = Omit<NewLine, 'product'>
+
 let nextKey = 1
 
 function emptyLine(): DraftLine {
@@ -132,6 +135,13 @@ export function useOrderDraft() {
     const line: DraftLine = { ...emptyLine(), ...newLine }
     lines.value.push(line)
     return line.key
+  }
+
+  /** Applies an edit-dialog save to a line; the product stays as it was. */
+  function updateLine(key: number, edit: LineEdit) {
+    const line = find(key)
+    if (!line) return
+    Object.assign(line, edit, { serverErrors: {} })
   }
 
   function removeLine(key: number) {
@@ -217,6 +227,7 @@ export function useOrderDraft() {
     canSend,
     productIds,
     addLine,
+    updateLine,
     removeLine,
     setQuantity,
     setPrice,

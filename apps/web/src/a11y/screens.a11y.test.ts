@@ -324,7 +324,7 @@ async function addProduct(user: UserEvent, name: string, price?: string) {
   }
   await user.click(screen.getByRole('button', { name: 'Add to order' }))
   await screen.findByRole('textbox', {
-    name: new RegExp('^Patient price \\(each\\) ' + name),
+    name: new RegExp('^Qty ' + name),
   })
 }
 
@@ -432,17 +432,16 @@ describe('accessibility', () => {
     await expectAccessible(container)
   })
 
-  it('order builder below-minimum price', async () => {
+  it('order builder with a Qty error in the line error list', async () => {
     const { container } = await renderBuilder()
     const user = userEvent.setup()
     await addProduct(user, 'Vitamin D3')
-    const price = screen.getByRole('textbox', {
-      name: /^Patient price \(each\) Vitamin D3/,
-    })
-    await replaceInput(user, price, '12.05')
+    const qty = screen.getByRole('textbox', { name: /^Qty Vitamin D3/ })
+    await replaceInput(user, qty, '0')
     await vi.waitFor(() => {
-      expect(price).toBeInvalid()
+      expect(qty).toBeInvalid()
     })
+    await screen.findByText(/^Qty \(Vitamin D3\) - /)
     await expectAccessible(container)
   })
 
@@ -486,9 +485,7 @@ describe('accessibility', () => {
     await user.click(screen.getByRole('button', { name: 'Add to order' }))
     await screen.findByText(/Price must be at least/)
     expect(
-      screen.queryByRole('textbox', {
-        name: /^Patient price \(each\) Magnesium/,
-      }),
+      screen.queryByRole('textbox', { name: /^Qty Magnesium/ }),
     ).not.toBeInTheDocument()
     await expectNoAxeViolations(screen.getByRole('dialog'))
     await expectAccessible(container)

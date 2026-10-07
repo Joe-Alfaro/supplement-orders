@@ -44,6 +44,12 @@ export interface PricingResult {
    * fee is computed once on the subtotal and may differ by a cent.
    */
   lineFeeCents: number | null
+  /**
+   * The provider's margin on this line alone: line total - qty x cost - line
+   * fee. Negative below the minimum. The order's margin comes from the whole
+   * subtotal and may differ by a cent.
+   */
+  lineMarginCents: number | null
   errors: Partial<Record<PricingField, string>>
   /** Every typed value parses, so it can be saved (possibly incomplete). */
   saveable: boolean
@@ -132,6 +138,23 @@ function lineFee(lineTotalCents: number | null) {
   }
 }
 
+function lineMargin(
+  lineTotalCents: number | null,
+  lineFeeCents: number | null,
+  quantity: number | null,
+  product: LineProduct | null,
+) {
+  if (
+    lineTotalCents === null ||
+    lineFeeCents === null ||
+    quantity === null ||
+    product === null
+  ) {
+    return null
+  }
+  return lineTotalCents - quantity * product.cogsCents - lineFeeCents
+}
+
 /** Price text for a product's minimum price: what a newly chosen product starts at. */
 export function minimumPriceInput(cogsCents: number) {
   return centsToInput(minUnitPriceCents(cogsCents))
@@ -166,8 +189,16 @@ export function evaluatePricing(inputs: PricingInputs): PricingResult {
   const lineTotalCents =
     quantity !== null && priceCents !== null ? priceCents * quantity : null
 
+  const lineFeeCents = lineFee(lineTotalCents)
+
   return {
-    lineFeeCents: lineFee(lineTotalCents),
+    lineFeeCents,
+    lineMarginCents: lineMargin(
+      lineTotalCents,
+      lineFeeCents,
+      quantity,
+      product,
+    ),
     quantity,
     priceCents,
     minPriceCents,

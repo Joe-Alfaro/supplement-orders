@@ -62,15 +62,18 @@ test('a stale patient page shows that the order changed and pays the new total a
         'Draft order',
       )
 
-      const price = provider.getByRole('textbox', {
-        name: /Patient price \(each\)/,
-      })
+      // Pricing is read-only in the table; reprice through the Edit dialog.
+      await provider.getByRole('button', { name: /^Edit / }).click()
+      const dialog = provider.getByRole('dialog')
+      const price = dialog.getByLabel('Patient price (each)')
       await expect(price).toBeVisible()
       await price.fill(REPRICED)
       await price.blur()
       await expect
         .poll(async () => dollarsToCents(await price.inputValue()))
         .toBe(2_500)
+      await dialog.getByRole('button', { name: 'Save changes' }).click()
+      await expect(dialog).toBeHidden()
       const split = await readSplit(provider)
       expect(split.patientPaysCents).toBe(2_500)
       expect(split.patientPaysCents).not.toBe(originalCents)

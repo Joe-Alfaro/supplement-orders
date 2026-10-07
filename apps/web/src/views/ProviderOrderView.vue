@@ -21,7 +21,7 @@ import {
   StatusBadge,
 } from '../components'
 import { formatDateOfBirth, formatDateTime } from '../format'
-import { showNotice } from '../user'
+import { useSuccessToast } from '../toast'
 import { useResource } from '../useResource'
 
 interface Props {
@@ -45,6 +45,7 @@ const {
 onMounted(load)
 
 const router = useRouter()
+const showSuccess = useSuccessToast()
 const confirm = useConfirm()
 const acting = ref(false)
 // Outlives the re-fetch, so a lost race (409) stays explained after reload.
@@ -71,7 +72,7 @@ const ACTIONS: Partial<Record<OrderStatus, OrderAction>> = {
     run: async (o) => {
       await deleteOrder(o.id)
       const patientPath = `/patients/${o.patientId}`
-      showNotice('Draft deleted', patientPath)
+      showSuccess('Draft deleted')
       await router.push(patientPath)
     },
   },

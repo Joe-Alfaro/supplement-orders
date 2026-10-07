@@ -270,7 +270,7 @@ describe('ProviderOrderView cancel', () => {
 })
 
 describe('ProviderOrderView delete draft', () => {
-  it('confirms, deletes once, and returns to the patient with a notice', async () => {
+  it('confirms, deletes once, and returns to the patient with a success toast', async () => {
     const user = userEvent.setup()
     vi.mocked(api.deleteOrder).mockResolvedValue(undefined)
     const { router } = await openOrder(draft)
@@ -292,11 +292,9 @@ describe('ProviderOrderView delete draft', () => {
     )
     expect(api.deleteOrder).toHaveBeenCalledTimes(1)
     expect(api.deleteOrder).toHaveBeenCalledWith(42)
-    // The notice renders in App's header region, outside this view.
-    expect(notice.value).toEqual({
-      message: 'Draft deleted',
-      path: '/patients/7',
-    })
+    // The toast outlives the route change and shows on the patient page.
+    expect(await screen.findByText('Draft deleted')).toBeInTheDocument()
+    expect(notice.value).toBeNull()
   })
 
   it('does nothing on Keep draft', async () => {

@@ -69,7 +69,7 @@ test('provider sends an order, the patient pays, and the dashboard matches', asy
 
     recorded.split = await readSplit(page)
     await page.getByRole('button', { name: 'Save draft' }).click()
-    await expect(page.getByText('Draft saved.')).toBeVisible()
+    await expect(page.getByText('Draft saved')).toBeVisible()
     const saved = await readSplit(page)
     expect(saved).toEqual(recorded.split)
 

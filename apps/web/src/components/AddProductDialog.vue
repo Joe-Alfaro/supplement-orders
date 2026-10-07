@@ -19,6 +19,8 @@ import {
   normalizedMarkupInput,
   normalizedPriceInput,
   priceInputFromMarkup,
+  type LineEdit,
+  type LineProduct,
   type NewLine,
 } from '../builder'
 import { formatCents, PLATFORM_FEE_BPS } from '../money'
@@ -31,15 +33,21 @@ interface Props {
   open: boolean
   /** Products already on the order; shown as "Already added" and disabled. */
   excludedProductIds: number[]
+  /** When set, the dialog edits this line: pricing step only, prefilled. */
+  editing?: NewLine | null
 }
 
 const props = defineProps<Props>()
-const emit = defineEmits<{ close: []; add: [line: NewLine] }>()
+const emit = defineEmits<{
+  close: []
+  add: [line: NewLine]
+  save: [edit: LineEdit]
+}>()
 
 const search = usePagedSearch(searchProducts)
 
 const step = ref<1 | 2>(1)
-const chosen = ref<ProductDto | null>(null)
+const chosen = ref<LineProduct | null>(null)
 const quantityInput = ref('1')
 const priceInput = ref('')
 const markupInput = ref('')
@@ -101,11 +109,10 @@ const errorItems = computed<DialogError[]>(() => {
   return candidates.filter((item): item is DialogError => item !== null)
 })
 
-const title = computed(() =>
-  step.value === 2 && chosen.value
-    ? `Add ${chosen.value.name}`
-    : 'Add product: choose a product',
-)
+const title = computed(() => {
+  if (step.value !== 2 || !chosen.value) return 'Add product: choose a product'
+  return `${props.editing ? 'Edit' : 'Add'} ${chosen.value.name}`
+})
 
 async function focusById(id: string) {
   await nextTick()
@@ -116,6 +123,10 @@ watch(
   () => props.open,
   (open) => {
     if (!open) return
+    if (props.editing) {
+      startEditing(props.editing)
+      return
+    }
     step.value = 1
     chosen.value = null
     search.clear()
@@ -162,6 +173,18 @@ async function choose(product: ProductDto) {
   focusById('add-product-qty')
 }
 
+/** Edit mode: straight to the pricing step with the line's current values. */
+function startEditing(line: NewLine) {
+  chosen.value = line.product
+  quantityInput.value = line.quantityInput
+  priceInput.value = line.priceInput
+  markupInput.value = line.markupInput
+  source.value = line.source
+  attempted.value = false
+  step.value = 2
+  focusById('add-product-qty')
+}
+
 function back() {
   step.value = 1
   focusById('add-product-search')
@@ -188,13 +211,17 @@ function addToOrder() {
   const product = chosen.value
   // A blank price is allowed (the line stays incomplete); below the minimum is not.
   if (!product || !pricing.value.saveable || belowMinimumError.value) return
-  emit('add', {
-    product: { ...product },
+  const values = {
     quantityInput: quantityInput.value,
     priceInput: priceInput.value,
     markupInput: markupInput.value,
     source: source.value,
-  })
+  }
+  if (props.editing) {
+    emit('save', values)
+    return
+  }
+  emit('add', { product: { ...product }, ...values })
 }
 </script>
 
@@ -372,6 +399,16 @@ function addToOrder() {
             @blur="priceInput = normalizedPriceInput(priceInput)"
           />
         </div>
+        <div class="field">
+          <label for="add-product-margin">Your margin</label>
+          <output
+            id="add-product-margin"
+            class="fee-value"
+            :class="{ negative: (pricing.lineMarginCents ?? 0) < 0 }"
+            aria-live="polite"
+            >{{ formatCents(pricing.lineMarginCents ?? 0) }}</output
+          >
+        </div>
       </div>
       <div aria-live="polite" data-testid="add-product-errors">
         <ul v-if="errorItems.length" class="errors" aria-label="Errors">
@@ -389,8 +426,16 @@ function addToOrder() {
         <span v-else>—</span>
       </p>
       <div class="actions">
-        <Button label="Back" severity="secondary" @click="back" />
-        <Button type="submit" label="Add to order" />
+        <Button
+          v-if="!editing"
+          label="Back"
+          severity="secondary"
+          @click="back"
+        />
+        <Button
+          type="submit"
+          :label="editing ? 'Save changes' : 'Add to order'"
+        />
         <Button
           label="Cancel"
           severity="secondary"
