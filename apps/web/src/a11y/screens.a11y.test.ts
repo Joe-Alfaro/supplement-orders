@@ -34,6 +34,7 @@ vi.mock('../api', async (importOriginal) => {
   return {
     ...actual,
     listUsers: vi.fn(),
+    listSignInOptions: vi.fn(),
     searchPatients: vi.fn(),
     getPatient: vi.fn(),
     listOrders: vi.fn(),
@@ -260,6 +261,7 @@ function patientPage(query: ListQuery): PatientPageDto {
 
 beforeEach(async () => {
   vi.mocked(api.listUsers).mockResolvedValue(users)
+  vi.mocked(api.listSignInOptions).mockResolvedValue(users)
   vi.mocked(api.searchPatients).mockImplementation(async (query = {}) =>
     patientPage(query),
   )

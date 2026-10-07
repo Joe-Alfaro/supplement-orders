@@ -1,14 +1,23 @@
 import type { Role, UserDto } from '@supplement-orders/domain'
 import { computed, ref } from 'vue'
-import { handleApiError, listUsers, onUnauthenticated } from '../api'
+import {
+  handleApiError,
+  listSignInOptions,
+  listUsers,
+  onUnauthenticated,
+} from '../api'
 import { showNotice } from './notice'
 import { readStoredUserId, writeStoredUserId } from './storage'
 
 // Module-level state: the current user is the app's only cross-screen client state.
 const users = ref<UserDto[]>([])
+// The curated login list. `users` stays the full list so a restored session
+// works for any user, listed here or not.
+const signInOptions = ref<UserDto[]>([])
 const selectedUserId = ref<number | null>(readStoredUserId())
 const loadError = ref<string | null>(null)
 let pendingLoad: Promise<void> | null = null
+let pendingSignInOptions: Promise<void> | null = null
 
 const currentUser = computed(
   () => users.value.find((user) => user.id === selectedUserId.value) ?? null,
@@ -30,6 +39,22 @@ async function loadUsers() {
 function ensureUsersLoaded() {
   if (!pendingLoad) pendingLoad = loadUsers()
   return pendingLoad
+}
+
+async function loadSignInOptions() {
+  try {
+    signInOptions.value = await listSignInOptions()
+    loadError.value = null
+  } catch (err) {
+    loadError.value = handleApiError(err)
+    pendingSignInOptions = null
+  }
+}
+
+/** Loads the login list once; later calls reuse the same request. */
+function ensureSignInOptionsLoaded() {
+  if (!pendingSignInOptions) pendingSignInOptions = loadSignInOptions()
+  return pendingSignInOptions
 }
 
 function signIn(id: number) {
@@ -90,9 +115,11 @@ export function userOptions(users: readonly UserDto[]) {
 export function useCurrentUser() {
   return {
     users,
+    signInOptions,
     currentUser,
     loadError,
     ensureUsersLoaded,
+    ensureSignInOptionsLoaded,
     signIn,
     signOut,
   }

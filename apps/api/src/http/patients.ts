@@ -31,6 +31,12 @@ interface PageWindow {
   limit: number
 }
 
+/**
+ * The Patients table order (name, then id). The login list reuses it so its
+ * "first two patients" can't drift from the table.
+ */
+export const patientListOrder = [asc(users.name), asc(patients.id)]
+
 /** Patients matching `where`, with order counts for just the returned rows. */
 async function selectPatients(
   db: Db,
@@ -50,7 +56,7 @@ async function selectPatients(
     .from(patients)
     .innerJoin(users, eq(users.id, patients.userId))
     .where(where)
-    .orderBy(asc(users.name), asc(patients.id))
+    .orderBy(...patientListOrder)
   const rows = window
     ? await query.limit(window.limit).offset(window.offset)
     : await query
