@@ -123,6 +123,40 @@ export function payOrder(orderId: number, body: PayOrderRequest) {
   return request<PatientOrderDetailDto>('POST', `/orders/${orderId}/pay`, body)
 }
 
-export function getDashboard() {
-  return request<DashboardDto>('GET', '/dashboard')
+/** Dashboard window, passed through to the server, which resolves the days. */
+export interface DashboardParams {
+  /** month (default when omitted), last30, all or custom. */
+  range?: string
+  /** Inclusive local day `YYYY-MM-DD`; custom only. */
+  from?: string
+  to?: string
+  /** IANA zone the server uses to find "today" and day boundaries. */
+  tz?: string
+}
+
+/** The window the server actually used (revision 11a-v2). */
+export interface DashboardRangeDto {
+  preset: 'month' | 'last30' | 'all' | 'custom'
+  from: string | null
+  to: string | null
+  timeZone: string
+}
+
+// TODO: move into @supplement-orders/domain's DashboardDto once the API branch lands.
+export interface DashboardResponse extends DashboardDto {
+  range: DashboardRangeDto
+}
+
+export function getDashboard(params: DashboardParams = {}) {
+  const search = new URLSearchParams()
+  const keys = ['range', 'from', 'to', 'tz'] as const
+  keys.forEach((key) => {
+    const value = params[key]
+    if (value) search.set(key, value)
+  })
+  const query = search.toString()
+  return request<DashboardResponse>(
+    'GET',
+    `/dashboard${query ? `?${query}` : ''}`,
+  )
 }

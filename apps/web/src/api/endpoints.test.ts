@@ -3,6 +3,7 @@ import { request } from './client'
 import {
   cancelOrder,
   deleteOrder,
+  getDashboard,
   reopenOrder,
   searchPatients,
 } from './endpoints'
@@ -52,5 +53,40 @@ describe('reopenOrder', () => {
     await reopenOrder(12)
 
     expect(request).toHaveBeenCalledWith('POST', '/orders/12/reopen')
+  })
+})
+
+describe('getDashboard', () => {
+  beforeEach(() => {
+    vi.mocked(request).mockReset()
+  })
+
+  it('sends nothing for the default', async () => {
+    await getDashboard()
+
+    expect(request).toHaveBeenCalledWith('GET', '/dashboard')
+  })
+
+  it('forwards the preset and zone untouched', async () => {
+    await getDashboard({ range: 'last30', tz: 'America/Chicago' })
+
+    expect(request).toHaveBeenCalledWith(
+      'GET',
+      '/dashboard?range=last30&tz=America%2FChicago',
+    )
+  })
+
+  it('forwards custom days as written', async () => {
+    await getDashboard({
+      range: 'custom',
+      from: '2026-10-01',
+      to: '2026-10-07',
+      tz: 'UTC',
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      'GET',
+      '/dashboard?range=custom&from=2026-10-01&to=2026-10-07&tz=UTC',
+    )
   })
 })

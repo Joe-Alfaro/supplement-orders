@@ -1,13 +1,26 @@
 <script setup lang="ts">
+import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable, { type DataTablePageEvent } from 'primevue/datatable'
+import DatePicker from 'primevue/datepicker'
 import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
-import { onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, type LocationQuery } from 'vue-router'
-import { getDashboard, searchProducts } from '../api'
+import { ApiRequestError, getDashboard, searchProducts } from '../api'
 import { ErrorBanner, MoneyText, PageSummary, StatTile } from '../components'
+import {
+  DEFAULT_RANGE,
+  dateToDay,
+  dayToDate,
+  rangeFromQuery,
+  rangeLabel,
+  rangeToQuery,
+  sameRange,
+  toDashboardParams,
+  type RangeParams,
+} from '../dashboard'
 import { PAGE_SIZE, useListUrl, usePagedSearch } from '../search'
 import { useResource } from '../useResource'
 
@@ -38,7 +51,34 @@ function inventoryToUrl({ q, offset }: InventoryUrlState) {
   }
 }
 
-const sales = useResource(getDashboard)
+// The range and the inventory share one query string; each write keeps both.
+// The range is forwarded to the API as written; the server resolves the days.
+const range = ref<RangeParams>(rangeFromQuery(route.query))
+// Custom stays selected after the provider picks it, even before any dates.
+const customRequested = ref(false)
+
+/** Drops a rejected range from the URL and shows the default. */
+function fallBackToDefault() {
+  range.value = DEFAULT_RANGE
+  customRequested.value = false
+  listUrl.replaceQuery(urlQuery(inventoryState()))
+}
+
+const sales = useResource(async () => {
+  try {
+    return await getDashboard(toDashboardParams(range.value))
+  } catch (error) {
+    const rejected = error instanceof ApiRequestError && error.status === 400
+    if (!rejected || sameRange(range.value, DEFAULT_RANGE)) throw error
+    fallBackToDefault()
+    return getDashboard(toDashboardParams(range.value))
+  }
+})
+
+function urlQuery(state: InventoryUrlState) {
+  return { ...inventoryToUrl(state), ...rangeToQuery(range.value) }
+}
+
 // Read-only: shows available stock. A payment attempt reserves an order's
 // quantities before charging, a decline gives them back, and a recorded payment
 // keeps them as the sale. Nobody edits stock by hand.
@@ -59,7 +99,71 @@ function urlMatches(state: InventoryUrlState) {
   return current.q === state.q && current.offset === state.offset
 }
 
+const presets = [
+  { id: 'month', label: 'This month' },
+  { id: 'last30', label: 'Last 30 days' },
+  { id: 'all', label: 'All time' },
+]
+
+const selected = computed(() => {
+  if (customRequested.value) return 'custom'
+  return range.value.range ?? 'month'
+})
+
+const label = computed(() => {
+  const resolved = sales.data.value?.range
+  return resolved ? rangeLabel(resolved) : ''
+})
+
+function chooseRange(next: RangeParams) {
+  if (sameRange(next, range.value)) return
+  range.value = next
+  listUrl.pushQuery(urlQuery(inventoryState()))
+  sales.load()
+}
+
+function choosePreset(id: string) {
+  customRequested.value = false
+  chooseRange(id === 'month' ? DEFAULT_RANGE : { range: id })
+}
+
+// The picker holds a draft; it applies once both days are chosen (a calendar
+// click or leaving the field), never on every keystroke.
+const draft = ref<(Date | null)[] | null>(null)
+
+// Shows the custom days in the URL, or else what the server last resolved.
+function pickerValue() {
+  const { from, to } =
+    range.value.range === 'custom' && range.value.from && range.value.to
+      ? range.value
+      : (sales.data.value?.range ?? {})
+  if (!from || !to) return null
+  return [dayToDate(from), dayToDate(to)]
+}
+
+function onDraft(value: unknown) {
+  draft.value = Array.isArray(value) ? (value as (Date | null)[]) : null
+}
+
+function applyDraft() {
+  const [start, end] = draft.value ?? []
+  if (!start || !end) return
+  const [from, to] = start <= end ? [start, end] : [end, start]
+  chooseRange({ range: 'custom', from: dateToDay(from), to: dateToDay(to) })
+}
+
+/** The URL's range keys differ from how this page would write them. */
+function rangeNeedsCleaning(query: LocationQuery) {
+  const written = rangeToQuery(rangeFromQuery(query))
+  return ['range', 'from', 'to'].some(
+    (key) => query[key] !== (written as Record<string, string>)[key],
+  )
+}
+
 onMounted(() => {
+  if (rangeNeedsCleaning(route.query)) {
+    listUrl.replaceQuery(urlQuery(inventoryState()))
+  }
   sales.load()
   inventory.load()
 })
@@ -67,7 +171,7 @@ onMounted(() => {
 // Typing (debounced) replaces the URL, so Back doesn't step through keystrokes.
 watch(inventory.activeQuery, () => {
   const state = inventoryState()
-  if (!urlMatches(state)) listUrl.replaceQuery(inventoryToUrl(state))
+  if (!urlMatches(state)) listUrl.replaceQuery(urlQuery(state))
 })
 
 // Back/Forward (or a link) changed the URL: show what it says.
@@ -75,6 +179,15 @@ watch(
   () => route.query,
   (query) => {
     if (route.path !== dashboardPath) return
+    const urlRange = rangeFromQuery(query)
+    if (!sameRange(urlRange, range.value)) {
+      range.value = urlRange
+      customRequested.value = false
+      sales.load()
+    }
+    if (rangeNeedsCleaning(query)) {
+      listUrl.replaceQuery(urlQuery(inventoryState()))
+    }
     const { q, offset } = inventoryFromUrl(query)
     const state = inventoryState()
     if (q === state.q && offset === state.offset) return
@@ -85,7 +198,7 @@ watch(
 // Page changes push, so Back returns to the previous page.
 function onInventoryPage(event: DataTablePageEvent) {
   inventory.goTo(event.first)
-  listUrl.pushQuery(inventoryToUrl(inventoryState()))
+  listUrl.pushQuery(urlQuery(inventoryState()))
 }
 </script>
 
@@ -94,6 +207,41 @@ function onInventoryPage(event: DataTablePageEvent) {
 
   <section aria-labelledby="sales-heading">
     <h2 id="sales-heading">Sales</h2>
+    <div class="range-control" role="group" aria-label="Date range">
+      <Button
+        v-for="preset in presets"
+        :key="preset.id"
+        :label="preset.label"
+        size="small"
+        :severity="selected === preset.id ? undefined : 'secondary'"
+        :outlined="selected !== preset.id"
+        :aria-pressed="selected === preset.id"
+        @click="choosePreset(preset.id)"
+      />
+      <Button
+        label="Custom"
+        size="small"
+        :severity="selected === 'custom' ? undefined : 'secondary'"
+        :outlined="selected !== 'custom'"
+        :aria-pressed="selected === 'custom'"
+        @click="customRequested = true"
+      />
+    </div>
+    <div v-if="selected === 'custom'" class="range-custom">
+      <label for="dashboard-range-dates">Custom date range</label>
+      <DatePicker
+        input-id="dashboard-range-dates"
+        selection-mode="range"
+        date-format="yy-mm-dd"
+        placeholder="yyyy-mm-dd - yyyy-mm-dd"
+        append-to="self"
+        hide-on-range-selection
+        :model-value="pickerValue()"
+        @update:model-value="onDraft"
+        @date-select="applyDraft"
+        @blur="applyDraft"
+      />
+    </div>
     <p v-if="sales.loading.value">Loading…</p>
     <ErrorBanner
       v-else-if="sales.error.value"
@@ -102,6 +250,9 @@ function onInventoryPage(event: DataTablePageEvent) {
       @retry="sales.load"
     />
     <template v-else-if="sales.data.value">
+      <p class="range-label">
+        Showing: <strong>{{ label }}</strong>
+      </p>
       <div class="tiles">
         <StatTile label="GMV" :cents="sales.data.value.gmvCents" />
         <StatTile

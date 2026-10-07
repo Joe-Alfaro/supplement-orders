@@ -1,5 +1,4 @@
 import type {
-  DashboardDto,
   ListQuery,
   PatientDto,
   PatientOrderDetailDto,
@@ -16,6 +15,7 @@ import userEvent from '@testing-library/user-event'
 import type { UserEvent } from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
+import type { DashboardResponse } from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
 import { useCurrentUser } from '../user'
 import DashboardView from '../views/DashboardView.vue'
@@ -226,10 +226,16 @@ const myOrders: PatientOrderSummaryDto[] = [
   },
 ]
 
-const dashboard: DashboardDto = {
+const dashboard: DashboardResponse = {
   gmvCents: 6951,
   providerMarginCents: 3499,
   platformFeeCents: 52,
+  range: {
+    preset: 'month',
+    from: '2026-10-01',
+    to: '2026-10-07',
+    timeZone: 'UTC',
+  },
 }
 
 function productPage(query: ListQuery): ProductPageDto {
@@ -482,6 +488,21 @@ describe('accessibility', () => {
       })
     })
     await screen.findByText('Vitamin D3')
+    await expectAccessible(container)
+  })
+
+  it('dashboard date range control with the custom picker open', async () => {
+    const { container } = await renderWithRouter(DashboardView, {
+      path: '/dashboard',
+    })
+    await screen.findByText('GMV')
+    await screen.findByText('Vitamin D3')
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: 'Custom' }))
+    expect(
+      screen.getByRole('combobox', { name: 'Custom date range' }),
+    ).toBeInTheDocument()
     await expectAccessible(container)
   })
 
