@@ -121,7 +121,8 @@ export type OrderStatusSelection = OrderStatus[] | 'all'
 
 /**
  * `status` as a comma-separated list (revision 8b): one or more of draft,
- * pending_payment, paid, cancelled, or exactly `all`. Duplicates are ignored and
+ * pending_payment, awaiting_stock (revision 14, derived), paid, cancelled, or
+ * exactly `all`. Duplicates are ignored and
  * the order of first appearance is kept. An empty string, an unknown value, an
  * empty item ("draft,") or `all` mixed with statuses is a 400 on `status`.
  */
@@ -138,7 +139,7 @@ const statusSelectionParam = z
         code: 'custom',
         message:
           invalid === ''
-            ? 'Status must list one or more of draft, pending_payment, paid, cancelled, or be all'
+            ? `Status must list one or more of ${ORDER_STATUSES.join(', ')}, or be all`
             : `Unknown status "${invalid}"`,
       })
       return z.NEVER
@@ -249,10 +250,23 @@ export const replaceOrderLinesRequestSchema: z.ZodType<
 })
 
 /**
+ * Revision 14 pay modes. `full` (the default) pays the whole order and fails
+ * with 409 INSUFFICIENT_STOCK if any line is short. `available` pays only what
+ * is in stock now; any shortfall moves to one new back-order.
+ */
+export const PAY_MODES = ['full', 'available'] as const
+export type PayMode = (typeof PAY_MODES)[number]
+
+/**
  * POST /api/orders/:id/pay (revision 9). The patient echoes the quote they saw;
  * if the order's revision or total has changed since, the server answers 409
  * ORDER_CHANGED and charges nothing. `simulateFailure` forces the fake gateway
  * to decline; ignored when NODE_ENV is production.
+ *
+ * Revision 14: with `mode: 'available'`, `expectedTotalCents` is the in-stock
+ * total the patient saw (PaymentQuoteDto.availableTotalCents). The response is
+ * the paid order, whose `backorderOrderId` names the back-order (or is null)
+ * and whose `revision` is the new one after a split.
  */
 export interface PayOrderRequest {
   /** The order's `revision` as shown to the patient. */
@@ -260,6 +274,7 @@ export interface PayOrderRequest {
   /** The `totalCents` the patient saw and is consenting to pay. */
   expectedTotalCents: number
   simulateFailure?: boolean
+  mode?: PayMode
 }
 
 export const payOrderRequestSchema: z.ZodType<PayOrderRequest> = z.strictObject(
@@ -267,8 +282,24 @@ export const payOrderRequestSchema: z.ZodType<PayOrderRequest> = z.strictObject(
     expectedRevision: z.int().min(1).max(Number.MAX_SAFE_INTEGER),
     expectedTotalCents: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
     simulateFailure: z.boolean().optional(),
+    mode: z.enum(PAY_MODES).optional(),
   },
 )
+
+/**
+ * POST /api/orders/:id/send (revision 14). Sending quantities above available
+ * stock is allowed only with `acknowledgeLowStock: true`; otherwise the answer
+ * is 409 LOW_STOCK_UNACKNOWLEDGED listing the short lines. Stock is not
+ * reserved at send. An empty or absent body is the same as `{}`.
+ */
+export interface SendOrderRequest {
+  acknowledgeLowStock?: boolean
+}
+
+export const sendOrderRequestSchema: z.ZodType<SendOrderRequest> =
+  z.strictObject({
+    acknowledgeLowStock: z.boolean().optional(),
+  })
 
 /** Revision 13: available stock is a whole number from 0 to this. */
 export const STOCK_QUANTITY_MAX = 1_000_000

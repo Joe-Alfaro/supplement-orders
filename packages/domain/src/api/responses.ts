@@ -13,9 +13,24 @@ const isoDate = z.iso.date()
 export const ROLES = ['provider', 'patient', 'admin'] as const
 export type Role = (typeof ROLES)[number]
 
+/** The statuses stored on an order row (the database enum). */
+export const STORED_ORDER_STATUSES = [
+  'draft',
+  'pending_payment',
+  'paid',
+  'cancelled',
+] as const
+export type StoredOrderStatus = (typeof STORED_ORDER_STATUSES)[number]
+
+/**
+ * The statuses the API reports and filters on. Revision 14 adds the derived
+ * `awaiting_stock`: a stored pending_payment order none of whose lines has a
+ * product in stock (read from the orders_with_status view, never stored).
+ */
 export const ORDER_STATUSES = [
   'draft',
   'pending_payment',
+  'awaiting_stock',
   'paid',
   'cancelled',
 ] as const
@@ -25,6 +40,7 @@ export type OrderStatus = (typeof ORDER_STATUSES)[number]
 export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   draft: 'Draft',
   pending_payment: 'Awaiting payment',
+  awaiting_stock: 'Awaiting stock',
   paid: 'Paid',
   cancelled: 'Cancelled',
 }
@@ -148,8 +164,39 @@ export const orderSplitDtoSchema: z.ZodType<OrderSplitDto> = z.object({
   providerMarginCents: cents,
 })
 
+/**
+ * Revision 14: what a pay can charge right now, for an order awaiting payment
+ * or stock. `availableTotalCents` covers min(quantity, available stock) per
+ * line (the `expectedTotalCents` of an `available` pay); `backorderTotalCents`
+ * is the shortfall a partial pay would move to a back-order. Pay `full` only
+ * when `hasShortfall` is false; pay `available` only when `payable` is true.
+ */
+export interface PaymentQuoteDto {
+  /** The order's revision this quote belongs to (the pay's expectedRevision). */
+  revision: number
+  /** The whole order's total. */
+  totalCents: number
+  availableTotalCents: number
+  backorderTotalCents: number
+  /** At least one unit is in stock. */
+  payable: boolean
+  /** At least one unit is short. */
+  hasShortfall: boolean
+}
+
+export const paymentQuoteDtoSchema: z.ZodType<PaymentQuoteDto> = z.object({
+  revision: z.int().nonnegative(),
+  totalCents: cents,
+  availableTotalCents: cents,
+  backorderTotalCents: cents,
+  payable: z.boolean(),
+  hasShortfall: z.boolean(),
+})
+
 /** A patient-visible line. Patients only see sent orders, so lines are complete. */
 export interface OrderLineDto {
+  /** The order line's id; INSUFFICIENT_STOCK availability refers to it (revision 14). */
+  lineId: number
   productId: number
   productName: string
   sku: string
@@ -157,15 +204,22 @@ export interface OrderLineDto {
   unitPriceCents: number
   /** quantity * unitPriceCents */
   lineTotalCents: number
+  /**
+   * Revision 14: the product's available stock now (raw, uncapped) while the
+   * order awaits payment or stock; null once paid or cancelled.
+   */
+  availableQuantity: number | null
 }
 
 export const orderLineDtoSchema: z.ZodType<OrderLineDto> = z.object({
+  lineId: id,
   productId: id,
   productName: z.string(),
   sku: z.string(),
   quantity: z.int().min(1),
   unitPriceCents: cents,
   lineTotalCents: cents,
+  availableQuantity: z.int().nonnegative().nullable(),
 })
 
 /**
@@ -174,6 +228,8 @@ export const orderLineDtoSchema: z.ZodType<OrderLineDto> = z.object({
  * (unitPriceCents and lineTotalCents null). Sent orders always have complete lines.
  */
 export interface ProviderOrderLineDto {
+  /** The order line's id (revision 14). */
+  lineId: number
   productId: number | null
   productName: string | null
   sku: string | null
@@ -193,10 +249,17 @@ export interface ProviderOrderLineDto {
   minUnitPriceCents: number | null
   /** The product's current stock (live, not a snapshot); null without a product. */
   stockQuantity: number | null
+  /**
+   * Revision 14: the product's available stock (the same live value as
+   * stockQuantity), so the builder can warn when quantity exceeds it. Saving a
+   * draft never checks stock; send asks for an acknowledgement instead.
+   */
+  availableQuantity: number | null
 }
 
 export const providerOrderLineDtoSchema: z.ZodType<ProviderOrderLineDto> =
   z.object({
+    lineId: id,
     productId: id.nullable(),
     productName: z.string().nullable(),
     sku: z.string().nullable(),
@@ -207,6 +270,7 @@ export const providerOrderLineDtoSchema: z.ZodType<ProviderOrderLineDto> =
     markupBps: z.int().nullable(),
     minUnitPriceCents: cents.nullable(),
     stockQuantity: z.int().nonnegative().nullable(),
+    availableQuantity: z.int().nonnegative().nullable(),
   })
 
 export interface PaymentDto {
@@ -253,8 +317,13 @@ interface OrderSummaryBase {
   /**
    * The quote version (revision 9): 0 for a never-sent draft, incremented on every
    * send, including a re-send after reopen. Pay must echo it as `expectedRevision`.
+   * A partial pay bumps it too (revision 14).
    */
   revision: number
+  /** Revision 14: the order this back-order was split from, or null. */
+  splitFromOrderId: number | null
+  /** Revision 14: this order's back-order (its direct child), or null. */
+  backorderOrderId: number | null
 }
 
 /**
@@ -292,6 +361,8 @@ const summaryShape = {
   paidAt: timestamp.nullable(),
   cancelledAt: timestamp.nullable(),
   revision: z.int().nonnegative(),
+  splitFromOrderId: id.nullable(),
+  backorderOrderId: id.nullable(),
 }
 
 export const providerOrderSummaryDtoSchema: z.ZodType<ProviderOrderSummaryDto> =
@@ -321,6 +392,8 @@ export interface ProviderOrderDetailDto extends ProviderOrderSummaryDto {
   lines: ProviderOrderLineDto[]
   payment: PaymentDto | null
   ledger: LedgerEntryDto[]
+  /** Revision 14: set while the order awaits payment or stock, else null. */
+  quote: PaymentQuoteDto | null
 }
 
 /**
@@ -331,6 +404,8 @@ export interface PatientOrderDetailDto extends PatientOrderSummaryDto {
   patientAddress: string
   lines: OrderLineDto[]
   payment: PaymentDto | null
+  /** Revision 14: set while the order awaits payment or stock, else null. */
+  quote: PaymentQuoteDto | null
 }
 
 export type OrderDetailDto = ProviderOrderDetailDto | PatientOrderDetailDto
@@ -345,6 +420,7 @@ export const providerOrderDetailDtoSchema: z.ZodType<ProviderOrderDetailDto> =
     lines: z.array(providerOrderLineDtoSchema),
     payment: paymentDtoSchema.nullable(),
     ledger: z.array(ledgerEntryDtoSchema),
+    quote: paymentQuoteDtoSchema.nullable(),
   })
 
 export const patientOrderDetailDtoSchema: z.ZodType<PatientOrderDetailDto> =
@@ -355,6 +431,7 @@ export const patientOrderDetailDtoSchema: z.ZodType<PatientOrderDetailDto> =
     patientAddress: z.string(),
     lines: z.array(orderLineDtoSchema),
     payment: paymentDtoSchema.nullable(),
+    quote: paymentQuoteDtoSchema.nullable(),
   })
 
 /**
@@ -447,6 +524,9 @@ export interface ProviderOrderListItemDto {
   sentAt: string | null
   paidAt: string | null
   cancelledAt: string | null
+  /** Revision 14 links, as on the order summary. */
+  splitFromOrderId: number | null
+  backorderOrderId: number | null
 }
 
 export const providerOrderListItemDtoSchema: z.ZodType<ProviderOrderListItemDto> =
@@ -461,6 +541,8 @@ export const providerOrderListItemDtoSchema: z.ZodType<ProviderOrderListItemDto>
     sentAt: timestamp.nullable(),
     paidAt: timestamp.nullable(),
     cancelledAt: timestamp.nullable(),
+    splitFromOrderId: id.nullable(),
+    backorderOrderId: id.nullable(),
   })
 
 export type ProviderOrderListPageDto = Page<ProviderOrderListItemDto>

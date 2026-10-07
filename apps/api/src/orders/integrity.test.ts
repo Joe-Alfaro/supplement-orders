@@ -449,7 +449,7 @@ describe('revision 9: payment integrity and hardening', () => {
 
       const blocked = await pay(ctx, second)
       expect([blocked.status, blocked.body.error.code]).toEqual([
-        422,
+        409,
         'INSUFFICIENT_STOCK',
       ])
       hold.release()

@@ -64,6 +64,8 @@ describe('GET /api/orders?status=pending_payment', () => {
       sentAt: '2026-10-01T09:00:00.000Z',
       paidAt: null,
       cancelledAt: null,
+      splitFromOrderId: null,
+      backorderOrderId: null,
     })
   })
 

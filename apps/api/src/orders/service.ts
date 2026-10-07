@@ -1,14 +1,30 @@
 import {
   assertLedgerBalances,
   computeSplit,
+  partialPaymentQuote,
+  planPartialPayment,
   SplitValidationError,
   toLedgerEntries,
   ORDER_STATUS_LABELS,
   type DraftLine,
+  type LowStockLineDto,
   type OrderStatus,
+  type PartialPaymentPlan,
+  type PayMode,
+  type PaymentQuoteDto,
   type SplitLine,
+  type StockAvailabilityDto,
 } from '@supplement-orders/domain'
-import { and, asc, eq, gte, inArray, isNull, sql } from 'drizzle-orm'
+import {
+  and,
+  asc,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  notInArray,
+  sql,
+} from 'drizzle-orm'
 import type { Db } from '../db/client'
 import {
   ledgerEntries,
@@ -93,15 +109,6 @@ async function lockOwnedDraft(
     )
   }
   return order
-}
-
-function insufficientStock(index: number, available: number) {
-  return new ApiError(
-    422,
-    'INSUFFICIENT_STOCK',
-    `Only ${available} in stock`,
-    `lines.${index}.quantity`,
-  )
 }
 
 export async function createDraft(
@@ -207,13 +214,16 @@ function incompleteLine(index: number, part: 'productId' | 'unitPriceCents') {
 
 /**
  * Draft -> pending_payment. Requires at least one line, every line complete,
- * enough stock, and every price at or above its minimum (via computeSplit).
- * Re-snapshots wholesale cost and persists the split. Notifies after commit.
+ * and every price at or above its minimum (via computeSplit). Quantities above
+ * available stock need `acknowledgeLowStock` (revision 14); stock is not
+ * reserved here. Re-snapshots wholesale cost and persists the split. Notifies
+ * after commit.
  */
 export async function sendOrder(
   { db, notifier }: AppContext,
   user: ProviderUser,
   orderId: number,
+  { acknowledgeLowStock = false }: { acknowledgeLowStock?: boolean } = {},
 ) {
   await db.transaction(async (tx) => {
     await lockOwnedDraft(tx, user, orderId, 'sent')
@@ -221,6 +231,7 @@ export async function sendOrder(
       .select({
         itemId: orderItems.id,
         productId: orderItems.productId,
+        productName: products.name,
         quantity: orderItems.quantity,
         unitPriceCents: orderItems.unitPriceCents,
         currentCogsCents: products.cogsCents,
@@ -241,6 +252,7 @@ export async function sendOrder(
     const lines = rows.map((row, index) => {
       if (
         row.productId === null ||
+        row.productName === null ||
         row.currentCogsCents === null ||
         row.stockQuantity === null
       ) {
@@ -251,18 +263,33 @@ export async function sendOrder(
       }
       return {
         itemId: row.itemId,
+        productId: row.productId,
+        productName: row.productName,
         quantity: row.quantity,
         unitPriceCents: row.unitPriceCents,
         unitCogsCents: row.currentCogsCents,
         stockQuantity: row.stockQuantity,
       }
     })
-    lines.forEach((line, index) => {
-      if (line.quantity > line.stockQuantity) {
-        throw insufficientStock(index, line.stockQuantity)
-      }
-    })
     const split = computeSplitOrThrow(lines)
+    const lowStock = lines
+      .filter((line) => line.quantity > line.stockQuantity)
+      .map((line): LowStockLineDto => ({
+        lineId: line.itemId,
+        productId: line.productId,
+        productName: line.productName,
+        quantity: line.quantity,
+        availableQuantity: line.stockQuantity,
+      }))
+    if (lowStock.length > 0 && !acknowledgeLowStock) {
+      throw new ApiError(
+        409,
+        'LOW_STOCK_UNACKNOWLEDGED',
+        'Some lines exceed the stock available now. Confirm to send anyway.',
+        undefined,
+        { lines: lowStock },
+      )
+    }
 
     await Promise.all(
       lines.map((line) =>
@@ -322,6 +349,13 @@ export async function reopenOrder(db: Db, user: ProviderUser, orderId: number) {
       throw forbidden('This order belongs to another provider')
     }
     await assertNoUnreconciledCharge(tx, orderId)
+    if (order.splitFromOrderId !== null) {
+      throw new ApiError(
+        409,
+        'BACKORDER_NOT_EDITABLE',
+        'This is a back-order; it can be cancelled but never edited.',
+      )
+    }
     if (order.status !== 'cancelled') {
       throw new ApiError(
         409,
@@ -398,11 +432,13 @@ function idempotencyKeyFor(
   return `order-${orderId}-r${revision}-e${execution}`
 }
 
-function orderChanged() {
+function orderChanged(quote?: PaymentQuoteDto) {
   return new ApiError(
     409,
     'ORDER_CHANGED',
     'This order changed since you opened it. Review the new total before paying.',
+    undefined,
+    quote === undefined ? {} : { quote },
   )
 }
 
@@ -438,6 +474,8 @@ async function assertNoUnreconciledCharge(tx: Tx, orderId: number) {
 
 interface PayLine {
   index: number
+  /** The order_items row id. */
+  lineId: number
   productId: number
   quantity: number
   unitPriceCents: number
@@ -448,6 +486,7 @@ interface PayLine {
 async function loadPayLines(tx: Tx, orderId: number): Promise<PayLine[]> {
   const rows = await tx
     .select({
+      lineId: orderItems.id,
       productId: orderItems.productId,
       quantity: orderItems.quantity,
       unitPriceCents: orderItems.unitPriceCents,
@@ -458,7 +497,7 @@ async function loadPayLines(tx: Tx, orderId: number): Promise<PayLine[]> {
     .orderBy(asc(orderItems.id))
   // Send is the only way out of draft and it rejects incomplete lines.
   return rows.map(
-    ({ productId, unitPriceCents, unitCogsCents, quantity }, index) => {
+    ({ lineId, productId, unitPriceCents, unitCogsCents, quantity }, index) => {
       if (
         productId === null ||
         unitPriceCents === null ||
@@ -466,7 +505,14 @@ async function loadPayLines(tx: Tx, orderId: number): Promise<PayLine[]> {
       ) {
         throw new Error(`Order ${orderId} was sent with an incomplete line`)
       }
-      return { index, productId, quantity, unitPriceCents, unitCogsCents }
+      return {
+        index,
+        lineId,
+        productId,
+        quantity,
+        unitPriceCents,
+        unitCogsCents,
+      }
     },
   )
 }
@@ -478,7 +524,8 @@ function byProductId(lines: PayLine[]) {
 /**
  * Takes the order's stock, conditionally and in ascending product id (M2), so two
  * orders sharing products always lock product rows in the same order and cannot
- * deadlock. Throws 422 INSUFFICIENT_STOCK naming the original line index.
+ * deadlock. Pay checks stock under lockStock first, so a shortfall here is only
+ * possible on the legacy paths; it is a 409 INSUFFICIENT_STOCK naming the line.
  */
 async function decrementStock(tx: Tx, lines: PayLine[]) {
   await byProductId(lines).reduce(async (prev, line) => {
@@ -498,7 +545,12 @@ async function decrementStock(tx: Tx, lines: PayLine[]) {
         .select({ stock: products.stockQuantity })
         .from(products)
         .where(eq(products.id, line.productId))
-      throw insufficientStock(line.index, product?.stock ?? 0)
+      throw new ApiError(
+        409,
+        'INSUFFICIENT_STOCK',
+        `Only ${product?.stock ?? 0} in stock`,
+        `lines.${line.index}.quantity`,
+      )
     }
   }, Promise.resolve())
 }
@@ -518,6 +570,168 @@ export interface PayRequest {
   expectedRevision: number
   expectedTotalCents: number
   simulateFailure: boolean
+  /** Revision 14; `full` unless the patient chose to pay for what is in stock. */
+  mode: PayMode
+}
+
+type Order = typeof orders.$inferSelect
+type PayPlan = PartialPaymentPlan<PayLine>
+
+/**
+ * Locks the order's product rows in ascending id (the same order decrementStock
+ * uses, M2) and returns their available stock, so the plan made from it still
+ * holds when the stock is reserved in the same transaction.
+ */
+async function lockStock(tx: Tx, lines: PayLine[]) {
+  const rows = await tx
+    .select({ id: products.id, stock: products.stockQuantity })
+    .from(products)
+    .where(
+      inArray(
+        products.id,
+        lines.map((l) => l.productId),
+      ),
+    )
+    .orderBy(asc(products.id))
+    .for('update')
+  return new Map(rows.map((r) => [r.id, r.stock]))
+}
+
+/** What the patient can pay now for this order (revision 14). */
+function quoteFor(order: Order, plan: PayPlan): PaymentQuoteDto {
+  const { pay, backorder } = partialPaymentQuote(plan)
+  return {
+    revision: order.revision,
+    totalCents: order.totalCents ?? 0,
+    availableTotalCents: pay.totalCents,
+    backorderTotalCents: backorder.totalCents,
+    payable: plan.payable,
+    hasShortfall: plan.hasShortfall,
+  }
+}
+
+function insufficientStock(
+  lines: PayLine[],
+  stock: ReadonlyMap<number, number>,
+  quote: PaymentQuoteDto,
+) {
+  const availability = lines.map((line): StockAvailabilityDto => ({
+    lineId: line.lineId,
+    productId: line.productId,
+    quantity: line.quantity,
+    availableQuantity: Math.max(stock.get(line.productId) ?? 0, 0),
+  }))
+  return new ApiError(
+    409,
+    'INSUFFICIENT_STOCK',
+    'Some items are no longer in stock in the quantity ordered.',
+    undefined,
+    { availability, quote },
+  )
+}
+
+async function findBackorder(tx: Tx, orderId: number) {
+  const [child] = await tx
+    .select({ id: orders.id, splitFromRevision: orders.splitFromRevision })
+    .from(orders)
+    .where(eq(orders.splitFromOrderId, orderId))
+  return child
+}
+
+/**
+ * Revision 14.5 replay: an `available` pay retried after its split committed
+ * names the revision before the split. When this order's back-order came from
+ * exactly that quote, the split bumped the revision by one, and the reduced
+ * total is what the patient consented to, the retry continues as a pay of the
+ * current revision instead of splitting again.
+ */
+async function effectiveRevision(tx: Tx, order: Order, request: PayRequest) {
+  const { mode, expectedRevision, expectedTotalCents } = request
+  if (
+    mode !== 'available' ||
+    order.revision !== expectedRevision + 1 ||
+    order.totalCents !== expectedTotalCents
+  ) {
+    return expectedRevision
+  }
+  const child = await findBackorder(tx, order.id)
+  return child?.splitFromRevision === expectedRevision
+    ? order.revision
+    : expectedRevision
+}
+
+/**
+ * Revision 14.5 step 4, inside the prepare transaction under the order lock:
+ * moves the shortfall to one new back-order (sent, revision 1, same patient
+ * and provider, original unit prices and cogs snapshots), reduces this order
+ * to the payable lines, re-snapshots its totals and bumps its revision.
+ * Returns the order's new revision.
+ */
+async function splitOrder(
+  tx: Tx,
+  order: Order,
+  plan: PayPlan,
+  expectedRevision: number,
+) {
+  const backorderSplit = computeSplit(plan.backorderLines)
+  const paySplit = computeSplit(plan.payLines)
+  const now = new Date()
+  const [backorder] = await tx
+    .insert(orders)
+    .values({
+      providerId: order.providerId,
+      patientId: order.patientId,
+      status: 'pending_payment',
+      subtotalCents: backorderSplit.subtotalCents,
+      platformFeeCents: backorderSplit.platformFeeCents,
+      totalCents: backorderSplit.totalCents,
+      sentAt: now,
+      revision: 1,
+      splitFromOrderId: order.id,
+      splitFromRevision: expectedRevision,
+    })
+    .returning({ id: orders.id })
+  if (!backorder) {
+    throw new Error(`Back-order insert for order ${order.id} returned no row`)
+  }
+  await tx.insert(orderItems).values(
+    plan.backorderLines.map((line) => ({
+      orderId: backorder.id,
+      productId: line.productId,
+      quantity: line.quantity,
+      unitPriceCents: line.unitPriceCents,
+      unitCogsCents: line.unitCogsCents,
+    })),
+  )
+  const kept = new Set(plan.payLines.map((line) => line.lineId))
+  await tx
+    .delete(orderItems)
+    .where(
+      and(
+        eq(orderItems.orderId, order.id),
+        notInArray(orderItems.id, [...kept]),
+      ),
+    )
+  await Promise.all(
+    plan.payLines.map((line) =>
+      tx
+        .update(orderItems)
+        .set({ quantity: line.quantity })
+        .where(eq(orderItems.id, line.lineId)),
+    ),
+  )
+  const revision = order.revision + 1
+  await tx
+    .update(orders)
+    .set({
+      subtotalCents: paySplit.subtotalCents,
+      platformFeeCents: paySplit.platformFeeCents,
+      totalCents: paySplit.totalCents,
+      revision,
+      updatedAt: now,
+    })
+    .where(eq(orders.id, order.id))
+  return revision
 }
 
 type Attempt = typeof paymentAttempts.$inferSelect
@@ -536,13 +750,15 @@ function needsReconciliation() {
  * execution (pending, succeeded without a payment, or conflict) is reused with
  * its key, so no outcome is ever left behind a new key. Only after a decline
  * does a new execution start, with a new key and a fresh stock reservation.
+ * A new execution plans from current stock (revision 14): `full` refuses any
+ * shortfall; `available` moves it to a back-order first, in this transaction.
  * Returns null when the order is already paid at this quote.
  */
 async function preparePayment(
   db: Db,
   user: PatientUser,
   orderId: number,
-  { expectedRevision, expectedTotalCents }: PayRequest,
+  request: PayRequest,
 ): Promise<Attempt | null> {
   return db.transaction(async (tx) => {
     const order = await lockOrder(tx, orderId)
@@ -551,6 +767,8 @@ async function preparePayment(
     }
     // The patient never saw an unsent order, including a draft cancelled before sending.
     if (order.sentAt === null) throw notFound('Order')
+    const { expectedTotalCents, mode } = request
+    const expectedRevision = await effectiveRevision(tx, order, request)
     if (order.status === 'paid') {
       // A replay must name the quote that was paid: same revision and total.
       if (
@@ -568,9 +786,12 @@ async function preparePayment(
         `This order is ${statusInSentence(order.status)} and can't be paid.`,
       )
     }
+    // A full pay's quote is the stored total; an available pay's depends on
+    // stock, so it is checked once the plan is made.
     if (
-      order.revision !== expectedRevision ||
-      order.totalCents !== expectedTotalCents
+      mode === 'full' &&
+      (order.revision !== expectedRevision ||
+        order.totalCents !== expectedTotalCents)
     ) {
       throw orderChanged()
     }
@@ -589,6 +810,14 @@ async function preparePayment(
     const lines = await loadPayLines(tx, orderId)
     const latest = attempts.filter((a) => a.revision === order.revision).at(-1)
     if (latest && latest.status !== 'declined') {
+      // The stock is already held by this execution, so there is nothing to
+      // plan: it is the same quote, retried.
+      if (
+        order.revision !== expectedRevision ||
+        order.totalCents !== expectedTotalCents
+      ) {
+        throw orderChanged()
+      }
       // Defensive: a revision's total is fixed while H1 holds.
       if (latest.amountCents !== order.totalCents) throw orderChanged()
       if (latest.stockHeld) return latest
@@ -602,18 +831,52 @@ async function preparePayment(
       return held ?? latest
     }
 
-    // A first execution, or the next one after a decline: reserve, then record.
-    // A short stock is a 422 here, before any charge, and rolls this back.
-    await decrementStock(tx, lines)
-    const execution = (latest?.execution ?? 0) + 1
+    // A first execution, or the next one after a decline: plan from current
+    // stock, locked, so the reservation below cannot come up short.
+    const stock = await lockStock(tx, lines)
+    const plan = planPartialPayment(lines, stock)
+    const quote = quoteFor(order, plan)
+    const stale =
+      order.revision !== expectedRevision ||
+      (mode === 'full' ? order.totalCents : quote.availableTotalCents) !==
+        expectedTotalCents
+    if (mode === 'full') {
+      if (stale) throw orderChanged()
+      if (plan.hasShortfall) throw insufficientStock(lines, stock, quote)
+    } else {
+      if (!plan.payable) {
+        throw new ApiError(
+          409,
+          'AWAITING_STOCK',
+          'Nothing on this order is in stock yet.',
+        )
+      }
+      if (stale) throw orderChanged(quote)
+    }
+    // An order splits at most once: a reduced order that came up short again
+    // (say, after a decline) can only be paid once restocked.
+    if (plan.hasShortfall && (await findBackorder(tx, orderId))) {
+      throw insufficientStock(lines, stock, quote)
+    }
+    const revision = plan.hasShortfall
+      ? await splitOrder(tx, order, plan, expectedRevision)
+      : order.revision
+    const amountCents = plan.hasShortfall
+      ? quote.availableTotalCents
+      : order.totalCents
+
+    // Reserve, then record. A first execution after a split starts at the new revision.
+    await decrementStock(tx, plan.payLines)
+    const execution =
+      revision === order.revision ? (latest?.execution ?? 0) + 1 : 1
     const [created] = await tx
       .insert(paymentAttempts)
       .values({
         orderId,
-        revision: order.revision,
+        revision,
         execution,
-        idempotencyKey: idempotencyKeyFor(orderId, order.revision, execution),
-        amountCents: order.totalCents,
+        idempotencyKey: idempotencyKeyFor(orderId, revision, execution),
+        amountCents,
         stockHeld: true,
       })
       .returning()

@@ -1,6 +1,7 @@
 import type {
   ListOrdersQuery,
   OrderStatus,
+  StoredOrderStatus,
   ProviderOrderListItemDto,
   ProviderOrderListPageDto,
 } from '@supplement-orders/domain'
@@ -26,9 +27,11 @@ const base = {
   paidAt: null,
   cancelledAt: null,
   totalCents: null,
+  splitFromOrderId: null,
+  backorderOrderId: null,
 }
 
-const ORDERS: Record<OrderStatus, ProviderOrderListItemDto> = {
+const ORDERS: Record<StoredOrderStatus, ProviderOrderListItemDto> = {
   pending_payment: {
     ...base,
     id: 12,

@@ -32,6 +32,7 @@ const router = useRouter()
 const STATUSES: Record<OrderStatus, { dateHeader: string; empty: string }> = {
   draft: { dateHeader: 'Created', empty: 'No draft orders.' },
   pending_payment: { dateHeader: 'Sent', empty: 'No orders awaiting payment.' },
+  awaiting_stock: { dateHeader: 'Sent', empty: 'No orders awaiting stock.' },
   paid: { dateHeader: 'Paid', empty: 'No paid orders.' },
   cancelled: { dateHeader: 'Cancelled', empty: 'No cancelled orders.' },
 }

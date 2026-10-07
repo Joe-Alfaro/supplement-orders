@@ -85,6 +85,13 @@
       "when": 1791387154455,
       "tag": "0011_rev13_admin_inventory",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1791398576682,
+      "tag": "0012_rev14_backorders",
+      "breakpoints": true
     }
   ]
 }

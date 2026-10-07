@@ -19,6 +19,9 @@ vi.mock('../api', async (importOriginal) => {
 })
 
 const paid: ProviderOrderDetailDto = {
+  quote: null,
+  splitFromOrderId: null,
+  backorderOrderId: null,
   id: 42,
   view: 'provider',
   revision: 1,
@@ -42,6 +45,8 @@ const paid: ProviderOrderDetailDto = {
   patientAddress: '214 Alder St',
   lines: [
     {
+      lineId: 912,
+      availableQuantity: null,
       productId: 1,
       productName: 'Vitamin D3',
       sku: 'VITD',

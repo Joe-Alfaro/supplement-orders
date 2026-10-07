@@ -569,7 +569,7 @@ describe('revision 10 execution-safe payments', () => {
     )
 
     const blocked = result(await pay(ctx, competingId))
-    expectApiError(blocked, 422, 'INSUFFICIENT_STOCK')
+    expectApiError(blocked, 409, 'INSUFFICIENT_STOCK')
     expectSameDecline(held, orderId)
 
     expectApiError(
@@ -638,7 +638,7 @@ describe('revision 10 execution-safe payments', () => {
     await expectBlocked(ctx, orderId, productId)
     expectApiError(
       result(await pay(ctx, competingId)),
-      422,
+      409,
       'INSUFFICIENT_STOCK',
     )
     expect(await loadAttempt(orderId)).toEqual([

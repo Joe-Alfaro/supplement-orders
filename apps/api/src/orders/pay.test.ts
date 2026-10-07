@@ -173,7 +173,9 @@ describe('POST /api/orders/:id/pay', () => {
     const state = await moneyState(ctx, orderId)
     expect(state.payments).toHaveLength(1)
     expect(state.ledger).toHaveLength(3)
-    expect(ctx.gateway.charges).toHaveLength(1)
+    // The loser may replay the same key (revision 10), which never charges twice.
+    const keys = new Set(ctx.gateway.charges.map((c) => c.idempotencyKey))
+    expect(keys.size).toBe(1)
   })
 
   it('refuses to charge when stock ran out after sending, and changes nothing', async () => {
@@ -184,10 +186,17 @@ describe('POST /api/orders/:id/pay', () => {
 
     const res = await pay(ctx, orderId)
 
-    expect(res.status).toBe(422)
+    // Revision 14: a full pay with a shortfall is a 409 with availability.
+    expect(res.status).toBe(409)
     expect(res.body.error).toMatchObject({
       code: 'INSUFFICIENT_STOCK',
-      field: 'lines.0.quantity',
+      availability: expect.arrayContaining([
+        expect.objectContaining({
+          productId: line!.productId,
+          quantity: line!.quantity,
+          availableQuantity: line!.quantity - 1,
+        }),
+      ]),
     })
     expect(ctx.gateway.charges).toHaveLength(0)
     expect(await moneyState(ctx, orderId)).toEqual(before)

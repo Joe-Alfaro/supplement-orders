@@ -3,6 +3,7 @@ import {
   listOrdersQuerySchema,
   payOrderRequestSchema,
   replaceOrderLinesRequestSchema,
+  sendOrderRequestSchema,
 } from '@supplement-orders/domain'
 import { eq } from 'drizzle-orm'
 import { Router } from 'express'
@@ -105,7 +106,11 @@ export function ordersRouter(ctx: AppContext) {
   router.post('/:id/send', async (req, res) => {
     const user = requireRole(await auth.getCurrentUser(req), 'provider')
     const orderId = parseId(req.params.id)
-    await sendOrder(ctx, user, orderId)
+    const { acknowledgeLowStock } = parseOrThrow(
+      sendOrderRequestSchema,
+      req.body ?? {},
+    )
+    await sendOrder(ctx, user, orderId, { acknowledgeLowStock })
     res.json(await loadProviderOrderDetail(db, orderId))
   })
 
@@ -138,6 +143,7 @@ export function ordersRouter(ctx: AppContext) {
       expectedRevision: body.expectedRevision,
       expectedTotalCents: body.expectedTotalCents,
       simulateFailure: body.simulateFailure === true,
+      mode: body.mode ?? 'full',
     })
     res.json(await loadPatientOrderDetail(db, orderId))
   })

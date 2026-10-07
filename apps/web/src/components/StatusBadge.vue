@@ -11,6 +11,7 @@ defineProps<Props>()
 const SEVERITIES: Record<OrderStatus, string> = {
   draft: 'secondary',
   pending_payment: 'warn',
+  awaiting_stock: 'contrast',
   paid: 'success',
   cancelled: 'danger',
 }

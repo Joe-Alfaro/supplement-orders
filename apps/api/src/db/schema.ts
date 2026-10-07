@@ -1,3 +1,4 @@
+import { ORDER_STATUSES } from '@supplement-orders/domain'
 import { sql } from 'drizzle-orm'
 import {
   bigint,
@@ -8,10 +9,13 @@ import {
   integer,
   pgEnum,
   pgTable,
+  pgView,
   serial,
   text,
   timestamp,
   unique,
+  uniqueIndex,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
 
 // Money columns are bigint cents read back as JS numbers. Every value we store is
@@ -177,6 +181,12 @@ export const orders = pgTable(
     cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
     // Revision 9: the quote version. 0 until first sent, +1 on every send.
     revision: integer('revision').notNull().default(0),
+    // Revision 14: a back-order points at the order it was split from, and at
+    // that order's revision whose quote produced the split (replay detection).
+    splitFromOrderId: integer('split_from_order_id').references(
+      (): AnyPgColumn => orders.id,
+    ),
+    splitFromRevision: integer('split_from_revision'),
   },
   (t) => [
     check(
@@ -236,8 +246,41 @@ export const orders = pgTable(
       'orders_paid_at_iff_paid',
       sql`(${t.status} = 'paid') = (${t.paidAt} is not null)`,
     ),
+    // Revision 14: each order has at most one direct back-order.
+    uniqueIndex('orders_split_from_order_id_unique').on(t.splitFromOrderId),
+    check(
+      'orders_split_columns_together',
+      sql`(${t.splitFromOrderId} is null) = (${t.splitFromRevision} is null)`,
+    ),
   ],
 )
+
+/**
+ * Revision 14 (DOMAIN_CONTRACT 14.3b): every orders column plus the derived
+ * `effective_status`, defined by migration 0012. Order reads (lists, detail,
+ * filters, the patient's latest status) select from here; writes and row
+ * locks always target `orders`.
+ */
+export const ordersWithStatus = pgView('orders_with_status', {
+  id: integer('id').notNull(),
+  providerId: integer('provider_id').notNull(),
+  patientId: integer('patient_id').notNull(),
+  status: orderStatusEnum('status').notNull(),
+  subtotalCents: cents('subtotal_cents'),
+  platformFeeCents: cents('platform_fee_cents'),
+  totalCents: cents('total_cents'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+  sentAt: timestamp('sent_at', { withTimezone: true }),
+  paidAt: timestamp('paid_at', { withTimezone: true }),
+  cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+  revision: integer('revision').notNull(),
+  splitFromOrderId: integer('split_from_order_id'),
+  splitFromRevision: integer('split_from_revision'),
+  effectiveStatus: text('effective_status', {
+    enum: ORDER_STATUSES,
+  }).notNull(),
+}).existing()
 
 // Draft lines may be incomplete (no product or no price yet). Completeness of
 // sent orders is enforced by the send service, which is the only path out of draft.

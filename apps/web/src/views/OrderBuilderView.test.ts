@@ -82,6 +82,9 @@ function draftDetail(
   lines: ProviderOrderDetailDto['lines'],
 ): ProviderOrderDetailDto {
   return {
+    quote: null,
+    splitFromOrderId: null,
+    backorderOrderId: null,
     id: 99,
     view: 'provider',
     revision: 0,
@@ -198,6 +201,8 @@ describe('OrderBuilderView', () => {
     vi.mocked(api.getOrder).mockResolvedValue(
       draftDetail([
         {
+          lineId: 909,
+          availableQuantity: null,
           productId: 1,
           productName: 'Vitamin D3',
           sku: 'VITD',
@@ -425,6 +430,8 @@ describe('OrderBuilderView', () => {
     vi.mocked(api.createOrder).mockResolvedValue(draftDetail([]))
     const saved = draftDetail([
       {
+        lineId: 908,
+        availableQuantity: null,
         productId: 1,
         productName: 'Vitamin D3',
         sku: 'VITD',
@@ -437,6 +444,8 @@ describe('OrderBuilderView', () => {
         stockQuantity: 10,
       },
       {
+        lineId: 907,
+        availableQuantity: null,
         productId: null,
         productName: null,
         sku: null,
@@ -779,6 +788,8 @@ describe('OrderBuilderView patient and stock', () => {
     vi.mocked(api.getOrder).mockResolvedValue(
       draftDetail([
         {
+          lineId: 906,
+          availableQuantity: null,
           productId: 1,
           productName: 'Vitamin D3',
           sku: 'VITD',
@@ -977,6 +988,8 @@ describe('OrderBuilderView as the one draft page', () => {
     vi.mocked(api.replaceOrderLines).mockImplementation(async () =>
       draftDetail([
         {
+          lineId: 905,
+          availableQuantity: null,
           productId: 1,
           productName: 'Vitamin D3',
           sku: 'VITD',

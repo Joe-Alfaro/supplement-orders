@@ -65,6 +65,8 @@ const PROVIDER_SUMMARY_KEYS = [
   'paidAt',
   'cancelledAt',
   'revision',
+  'splitFromOrderId',
+  'backorderOrderId',
   'view',
   'split',
 ]
@@ -81,6 +83,8 @@ const PATIENT_SUMMARY_KEYS = [
   'paidAt',
   'cancelledAt',
   'revision',
+  'splitFromOrderId',
+  'backorderOrderId',
   'view',
   'totalCents',
 ]
@@ -91,6 +95,7 @@ const PROVIDER_DETAIL_KEYS = [
   'patientAddress',
   'lines',
   'payment',
+  'quote',
   'ledger',
 ]
 
@@ -99,6 +104,7 @@ const PATIENT_DETAIL_KEYS = [
   'patientAddress',
   'lines',
   'payment',
+  'quote',
 ]
 
 const SPLIT_KEYS = [
@@ -116,6 +122,8 @@ const PROVIDER_LINE_KEYS = [
   'quantity',
   'unitPriceCents',
   'lineTotalCents',
+  'lineId',
+  'availableQuantity',
   'unitCogsCents',
   'markupBps',
   'minUnitPriceCents',
@@ -129,6 +137,8 @@ const PATIENT_LINE_KEYS = [
   'quantity',
   'unitPriceCents',
   'lineTotalCents',
+  'lineId',
+  'availableQuantity',
 ]
 
 const PAYMENT_KEYS = ['id', 'amountCents', 'reference', 'createdAt']
@@ -159,6 +169,8 @@ const AWAITING_KEYS = [
   'sentAt',
   'paidAt',
   'cancelledAt',
+  'splitFromOrderId',
+  'backorderOrderId',
 ]
 
 const DASHBOARD_KEYS = [
@@ -475,6 +487,8 @@ function awaitingRow(detail: ProviderOrderDetailDto): AwaitingPaymentOrderDto {
     sentAt: detail.sentAt,
     paidAt: null,
     cancelledAt: null,
+    splitFromOrderId: null,
+    backorderOrderId: null,
   }
 }
 
@@ -947,6 +961,8 @@ describe('GET /api/orders', () => {
       paidAt: null,
       cancelledAt: cancelled.cancelledAt,
       revision: cancelled.revision,
+      splitFromOrderId: null,
+      backorderOrderId: null,
       view: 'patient',
       totalCents: split.totalCents,
     })
@@ -1124,6 +1140,8 @@ describe('GET /api/orders?status=pending_payment', () => {
       sentAt: null,
       paidAt: null,
       cancelledAt: null,
+      splitFromOrderId: null,
+      backorderOrderId: null,
     })
 
     const paidPage = await statusPage('paid')
@@ -1139,6 +1157,8 @@ describe('GET /api/orders?status=pending_payment', () => {
       sentAt: paid.sentAt,
       paidAt: paid.paidAt,
       cancelledAt: null,
+      splitFromOrderId: null,
+      backorderOrderId: null,
     })
 
     const cancelledPage = await statusPage('cancelled')
@@ -1154,6 +1174,8 @@ describe('GET /api/orders?status=pending_payment', () => {
       sentAt: cancelled.sentAt,
       paidAt: null,
       cancelledAt: cancelled.cancelledAt,
+      splitFromOrderId: null,
+      backorderOrderId: null,
     })
 
     const all = await statusPage('all')

@@ -12,7 +12,10 @@ export class ApiError extends Error {
     message: string,
     readonly field?: string,
     /** Extra error-body fields some codes carry, e.g. STOCK_CHANGED. */
-    readonly details: Pick<ApiErrorBody, 'currentStockQuantity'> = {},
+    readonly details: Pick<
+      ApiErrorBody,
+      'currentStockQuantity' | 'availability' | 'quote' | 'lines'
+    > = {},
   ) {
     super(message)
     this.name = 'ApiError'
