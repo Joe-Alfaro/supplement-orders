@@ -24,7 +24,8 @@ function createdAt() {
   return timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 }
 
-export const roleEnum = pgEnum('role', ['provider', 'patient'])
+// Revision 13 adds admin: no provider or patient profile; manages stock.
+export const roleEnum = pgEnum('role', ['provider', 'patient', 'admin'])
 
 export const orderStatusEnum = pgEnum('order_status', [
   'draft',
@@ -350,5 +351,39 @@ export const ledgerEntries = pgTable(
   (t) => [
     unique('ledger_entries_payment_type_unique').on(t.paymentId, t.type),
     check('ledger_entries_amount_nonnegative', sql`${t.amountCents} >= 0`),
+  ],
+)
+
+export const inventoryAdjustmentKindEnum = pgEnum('inventory_adjustment_kind', [
+  'increment',
+  'set',
+])
+
+/**
+ * Revision 13: one row per successful admin stock change, written in the same
+ * transaction as the change. Append-only (migration 0011 rejects UPDATE and
+ * DELETE). Payment reservations and releases are not recorded here.
+ */
+export const inventoryAdjustments = pgTable(
+  'inventory_adjustments',
+  {
+    id: serial('id').primaryKey(),
+    productId: integer('product_id')
+      .notNull()
+      .references(() => products.id),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id),
+    kind: inventoryAdjustmentKindEnum('kind').notNull(),
+    previousQuantity: integer('previous_quantity').notNull(),
+    newQuantity: integer('new_quantity').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('inventory_adjustments_product_id_idx').on(t.productId),
+    check(
+      'inventory_adjustments_quantities_nonnegative',
+      sql`${t.previousQuantity} >= 0 and ${t.newQuantity} >= 0`,
+    ),
   ],
 )

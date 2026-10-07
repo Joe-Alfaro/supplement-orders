@@ -1,5 +1,6 @@
 import express from 'express'
 import type { Db } from './db/client'
+import { adminRouter } from './http/admin'
 import { dashboardRouter } from './http/dashboard'
 import { errorHandler } from './http/errors'
 import { ordersRouter } from './http/orders'
@@ -80,6 +81,7 @@ export function createApp(deps: AppDeps) {
   app.use('/api/patients', patientsRouter(ctx))
   app.use('/api/orders', ordersRouter(ctx))
   app.use('/api/dashboard', dashboardRouter(ctx))
+  app.use('/api/admin', adminRouter(ctx))
 
   app.use('/api', (_req, res) => {
     res

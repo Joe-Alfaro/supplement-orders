@@ -412,7 +412,7 @@ export function loadPatientOrderDetail(
  */
 export function loadOrderDetailFor(
   db: Db,
-  user: CurrentUser,
+  user: Extract<CurrentUser, { role: 'provider' | 'patient' }>,
   orderId: number,
   hooks?: ReadHooks,
 ): Promise<ProviderOrderDetailDto | PatientOrderDetailDto> {

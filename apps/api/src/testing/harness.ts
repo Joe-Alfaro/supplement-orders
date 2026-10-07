@@ -24,6 +24,8 @@ export interface SeedIds {
   /** A different patient of the same provider. */
   otherPatientUserId: number
   patientId: number
+  /** Revision 13: the admin, who manages stock. */
+  adminUserId: number
   /** At least 3, each with stock >= 10. */
   products: { id: number; cogsCents: number; stockQuantity: number }[]
 }
@@ -78,6 +80,7 @@ function toSeedIds(result: SeedResult): SeedIds {
     patientUserId: patient.userId,
     otherPatientUserId: otherPatient.userId,
     patientId: patient.patientId,
+    adminUserId: result.adminUserId,
     products: result.products,
   }
 }

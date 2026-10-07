@@ -1,6 +1,6 @@
 # Supplement Orders
 
-A working vertical slice of in-house supplement ordering inside an EHR. A provider assembles a supplement order for a patient and sets the patient-facing price per item. The patient pays through a stubbed gateway. The system splits every paid order into wholesale cost, provider margin and a 75 bps processing fee (ledger type `platform_fee`), and records the split as three immutable ledger entries that sum exactly to the amount paid. Providers also get an Orders tab with a status filter, and a dashboard with sales totals (GMV, margin earned, processing fees) and read-only stock.
+A working vertical slice of in-house supplement ordering inside an EHR. A provider assembles a supplement order for a patient and sets the patient-facing price per item. The patient pays through a stubbed gateway. The system splits every paid order into wholesale cost, provider margin and a 75 bps processing fee (ledger type `platform_fee`), and records the split as three immutable ledger entries that sum exactly to the amount paid. Providers also get an Orders tab with a status filter, and a dashboard with sales totals (GMV, margin earned, processing fees) and read-only stock. An admin manages stock levels.
 
 **Live demo: <https://web-production-b7c8c.up.railway.app>.** Auth is stubbed: pick any seeded user on the sign-in screen, no password. All data is fake. The live demo was last deployed before revisions 9 and 10, so it still runs the older payment flow: pay isn't bound to the quote on screen, and the gateway call happens inside one database transaction. This README and the docs describe the code on `main`.
 
@@ -45,7 +45,7 @@ Prerequisites: Node 22 LTS, 22.13 or later (`engines` in `package.json` is `>=22
 ```sh
 npm install
 npm run db:up        # Postgres 16 in Docker on localhost:54329; waits until healthy
-npm run db:migrate   # applies migrations 0000-0010 (includes the pg_trgm extension)
+npm run db:migrate   # applies migrations 0000-0011 (includes the pg_trgm extension)
 npm run db:seed      # wipes the dev database and loads the demo seed
 npm run dev          # API on http://localhost:3000, web on http://localhost:5173
 ```
@@ -65,6 +65,7 @@ Authentication is stubbed. The `/login` dropdown lists every user in the databas
 | Dr. Owen Brooks      | Provider | A second provider, to see that providers can't see each other's data  |
 | Sam Patel            | Patient  | Dr. Rivera's second patient                                           |
 | Alex Kim, Riley Chen | Patient  | Dr. Brooks's patients                                                 |
+| Ada Admin            | Admin    | Manage stock under Inventory (no provider or patient data)            |
 
 `npm run db:seed` also adds generated data: 300 products in one catalog, and 250 patients split between the two providers, so search and pagination have something to page through. A few generated patients share a name and a provider and differ by date of birth and address.
 
@@ -115,7 +116,7 @@ Pay is bound to the quote the patient saw: the request carries the order's `revi
 
 ### Stock
 
-Stock is read-only in the app. Requirement 5 of the brief asks for the dashboard to "update inventory", while its out-of-scope list puts inventory mechanics out of scope (no need to model warehouses or stock levels). The product owner reads "update inventory" as stock going down automatically when orders are paid, with no restocking or manual adjustment, since neither providers nor the platform control stock in this slice, and accepted that interpretation after an independent audit flagged the wording. The dashboard shows each product's available stock. A pay attempt reserves the order's quantities before charging, a decline gives them back, and a recorded payment keeps them as the sale. So an order whose payment is in progress, or waiting for reconciliation, already counts against the stock shown.
+An admin (Ada Admin) manages stock (revision 13, at the product owner's request; this reverses the earlier reading that stock is never edited by hand). Providers and patients can't change it, and the provider dashboard's inventory stays read-only. The admin can add to a product's stock (an atomic increment, so concurrent additions never conflict) or set it to an exact value. Setting is a compare-and-set against the value the admin loaded: if a payment reserved stock or another admin changed it in the meantime, the API answers 409 `STOCK_CHANGED` with the current value and changes nothing. Stock stays between 0 and 1,000,000, and every admin change is recorded in an append-only `inventory_adjustments` table. The admin edits available stock, the same number the dashboard shows. A pay attempt reserves the order's quantities before charging, a decline gives them back, and a recorded payment keeps them as the sale. So an order whose payment is in progress, or waiting for reconciliation, already counts against the stock shown.
 
 ## Deployment
 
@@ -155,12 +156,12 @@ Each stub sits behind an interface in `apps/api/src/seams/` and is injected thro
 
 ## Testing
 
-| Suite                                         | Count            | Notes                                                                                                                                                                                                                                                                                                                                     |
-| --------------------------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/domain` (Vitest)                    | 316              | Fee, minimum price, split, ledger, markup conversions, money parsing and formatting, request schemas and draft bounds                                                                                                                                                                                                                     |
-| `apps/api` (Vitest + Supertest)               | 263 in 27 files  | Against a real Postgres: HTTP contract tests, stale-quote and payment-integrity tests (fenced outcomes, overlapping and held gateway responses, key conflicts, restart recovery with a fresh gateway and app on the same database), concurrent pay/cancel, delete and reopen, order list filters, search, dashboard snapshot, SPA serving |
-| `apps/web` (Vitest + Testing Library + jsdom) | 147              | Views and components, 16 axe-core accessibility scans, 23 loading/error/empty/persona state tests                                                                                                                                                                                                                                         |
-| `e2e/` (Playwright)                           | 6 files, 9 tests | Happy path (order, pay, ledger, exact dashboard and stock deltas), simulated gateway failure, cancel, order lifecycle (delete draft, cancel, reopen, status filters), a stale patient page that must reload before paying the new total, URL-state navigation (4 cases)                                                                   |
+| Suite                                         | Count             | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| --------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/domain` (Vitest)                    | 367               | Fee, minimum price, split, ledger, markup conversions, money parsing and formatting, request schemas and draft bounds                                                                                                                                                                                                                                                                                                                    |
+| `apps/api` (Vitest + Supertest)               | 340 in 31 files   | Against a real Postgres: HTTP contract tests, stale-quote and payment-integrity tests (fenced outcomes, overlapping and held gateway responses, key conflicts, restart recovery with a fresh gateway and app on the same database), concurrent pay/cancel, delete and reopen, admin stock (concurrent increments, compare-and-set racing a payment reservation, audit rows), order list filters, search, dashboard snapshot, SPA serving |
+| `apps/web` (Vitest + Testing Library + jsdom) | 201               | Views and components, 16 axe-core accessibility scans, 23 loading/error/empty/persona state tests                                                                                                                                                                                                                                                                                                                                        |
+| `e2e/` (Playwright)                           | 7 files, 10 tests | Happy path (order, pay, ledger, exact dashboard and stock deltas), simulated gateway failure, cancel, order lifecycle (delete draft, cancel, reopen, status filters), a stale patient page that must reload before paying the new total, URL-state navigation (4 cases)                                                                                                                                                                  |
 
 Counts are from `npm test` and `npm run test:e2e` at the time of writing.
 
@@ -180,7 +181,7 @@ apps/api              Express REST API
   src/orders/         order service (send, pay, cancel, delete, reopen) and read views
   src/seams/          Auth, PaymentGateway, Notifier interfaces and fakes
   src/db/             Drizzle schema, migration runner, seed, test/e2e database helpers
-  drizzle/            SQL migrations 0000-0010
+  drizzle/            SQL migrations 0000-0011
   scripts/            explain-search.ts
 apps/web              Vue 3 + Vite + PrimeVue SPA (views, components, api client, a11y and state tests)
 e2e/                  Playwright specs

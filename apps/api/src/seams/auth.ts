@@ -8,6 +8,7 @@ import { ApiError } from '../http/errors'
 export type CurrentUser =
   | { userId: number; role: 'provider'; providerId: number }
   | { userId: number; role: 'patient'; patientId: number; providerId: number }
+  | { userId: number; role: 'admin' }
 
 export interface Auth {
   /** Resolves the acting user or throws ApiError UNAUTHENTICATED. */
@@ -58,6 +59,8 @@ export class HeaderAuth implements Auth {
         providerId: user.patientProviderId,
       }
     }
+    // Revision 13: an admin has no provider or patient profile.
+    if (user.role === 'admin') return { userId: user.id, role: 'admin' }
     throw new ApiError(
       401,
       'UNAUTHENTICATED',
@@ -73,6 +76,17 @@ export function requireRole<R extends Role>(
 ): Extract<CurrentUser, { role: R }> {
   if (user.role !== role) {
     throw new ApiError(403, 'FORBIDDEN', `Only a ${role} can do this`)
+  }
+  return user as Extract<CurrentUser, { role: R }>
+}
+
+/** Throws FORBIDDEN unless the user has one of the given roles; narrows the type. */
+export function requireAnyRole<R extends Role>(
+  user: CurrentUser,
+  roles: readonly R[],
+): Extract<CurrentUser, { role: R }> {
+  if (!(roles as readonly Role[]).includes(user.role)) {
+    throw new ApiError(403, 'FORBIDDEN', 'You cannot do this')
   }
   return user as Extract<CurrentUser, { role: R }>
 }

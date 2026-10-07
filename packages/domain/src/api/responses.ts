@@ -9,7 +9,8 @@ const cents = z.int().nonnegative()
 const timestamp = z.string()
 const isoDate = z.iso.date()
 
-export const ROLES = ['provider', 'patient'] as const
+/** Revision 13 adds admin, who manages stock and has no provider or patient profile. */
+export const ROLES = ['provider', 'patient', 'admin'] as const
 export type Role = (typeof ROLES)[number]
 
 export const ORDER_STATUSES = [
@@ -43,6 +44,7 @@ export interface UserDto {
   providerId: number | null
   /** Set when role is patient. */
   patientId: number | null
+  // An admin has neither.
 }
 
 export const userDtoSchema: z.ZodType<UserDto> = z.object({
@@ -55,7 +57,7 @@ export const userDtoSchema: z.ZodType<UserDto> = z.object({
 
 /**
  * GET /api/products returns Page<ProductDto> (provider only: wholesale cost is internal).
- * Stock is read-only; it decreases only when an order is paid.
+ * Stock is read-only here; only an admin changes it (see AdminProductDto).
  */
 export interface ProductDto {
   id: number
@@ -402,6 +404,29 @@ export type ProductPageDto = Page<ProductDto>
 export type PatientPageDto = Page<PatientDto>
 
 export const productPageDtoSchema = pageSchema(productDtoSchema)
+
+/**
+ * Revision 13 (admin only). GET /api/admin/products returns
+ * Page<AdminProductDto>; POST .../stock/increment and PUT .../stock return the
+ * updated AdminProductDto. `stockQuantity` is available stock: whatever
+ * unresolved payment attempts hold is already deducted.
+ */
+export interface AdminProductDto {
+  id: number
+  name: string
+  wholesaleCostCents: number
+  stockQuantity: number
+}
+
+export const adminProductDtoSchema: z.ZodType<AdminProductDto> = z.object({
+  id,
+  name: z.string(),
+  wholesaleCostCents: cents,
+  stockQuantity: z.int().nonnegative(),
+})
+
+export type AdminProductPageDto = Page<AdminProductDto>
+export const adminProductPageDtoSchema = pageSchema(adminProductDtoSchema)
 export const patientPageDtoSchema = pageSchema(patientDtoSchema)
 
 /**

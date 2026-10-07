@@ -246,13 +246,24 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 - **Why:** real auth is out of scope for the brief, and all the data is fake. The README and the login screen both say auth is stubbed.
 - **Tradeoff:** visitors can create, pay or cancel orders as anyone, so the live data isn't trustworthy and the dashboard totals can change between visits.
 
+## Inventory (revision 13)
+
+**An admin manages stock**
+
+- **First decision:** stock was never edited by hand. It went down only when orders were paid, the product owner's reading of the brief's "update inventory" next to its out-of-scope inventory mechanics.
+- **Why it changed:** the product owner asked for inventory management. A third role, `admin`, edits stock; providers and patients still can't, and the provider dashboard stays read-only. The admin edits available stock, the number already net of stock held by unresolved payment attempts, so there's still one stock figure.
+- **Decision:** two operations. Increment is one atomic `UPDATE ... SET stock_quantity = stock_quantity + by`, so concurrent additions queue on the row lock and none is lost. Set is a compare-and-set (`... WHERE stock_quantity = expected`): a mismatch is 409 `STOCK_CHANGED` with the current value.
+- **Why compare-and-set:** a plain set would silently overwrite whatever changed after the admin loaded the page, most dangerously a payment's stock reservation, which would hand the reserved units back out. A row lock held across the admin's think time isn't possible over HTTP, and a version column would add a schema change for the same check the stock value already gives. Each change is one statement on one row, so it can't deadlock with pay's ascending product-id locks.
+- **Audit:** every successful change writes an `inventory_adjustments` row in the same transaction; the table is append-only in the database, like the ledger.
+- **Tradeoff:** a set can be refused by a concurrent sale, and the admin has to review and save again. Bounds are 0 to 1,000,000, enforced by the API (the database still enforces non-negative).
+
 ## What we cut
 
 - Refunds, cancelling paid orders, and reopening paid orders.
 - Provider payouts. The ledger records what's owed; nothing moves money to providers.
 - Real payments, auth, email, shipping, tax.
 - Date-range filters, CSV export and charts on the dashboard. A platform-wide (admin) revenue view.
-- Inventory management. The brief's requirement 5 asks the dashboard to "update inventory", but its out-of-scope list says warehouses and stock levels needn't be modeled. The product owner reads "update inventory" as stock going down automatically with sales, with no restocking or manual adjustment, since neither providers nor the platform control stock here, and accepted that reading after the audit raised it. Stock is reserved when a pay attempt starts and kept when the payment is recorded; there's no restocking path in the app.
+- Warehouses, purchase orders and receiving. Revision 13 added admin stock editing (see Inventory above), but there's still no model of where stock comes from, and the adjustment audit isn't shown in the UI.
 - A database-level guard against ledger updates or deletes.
 - Automated deploys. Deploys run `railway up` by hand because Railway's auto-deploy supports only GitHub.
 - Order status history. Reopen overwrites the earlier send and cancel times.

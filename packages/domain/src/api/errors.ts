@@ -18,6 +18,8 @@ import { z } from 'zod'
  * - 409 PAYMENT_NEEDS_RECONCILIATION: a charge succeeded but its payment was not recorded;
  *   cancel, reopen, delete and line edits are blocked until a retried pay completes it
  * - 409 IDEMPOTENCY_KEY_REUSED: the gateway refused a known key with a different amount
+ * - 409 STOCK_CHANGED (revision 13): an admin's stock set expected a value that is no
+ *   longer current; the body carries `currentStockQuantity`
  * - 402 PAYMENT_FAILED: the gateway declined; nothing was persisted
  * - 413 PAYLOAD_TOO_LARGE: the request body exceeds the server's limit
  * - other client errors from reading the body (e.g. 415 for an unsupported charset)
@@ -36,6 +38,7 @@ export const API_ERROR_CODES = [
   'ORDER_CHANGED',
   'PAYMENT_NEEDS_RECONCILIATION',
   'IDEMPOTENCY_KEY_REUSED',
+  'STOCK_CHANGED',
   'EMPTY_ORDER',
   'INVALID_QUANTITY',
   'INVALID_AMOUNT',
@@ -60,16 +63,36 @@ export interface ApiErrorBody {
    * e.g. `lines.1.unitPriceCents` or `stockQuantity`. Absent for non-field errors.
    */
   field?: string
+  /** STOCK_CHANGED only: the product's stock now, to show the admin. */
+  currentStockQuantity?: number
 }
 
 export interface ApiErrorResponse {
   error: ApiErrorBody
 }
 
+export interface StockChangedErrorResponse {
+  error: {
+    code: 'STOCK_CHANGED'
+    message: string
+    currentStockQuantity: number
+  }
+}
+
+export const stockChangedErrorResponseSchema: z.ZodType<StockChangedErrorResponse> =
+  z.object({
+    error: z.object({
+      code: z.literal('STOCK_CHANGED'),
+      message: z.string(),
+      currentStockQuantity: z.int().nonnegative(),
+    }),
+  })
+
 export const apiErrorResponseSchema: z.ZodType<ApiErrorResponse> = z.object({
   error: z.object({
     code: z.enum(API_ERROR_CODES),
     message: z.string(),
     field: z.string().optional(),
+    currentStockQuantity: z.int().nonnegative().optional(),
   }),
 })

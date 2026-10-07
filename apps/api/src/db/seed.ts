@@ -15,6 +15,7 @@ import { generatePatients, generateProducts } from './seed-bulk'
  *   id 4  Dr. Owen Brooks  provider 2  patients: Alex Kim, Riley Chen
  *   id 5  Alex Kim         patient 3   DOB 1993-07-21 (07/21/1993)  1502 Pine Rd, Denver, CO 80203
  *   id 6  Riley Chen       patient 4   DOB 1958-01-30 (01/30/1958)  9 Harbor Way, Boston, MA 02110
+ *   id 7  Ada Admin        admin (revision 13; no provider or patient profile)
  *
  * Products (id, SKU, name, wholesale cost, stock, minimum unit price)
  *   1  VITD3-5000   Vitamin D3 5000 IU (120 softgels)        $8.50   120  $8.57
@@ -65,6 +66,8 @@ const SEED_PROVIDERS: SeedProvider[] = [
   },
 ]
 
+const SEED_ADMIN_NAME = 'Ada Admin'
+
 const SEED_PRODUCTS = [
   {
     sku: 'VITD3-5000',
@@ -106,11 +109,12 @@ export interface SeededProvider {
 
 export interface SeedResult {
   providers: SeededProvider[]
+  adminUserId: number
   products: { id: number; cogsCents: number; stockQuantity: number }[]
 }
 
 /** Every table, in an order TRUNCATE ... CASCADE accepts. */
-const ALL_TABLES = sql`ledger_entries, payments, payment_attempts, fake_gateway_charges, order_items, orders, products, patients, providers, users`
+const ALL_TABLES = sql`inventory_adjustments, ledger_entries, payments, payment_attempts, fake_gateway_charges, order_items, orders, products, patients, providers, users`
 
 /** Removes all data and restarts ids so a reseed produces the same ids every time. */
 export async function truncateAll(db: Db) {
@@ -200,6 +204,11 @@ export async function seedDatabase(
     Promise.resolve([]),
   )
 
+  const [admin] = await db
+    .insert(users)
+    .values({ name: SEED_ADMIN_NAME, role: 'admin' })
+    .returning({ id: users.id })
+
   const seededProducts = await db
     .insert(products)
     .values(SEED_PRODUCTS)
@@ -217,7 +226,11 @@ export async function seedDatabase(
     )
   }
 
-  return { providers: seededProviders, products: seededProducts }
+  return {
+    providers: seededProviders,
+    adminUserId: admin!.id,
+    products: seededProducts,
+  }
 }
 
 /**

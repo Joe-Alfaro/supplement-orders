@@ -1,4 +1,8 @@
-import type { ApiErrorCode, ApiErrorResponse } from '@supplement-orders/domain'
+import type {
+  ApiErrorBody,
+  ApiErrorCode,
+  ApiErrorResponse,
+} from '@supplement-orders/domain'
 import type { ErrorRequestHandler } from 'express'
 
 export class ApiError extends Error {
@@ -7,16 +11,18 @@ export class ApiError extends Error {
     readonly code: ApiErrorCode,
     message: string,
     readonly field?: string,
+    /** Extra error-body fields some codes carry, e.g. STOCK_CHANGED. */
+    readonly details: Pick<ApiErrorBody, 'currentStockQuantity'> = {},
   ) {
     super(message)
     this.name = 'ApiError'
   }
 
   toBody(): ApiErrorResponse {
-    const { code, message, field } = this
-    return {
-      error: field === undefined ? { code, message } : { code, message, field },
-    }
+    const { code, message, field, details } = this
+    const base =
+      field === undefined ? { code, message } : { code, message, field }
+    return { error: { ...base, ...details } }
   }
 }
 

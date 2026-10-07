@@ -356,6 +356,12 @@ describe('personas and users', () => {
     const users = await listUsers()
     expect(users.length).toBeGreaterThanOrEqual(4)
     users.forEach((user) => {
+      // Revision 13: an admin has neither profile.
+      if (user.role === 'admin') {
+        expect(user.providerId).toBeNull()
+        expect(user.patientId).toBeNull()
+        return
+      }
       if (user.role === 'provider') {
         expect(user.providerId).not.toBeNull()
         expect(user.patientId).toBeNull()
