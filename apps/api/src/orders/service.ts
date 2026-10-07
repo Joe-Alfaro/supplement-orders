@@ -8,18 +8,19 @@ import {
   type OrderStatus,
   type SplitLine,
 } from '@supplement-orders/domain'
-import { and, asc, eq, gte, inArray, sql } from 'drizzle-orm'
+import { and, asc, eq, gte, inArray, isNull, sql } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import {
   ledgerEntries,
   orderItems,
   orders,
   patients,
+  paymentAttempts,
   payments,
   products,
 } from '../db/schema'
 import { ApiError, forbidden, notFound } from '../http/errors'
-import type { CurrentUser } from '../seams'
+import { IDEMPOTENCY_KEY_REUSED, type CurrentUser } from '../seams'
 import type { AppContext } from '../server'
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
@@ -49,10 +50,6 @@ function computeSplitOrThrow(lines: readonly SplitLine[]) {
         : `lines.${err.lineIndex}.${leaf}`
     throw new ApiError(422, err.code, err.message, field)
   }
-}
-
-function idempotencyKeyFor(orderId: number) {
-  return `order-${orderId}-payment`
 }
 
 /** Locks the order row for the rest of the transaction. */
@@ -145,6 +142,7 @@ export async function replaceDraftLines(
 ) {
   await db.transaction(async (tx) => {
     await lockOwnedDraft(tx, user, orderId, 'edited')
+    await assertNoUnreconciledCharge(tx, orderId)
 
     const productIds = lines.flatMap((l) =>
       l.productId === null ? [] : [l.productId],
@@ -282,6 +280,8 @@ export async function sendOrder(
         totalCents: split.totalCents,
         sentAt: now,
         updatedAt: now,
+        // Every send is a new quote the patient must consent to (revision 9, H1).
+        revision: sql`${orders.revision} + 1`,
       })
       .where(eq(orders.id, orderId))
   })
@@ -301,6 +301,9 @@ export async function sendOrder(
 export async function deleteDraft(db: Db, user: ProviderUser, orderId: number) {
   await db.transaction(async (tx) => {
     await lockOwnedDraft(tx, user, orderId, 'deleted')
+    await assertNoUnreconciledCharge(tx, orderId)
+    // A reopened draft may keep failed attempts from earlier sends; they hold no money.
+    await tx.delete(paymentAttempts).where(eq(paymentAttempts.orderId, orderId))
     await tx.delete(orderItems).where(eq(orderItems.orderId, orderId))
     await tx.delete(orders).where(eq(orders.id, orderId))
   })
@@ -317,6 +320,7 @@ export async function reopenOrder(db: Db, user: ProviderUser, orderId: number) {
     if (order.providerId !== user.providerId) {
       throw forbidden('This order belongs to another provider')
     }
+    await assertNoUnreconciledCharge(tx, orderId)
     if (order.status !== 'cancelled') {
       throw new ApiError(
         409,
@@ -356,6 +360,9 @@ export async function cancelOrder(
     if (order.providerId !== user.providerId) {
       throw forbidden('This order belongs to another provider')
     }
+    if (order.status === 'pending_payment') {
+      await assertNoUnreconciledCharge(tx, orderId)
+    }
     if (order.status !== 'pending_payment') {
       throw new ApiError(
         409,
@@ -378,29 +385,166 @@ export async function cancelOrder(
   })
 }
 
+/** One idempotency key per quote: a re-sent order is a new quote with a new key. */
+function idempotencyKeyFor(orderId: number, revision: number) {
+  return `order-${orderId}-r${revision}`
+}
+
+function orderChanged() {
+  return new ApiError(
+    409,
+    'ORDER_CHANGED',
+    'This order changed since you opened it. Review the new total before paying.',
+  )
+}
+
 /**
- * The money path (ARCHITECTURE §6.4). One transaction: lock the order, reserve
- * stock, charge, record the payment, write and verify the three ledger rows,
- * mark paid. Any throw rolls everything back. Paying a paid order is a no-op.
- *
- * Stock is decremented before the charge so the only DB-side failures left after
- * money moves are unexpected ones; a retry reuses the order's idempotency key, so
- * the gateway does not charge twice.
+ * Revision 9 (H2): a pending or succeeded payment attempt with no payment row
+ * means money may have moved without a recorded payment. Until a retried pay
+ * resolves it, the order must not be cancelled, reopened, deleted or edited.
+ * (The contract names succeeded attempts; pending ones are blocked too, because
+ * the gateway call runs outside the order lock and a cancel committed while a
+ * charge is in flight would strand that charge on an order that can't be paid.)
  */
-export async function payOrder(
-  { db, gateway, payHooks, allowSimulatedFailure }: AppContext,
+async function assertNoUnreconciledCharge(tx: Tx, orderId: number) {
+  const [open] = await tx
+    .select({ id: paymentAttempts.id })
+    .from(paymentAttempts)
+    .leftJoin(payments, eq(payments.paymentAttemptId, paymentAttempts.id))
+    .where(
+      and(
+        eq(paymentAttempts.orderId, orderId),
+        inArray(paymentAttempts.status, ['pending', 'succeeded']),
+        isNull(payments.id),
+      ),
+    )
+    .limit(1)
+  if (open) {
+    throw new ApiError(
+      409,
+      'PAYMENT_NEEDS_RECONCILIATION',
+      'A payment for this order is being finalized. Try again shortly or contact support.',
+    )
+  }
+}
+
+interface PayLine {
+  index: number
+  productId: number
+  quantity: number
+  unitPriceCents: number
+  unitCogsCents: number
+}
+
+/** The snapshotted lines of a sent order, in line order, with their indexes. */
+async function loadPayLines(tx: Tx, orderId: number): Promise<PayLine[]> {
+  const rows = await tx
+    .select({
+      productId: orderItems.productId,
+      quantity: orderItems.quantity,
+      unitPriceCents: orderItems.unitPriceCents,
+      unitCogsCents: orderItems.unitCogsCents,
+    })
+    .from(orderItems)
+    .where(eq(orderItems.orderId, orderId))
+    .orderBy(asc(orderItems.id))
+  // Send is the only way out of draft and it rejects incomplete lines.
+  return rows.map(
+    ({ productId, unitPriceCents, unitCogsCents, quantity }, index) => {
+      if (
+        productId === null ||
+        unitPriceCents === null ||
+        unitCogsCents === null
+      ) {
+        throw new Error(`Order ${orderId} was sent with an incomplete line`)
+      }
+      return { index, productId, quantity, unitPriceCents, unitCogsCents }
+    },
+  )
+}
+
+function byProductId(lines: PayLine[]) {
+  return [...lines].sort((a, b) => a.productId - b.productId)
+}
+
+/**
+ * Takes the order's stock, conditionally and in ascending product id (M2), so two
+ * orders sharing products always lock product rows in the same order and cannot
+ * deadlock. Throws 422 INSUFFICIENT_STOCK naming the original line index.
+ */
+async function decrementStock(tx: Tx, lines: PayLine[]) {
+  await byProductId(lines).reduce(async (prev, line) => {
+    await prev
+    const [updated] = await tx
+      .update(products)
+      .set({ stockQuantity: sql`${products.stockQuantity} - ${line.quantity}` })
+      .where(
+        and(
+          eq(products.id, line.productId),
+          gte(products.stockQuantity, line.quantity),
+        ),
+      )
+      .returning({ id: products.id })
+    if (!updated) {
+      const [product] = await tx
+        .select({ stock: products.stockQuantity })
+        .from(products)
+        .where(eq(products.id, line.productId))
+      throw insufficientStock(line.index, product?.stock ?? 0)
+    }
+  }, Promise.resolve())
+}
+
+/** Gives back stock taken by decrementStock, in the same product-id order. */
+async function releaseStock(tx: Tx, lines: PayLine[]) {
+  await byProductId(lines).reduce(async (prev, line) => {
+    await prev
+    await tx
+      .update(products)
+      .set({ stockQuantity: sql`${products.stockQuantity} + ${line.quantity}` })
+      .where(eq(products.id, line.productId))
+  }, Promise.resolve())
+}
+
+export interface PayRequest {
+  expectedRevision: number
+  expectedTotalCents: number
+  simulateFailure: boolean
+}
+
+type Attempt = typeof paymentAttempts.$inferSelect
+
+/**
+ * Step 1 (one committed transaction): lock and validate the order against the
+ * quote the patient saw (H1), insert or reuse the attempt for this revision, and
+ * reserve the order's stock for it unless the attempt already holds it. A short
+ * stock is a 422 here, before any charge, and rolls the attempt back with it, so
+ * a charge that succeeds can always complete. Returns null when the order is
+ * already paid at this revision, which makes pay idempotent.
+ */
+async function preparePayment(
+  db: Db,
   user: PatientUser,
   orderId: number,
-  simulateFailure: boolean,
-) {
-  await db.transaction(async (tx) => {
+  { expectedRevision, expectedTotalCents }: PayRequest,
+): Promise<Attempt | null> {
+  return db.transaction(async (tx) => {
     const order = await lockOrder(tx, orderId)
     if (order.patientId !== user.patientId) {
       throw forbidden('This order belongs to another patient')
     }
     // The patient never saw an unsent order, including a draft cancelled before sending.
     if (order.sentAt === null) throw notFound('Order')
-    if (order.status === 'paid') return
+    if (order.status === 'paid') {
+      // A replay must name the quote that was paid: same revision and total.
+      if (
+        order.revision !== expectedRevision ||
+        order.totalCents !== expectedTotalCents
+      ) {
+        throw orderChanged()
+      }
+      return null
+    }
     if (order.status !== 'pending_payment' || order.totalCents === null) {
       throw new ApiError(
         409,
@@ -408,93 +552,210 @@ export async function payOrder(
         `This order is ${statusInSentence(order.status)} and can't be paid.`,
       )
     }
+    if (
+      order.revision !== expectedRevision ||
+      order.totalCents !== expectedTotalCents
+    ) {
+      throw orderChanged()
+    }
+    const lines = await loadPayLines(tx, orderId)
+    /** The reservation belongs to the attempt: taken once, never twice. */
+    async function holdStock(attempt: Attempt): Promise<Attempt> {
+      if (attempt.stockHeld) return attempt
+      await decrementStock(tx, lines)
+      const [held] = await tx
+        .update(paymentAttempts)
+        .set({ stockHeld: true, updatedAt: new Date() })
+        .where(eq(paymentAttempts.id, attempt.id))
+        .returning()
+      return held ?? { ...attempt, stockHeld: true }
+    }
 
-    const rows = await tx
-      .select({
-        productId: orderItems.productId,
-        quantity: orderItems.quantity,
-        unitPriceCents: orderItems.unitPriceCents,
-        unitCogsCents: orderItems.unitCogsCents,
+    const [existing] = await tx
+      .select()
+      .from(paymentAttempts)
+      .where(
+        and(
+          eq(paymentAttempts.orderId, orderId),
+          eq(paymentAttempts.revision, order.revision),
+        ),
+      )
+    if (existing) {
+      // Cannot differ while H1 holds (a revision's total is fixed); defensive.
+      if (existing.amountCents !== order.totalCents) throw orderChanged()
+      if (existing.status !== 'failed') return holdStock(existing)
+      const [retry] = await tx
+        .update(paymentAttempts)
+        .set({ status: 'pending', updatedAt: new Date() })
+        .where(eq(paymentAttempts.id, existing.id))
+        .returning()
+      return holdStock(retry ?? existing)
+    }
+    const [created] = await tx
+      .insert(paymentAttempts)
+      .values({
+        orderId,
+        revision: order.revision,
+        idempotencyKey: idempotencyKeyFor(orderId, order.revision),
+        amountCents: order.totalCents,
       })
-      .from(orderItems)
-      .where(eq(orderItems.orderId, orderId))
-      .orderBy(asc(orderItems.id))
-    // Send is the only way out of draft and it rejects incomplete lines.
-    const lines = rows.map(
-      ({ productId, unitPriceCents, unitCogsCents, quantity }) => {
-        if (
-          productId === null ||
-          unitPriceCents === null ||
-          unitCogsCents === null
-        ) {
-          throw new Error(`Order ${orderId} was sent with an incomplete line`)
-        }
-        return { productId, quantity, unitPriceCents, unitCogsCents }
-      },
+      .returning()
+    if (!created)
+      throw new Error(
+        `Payment attempt insert for order ${orderId} returned no row`,
+      )
+    return holdStock(created)
+  })
+}
+
+/**
+ * Marks a declined attempt failed and gives its stock back, in one transaction
+ * under the order lock. Only a still-pending attempt is failed: if a concurrent
+ * pay already recorded a success for it, that charge keeps the stock.
+ */
+async function recordFailure(db: Db, attempt: Attempt) {
+  await db.transaction(async (tx) => {
+    await lockOrder(tx, attempt.orderId)
+    const [current] = await tx
+      .select()
+      .from(paymentAttempts)
+      .where(eq(paymentAttempts.id, attempt.id))
+    if (!current || current.status !== 'pending') return
+    if (current.stockHeld) {
+      await releaseStock(tx, await loadPayLines(tx, attempt.orderId))
+    }
+    await tx
+      .update(paymentAttempts)
+      .set({ status: 'failed', stockHeld: false, updatedAt: new Date() })
+      .where(eq(paymentAttempts.id, attempt.id))
+  })
+}
+
+/**
+ * Steps 3 and 4: charge with the attempt's key and amount, then record the result
+ * in its own committed transaction. An attempt already marked succeeded is not
+ * charged again; its stored reference completes the payment.
+ */
+async function chargeAttempt(
+  { db, gateway, allowSimulatedFailure }: AppContext,
+  attempt: Attempt,
+  simulateFailure: boolean,
+): Promise<{ reference: string; amountCents: number }> {
+  if (attempt.status === 'succeeded' && attempt.gatewayReference !== null) {
+    return {
+      reference: attempt.gatewayReference,
+      amountCents: attempt.amountCents,
+    }
+  }
+  const charge = await gateway.charge(
+    {
+      amountCents: attempt.amountCents,
+      idempotencyKey: attempt.idempotencyKey,
+      description: `Supplement order ${attempt.orderId} (revision ${attempt.revision})`,
+    },
+    { simulateFailure: allowSimulatedFailure && simulateFailure },
+  )
+  if (charge.status === 'failed') {
+    await recordFailure(db, attempt)
+    if (charge.failureMessage === IDEMPOTENCY_KEY_REUSED) {
+      throw new ApiError(
+        409,
+        'IDEMPOTENCY_KEY_REUSED',
+        'This payment could not be matched to its earlier attempt. Contact support before trying again.',
+      )
+    }
+    throw new ApiError(
+      402,
+      'PAYMENT_FAILED',
+      charge.failureMessage ?? 'Payment was declined',
     )
+  }
+  // Recorded before checking the amount: whatever the gateway did, it is now durable.
+  await db
+    .update(paymentAttempts)
+    .set({
+      status: 'succeeded',
+      gatewayReference: charge.reference,
+      updatedAt: new Date(),
+    })
+    .where(eq(paymentAttempts.id, attempt.id))
+  // A success without an amount can't be verified, so it is treated as a mismatch.
+  if (charge.amountCents !== attempt.amountCents) {
+    throw new Error(
+      `Gateway charged ${charge.amountCents} for attempt ${attempt.id}, expected ${attempt.amountCents}`,
+    )
+  }
+  return { reference: charge.reference, amountCents: attempt.amountCents }
+}
+
+/**
+ * Step 5 (one transaction): lock, re-check the order still matches the attempt,
+ * record the payment against the attempt (its reserved stock becomes the sale),
+ * write and verify the three ledger rows, mark paid. If this rolls back after a successful charge, the
+ * attempt stays succeeded without a payment (an unreconciled charge) and a retried
+ * pay at the same revision completes it.
+ */
+async function recordPayment(
+  { db, payHooks }: AppContext,
+  attempt: Attempt,
+  charge: { reference: string; amountCents: number },
+) {
+  await db.transaction(async (tx) => {
+    const order = await lockOrder(tx, attempt.orderId)
+    if (order.status === 'paid' && order.revision === attempt.revision) return
+    if (
+      order.status !== 'pending_payment' ||
+      order.revision !== attempt.revision ||
+      order.totalCents !== attempt.amountCents
+    ) {
+      throw new Error(
+        `Order ${order.id} no longer matches payment attempt ${attempt.id}`,
+      )
+    }
+    if (charge.amountCents !== order.totalCents) {
+      throw new Error(
+        `Charged ${charge.amountCents} but order ${order.id} totals ${order.totalCents}`,
+      )
+    }
+    const lines = await loadPayLines(tx, order.id)
     const split = computeSplit(lines)
     if (split.totalCents !== order.totalCents) {
       throw new Error(
-        `Order ${orderId} lines no longer match the sent total (${split.totalCents} != ${order.totalCents})`,
+        `Order ${order.id} lines no longer match the sent total (${split.totalCents} != ${order.totalCents})`,
       )
     }
-
-    await lines.reduce(async (prev, line, index) => {
-      await prev
-      const [updated] = await tx
-        .update(products)
-        .set({
-          stockQuantity: sql`${products.stockQuantity} - ${line.quantity}`,
-        })
-        .where(
-          and(
-            eq(products.id, line.productId),
-            gte(products.stockQuantity, line.quantity),
-          ),
-        )
-        .returning({ id: products.id })
-      if (!updated) {
-        const [product] = await tx
-          .select({ stock: products.stockQuantity })
-          .from(products)
-          .where(eq(products.id, line.productId))
-        throw insufficientStock(index, product?.stock ?? 0)
-      }
-    }, Promise.resolve())
-
-    const charge = await gateway.charge(
-      {
-        amountCents: order.totalCents,
-        idempotencyKey: idempotencyKeyFor(orderId),
-        description: `Supplement order ${orderId}`,
-      },
-      { simulateFailure: allowSimulatedFailure && simulateFailure },
-    )
-    if (charge.status !== 'succeeded') {
-      throw new ApiError(
-        402,
-        'PAYMENT_FAILED',
-        charge.failureMessage ?? 'Payment was declined',
-      )
+    // Normally the attempt reserved the stock in step 1. It holds none only if a
+    // concurrent decline released it while this charge succeeded; take it now.
+    const [current] = await tx
+      .select({ stockHeld: paymentAttempts.stockHeld })
+      .from(paymentAttempts)
+      .where(eq(paymentAttempts.id, attempt.id))
+    if (!current?.stockHeld) {
+      await decrementStock(tx, lines)
+      await tx
+        .update(paymentAttempts)
+        .set({ stockHeld: true, updatedAt: new Date() })
+        .where(eq(paymentAttempts.id, attempt.id))
     }
 
     const [payment] = await tx
       .insert(payments)
       .values({
-        orderId,
-        amountCents: order.totalCents,
-        idempotencyKey: idempotencyKeyFor(orderId),
+        orderId: order.id,
+        amountCents: charge.amountCents,
+        idempotencyKey: attempt.idempotencyKey,
         gatewayReference: charge.reference,
+        paymentAttemptId: attempt.id,
       })
       .returning({ id: payments.id, amountCents: payments.amountCents })
     if (!payment)
-      throw new Error(`Payment insert for order ${orderId} returned no row`)
+      throw new Error(`Payment insert for order ${order.id} returned no row`)
 
     const entries = toLedgerEntries(split)
     assertLedgerBalances(entries, payment.amountCents)
     await tx.insert(ledgerEntries).values(
       entries.map((entry) => ({
-        orderId,
+        orderId: order.id,
         paymentId: payment.id,
         type: entry.type,
         amountCents: entry.amountCents,
@@ -506,6 +767,23 @@ export async function payOrder(
     await tx
       .update(orders)
       .set({ status: 'paid', paidAt: now, updatedAt: now })
-      .where(eq(orders.id, orderId))
+      .where(eq(orders.id, order.id))
   })
+}
+
+/**
+ * The money path (revision 9, DOMAIN_CONTRACT "payment integrity"): validate the
+ * quote and commit a payment attempt, charge outside any transaction, record the
+ * result, then write payment, ledger, stock and status atomically.
+ */
+export async function payOrder(
+  ctx: AppContext,
+  user: PatientUser,
+  orderId: number,
+  request: PayRequest,
+) {
+  const attempt = await preparePayment(ctx.db, user, orderId, request)
+  if (attempt === null) return
+  const charge = await chargeAttempt(ctx, attempt, request.simulateFailure)
+  await recordPayment(ctx, attempt, charge)
 }

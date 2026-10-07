@@ -30,7 +30,6 @@ describe('GET /api/dashboard', () => {
       gmvCents: 0,
       providerMarginCents: 0,
       platformFeeCents: 0,
-      paidOrders: [],
     })
   })
 
@@ -60,19 +59,12 @@ describe('GET /api/dashboard', () => {
     expect(res.body.providerMarginCents).toBe(
       12000 - a!.cogsCents - fees[0]! + (3 * 500 - fees[1]!),
     )
-    expect(res.body.paidOrders).toHaveLength(2)
-    res.body.paidOrders.forEach(
-      (o: {
-        totalCents: number
-        cogsCents: number
-        providerMarginCents: number
-        platformFeeCents: number
-      }) => {
-        expect(o.cogsCents + o.providerMarginCents + o.platformFeeCents).toBe(
-          o.totalCents,
-        )
-      },
-    )
+    // Revision 9 (M4): the paid-order list moved to GET /api/orders?status=paid.
+    expect(Object.keys(res.body).sort()).toEqual([
+      'gmvCents',
+      'platformFeeCents',
+      'providerMarginCents',
+    ])
     expect(other.body.gmvCents).toBe(0)
   })
 })

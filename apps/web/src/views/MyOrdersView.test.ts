@@ -15,6 +15,7 @@ function order(id: number, providerName: string): PatientOrderSummaryDto {
   return {
     id,
     view: 'patient',
+    revision: 1,
     status: 'pending_payment',
     patientId: 1,
     patientName: 'Jordan Lee',
@@ -25,7 +26,6 @@ function order(id: number, providerName: string): PatientOrderSummaryDto {
     sentAt: '2026-10-05T12:00:00.000Z',
     paidAt: null,
     cancelledAt: null,
-    revision: 1,
     totalCents: 1000,
   }
 }

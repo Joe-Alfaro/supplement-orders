@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm'
 import {
   bigint,
+  boolean,
   check,
   date,
   index,
@@ -241,6 +242,12 @@ export const paymentAttempts = pgTable(
     amountCents: cents('amount_cents').notNull(),
     status: paymentAttemptStatusEnum('status').notNull().default('pending'),
     gatewayReference: text('gateway_reference'),
+    /**
+     * True while this attempt holds the order's stock: reserved with the attempt
+     * (before any charge), released if the charge fails, and kept as the sale
+     * once the payment is recorded. An unreconciled charge keeps its stock.
+     */
+    stockHeld: boolean('stock_held').notNull().default(false),
     createdAt: createdAt(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()

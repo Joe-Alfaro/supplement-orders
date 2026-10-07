@@ -68,6 +68,7 @@ async function selectOrders(db: Db, where: SQL | undefined) {
       sentAt: orders.sentAt,
       paidAt: orders.paidAt,
       cancelledAt: orders.cancelledAt,
+      revision: orders.revision,
     })
     .from(orders)
     .innerJoin(patients, eq(patients.id, orders.patientId))
@@ -153,6 +154,7 @@ function summaryBase(order: OrderRow) {
     sentAt: iso(order.sentAt),
     paidAt: iso(order.paidAt),
     cancelledAt: iso(order.cancelledAt),
+    revision: order.revision,
   }
 }
 
@@ -181,25 +183,43 @@ function patientSummary(order: OrderRow): PatientOrderSummaryDto {
   }
 }
 
+/**
+ * A derived value, or null when it can't be computed exactly (M3): a draft saved
+ * before revision 9's bounds may hold amounts whose markup or extension is not a
+ * safe integer, and it must still load rather than fail with a 500.
+ */
+function derived(compute: () => number | null): number | null {
+  try {
+    const value = compute()
+    return value === null || Number.isSafeInteger(value) ? value : null
+  } catch (err) {
+    if (err instanceof SplitValidationError) return null
+    throw err
+  }
+}
+
 function providerLine(l: LineRow): ProviderOrderLineDto {
-  const hasProduct = l.unitCogsCents !== null
+  const { unitCogsCents, unitPriceCents } = l
   return {
     productId: l.productId,
     productName: l.productName,
     sku: l.sku,
     quantity: l.quantity,
-    unitPriceCents: l.unitPriceCents,
+    unitPriceCents,
     lineTotalCents:
-      l.unitPriceCents === null ? null : l.quantity * l.unitPriceCents,
-    unitCogsCents: l.unitCogsCents,
-    markupBps:
-      l.unitCogsCents === null || l.unitPriceCents === null
+      unitPriceCents === null
         ? null
-        : markupBpsFromPrice(l.unitCogsCents, l.unitPriceCents),
+        : derived(() => l.quantity * unitPriceCents),
+    unitCogsCents,
+    markupBps:
+      unitCogsCents === null || unitPriceCents === null
+        ? null
+        : derived(() => markupBpsFromPrice(unitCogsCents, unitPriceCents)),
     stockQuantity: l.stockQuantity,
-    minUnitPriceCents: hasProduct
-      ? minUnitPriceCents(l.unitCogsCents ?? 0)
-      : null,
+    minUnitPriceCents:
+      unitCogsCents === null
+        ? null
+        : derived(() => minUnitPriceCents(unitCogsCents)),
   }
 }
 

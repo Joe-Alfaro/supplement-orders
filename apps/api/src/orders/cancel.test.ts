@@ -138,7 +138,7 @@ describe('POST /api/orders/:id/cancel', () => {
     expect((await patientView(orderId)).body.status).toBe('pending_payment')
   })
 
-  it('a cancel arriving mid-payment waits for the row lock and loses', async () => {
+  it('a cancel arriving while the charge is in flight is refused until the payment is recorded', async () => {
     const orderId = await createSentOrder(ctx)
     const charge = ctx.gateway.charge.bind(ctx.gateway)
     const entered = deferred()
@@ -152,14 +152,15 @@ describe('POST /api/orders/:id/cancel', () => {
     const paying = pay(ctx, orderId).then((r) => r)
     await entered.promise
     const cancelling = cancel(orderId).then((r) => r)
-    // Give the cancel time to block on the lock the pay transaction holds.
-    await new Promise((resolve) => setTimeout(resolve, 150))
+    // Revision 9: the gateway call runs outside the order lock, so the cancel is
+    // not blocked; it sees the committed pending attempt and is refused instead.
+    const cancelRes = await cancelling
     release.resolve()
-    const [payRes, cancelRes] = await Promise.all([paying, cancelling])
+    const payRes = await paying
 
     expect(payRes.status).toBe(200)
     expect(cancelRes.status).toBe(409)
-    expect(cancelRes.body.error.code).toBe('ORDER_NOT_CANCELLABLE')
+    expect(cancelRes.body.error.code).toBe('PAYMENT_NEEDS_RECONCILIATION')
     const state = await moneyState(ctx, orderId)
     expect(state.order?.status).toBe('paid')
     expect(state.payments).toHaveLength(1)

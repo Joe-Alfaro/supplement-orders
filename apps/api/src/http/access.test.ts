@@ -76,9 +76,11 @@ describe('auth, persona and ownership', () => {
     const other = as(ctx.seed.otherPatientUserId)
 
     const view = await ctx.request.get(`/api/orders/${orderId}`).set(other)
+    // A well-formed quote, so the refusal is about ownership, not the body.
     const payRes = await ctx.request
       .post(`/api/orders/${orderId}/pay`)
       .set(other)
+      .send({ expectedRevision: 1, expectedTotalCents: 0 })
 
     expect(view.status).toBe(403)
     expect(payRes.status).toBe(403)

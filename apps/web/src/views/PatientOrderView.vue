@@ -42,16 +42,49 @@ const paying = ref(false)
 const payError = ref<string | null>(null)
 const simulateFailure = ref(false)
 
+interface ChangedNotice {
+  message: string
+  previousTotalCents: number
+}
+
+/** Set when pay was refused because the order changed after it was shown. */
+const changed = ref<ChangedNotice | null>(null)
+
+const CHANGED_FALLBACK =
+  'This order changed since you opened it. Review the new total before paying.'
+
+/** Show the order as it is now; the patient must click Pay again. */
+async function reloadChangedOrder(id: number) {
+  try {
+    const fresh = await getOrder(id)
+    if (fresh.view === 'patient') order.value = fresh
+  } catch (err) {
+    payError.value = handleApiError(err)
+  }
+}
+
 async function pay() {
-  if (!order.value || paying.value) return
+  const shown = order.value
+  if (!shown || paying.value) return
   paying.value = true
   payError.value = null
+  changed.value = null
   try {
-    order.value = await payOrder(
-      order.value.id,
-      isDev && simulateFailure.value ? { simulateFailure: true } : {},
-    )
+    // Pay exactly the quote on screen (revision 9); nothing is charged if it changed.
+    order.value = await payOrder(shown.id, {
+      expectedRevision: shown.revision,
+      expectedTotalCents: shown.totalCents,
+      ...(isDev && simulateFailure.value ? { simulateFailure: true } : {}),
+    })
   } catch (err) {
+    if (err instanceof ApiRequestError && err.code === 'ORDER_CHANGED') {
+      changed.value = {
+        message: err.message || CHANGED_FALLBACK,
+        previousTotalCents: shown.totalCents,
+      }
+      await reloadChangedOrder(shown.id)
+      return
+    }
     // Nothing was persisted; the order stays payable.
     payError.value = handleApiError(err)
   } finally {
@@ -86,6 +119,17 @@ async function pay() {
     <h2>Items</h2>
     <LinesTable :lines="order.lines" />
     <TotalsSummary :total-cents="order.totalCents" />
+
+    <div aria-live="polite">
+      <Message v-if="changed" severity="warn" class="banner">
+        {{ changed.message }}
+        <template v-if="order.status === 'pending_payment'">
+          The total was {{ formatCents(changed.previousTotalCents) }} and is now
+          <strong>{{ formatCents(order.totalCents) }}</strong
+          >.
+        </template>
+      </Message>
+    </div>
 
     <section v-if="order.status === 'pending_payment'" aria-label="Payment">
       <div v-if="isDev" class="checkbox-field">

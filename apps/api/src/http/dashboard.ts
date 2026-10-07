@@ -1,78 +1,64 @@
 import type { DashboardDto } from '@supplement-orders/domain'
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { sql } from 'drizzle-orm'
 import { Router } from 'express'
-import { ledgerEntries, orders, patients, payments, users } from '../db/schema'
+import { ledgerEntries, orders, payments } from '../db/schema'
 import { requireRole } from '../seams'
 import type { AppContext } from '../server'
+import { ApiError } from './errors'
 
-function sumOfType(type: 'cogs' | 'provider_margin' | 'platform_fee') {
-  return sql<number>`coalesce(sum(${ledgerEntries.amountCents}) filter (where ${ledgerEntries.type} = ${type}), 0)`.mapWith(
-    Number,
-  )
+interface DashboardRow extends Record<string, unknown> {
+  gmv_cents: string
+  provider_margin_cents: string
+  platform_fee_cents: string
+}
+
+/**
+ * Sums arrive as exact decimal text. Anything beyond Number.MAX_SAFE_INTEGER
+ * would round silently as a JS number, so it is refused rather than reported.
+ */
+function exactCents(value: string, field: string) {
+  const cents = BigInt(value)
+  if (cents > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new ApiError(
+      500,
+      'INTERNAL',
+      `Dashboard ${field} exceeds the exact cent range`,
+    )
+  }
+  return Number(cents)
 }
 
 /**
  * GMV is what patients actually paid (payments); margin and fees come from the
- * ledger, so the dashboard reports the audited figures rather than recomputing them.
+ * ledger, so the dashboard reports the audited figures rather than recomputing
+ * them. All three are read in one statement, so they describe one snapshot even
+ * while payments commit concurrently (revision 9, M4).
  */
 export function dashboardRouter({ db, auth }: AppContext) {
   const router = Router()
 
   router.get('/', async (req, res) => {
     const user = requireRole(await auth.getCurrentUser(req), 'provider')
-    const paidByProvider = and(
-      eq(orders.providerId, user.providerId),
-      eq(orders.status, 'paid'),
-    )
-
-    const [gmv] = await db
-      .select({
-        gmvCents:
-          sql<number>`coalesce(sum(${payments.amountCents}), 0)`.mapWith(
-            Number,
-          ),
-      })
-      .from(payments)
-      .innerJoin(orders, eq(orders.id, payments.orderId))
-      .where(paidByProvider)
-
-    const [ledgerTotals] = await db
-      .select({
-        providerMarginCents: sumOfType('provider_margin'),
-        platformFeeCents: sumOfType('platform_fee'),
-      })
-      .from(ledgerEntries)
-      .innerJoin(orders, eq(orders.id, ledgerEntries.orderId))
-      .where(paidByProvider)
-
-    const paidOrders = await db
-      .select({
-        orderId: orders.id,
-        patientId: orders.patientId,
-        patientName: users.name,
-        paidAt: orders.paidAt,
-        totalCents: payments.amountCents,
-        cogsCents: sumOfType('cogs'),
-        providerMarginCents: sumOfType('provider_margin'),
-        platformFeeCents: sumOfType('platform_fee'),
-      })
-      .from(orders)
-      .innerJoin(payments, eq(payments.orderId, orders.id))
-      .innerJoin(ledgerEntries, eq(ledgerEntries.paymentId, payments.id))
-      .innerJoin(patients, eq(patients.id, orders.patientId))
-      .innerJoin(users, eq(users.id, patients.userId))
-      .where(paidByProvider)
-      .groupBy(orders.id, users.name, payments.id)
-      .orderBy(desc(orders.paidAt), desc(orders.id))
+    const paid = sql`${orders.providerId} = ${user.providerId} and ${orders.status} = 'paid'`
+    const result = await db.execute<DashboardRow>(sql`
+      select
+        (select coalesce(sum(${payments.amountCents}), 0)::text
+           from ${payments} join ${orders} on ${orders.id} = ${payments.orderId}
+          where ${paid}) as gmv_cents,
+        (select coalesce(sum(${ledgerEntries.amountCents}), 0)::text
+           from ${ledgerEntries} join ${orders} on ${orders.id} = ${ledgerEntries.orderId}
+          where ${paid} and ${ledgerEntries.type} = 'provider_margin') as provider_margin_cents,
+        (select coalesce(sum(${ledgerEntries.amountCents}), 0)::text
+           from ${ledgerEntries} join ${orders} on ${orders.id} = ${ledgerEntries.orderId}
+          where ${paid} and ${ledgerEntries.type} = 'platform_fee') as platform_fee_cents
+    `)
+    const [row] = result.rows
+    if (!row) throw new Error('Dashboard query returned no row')
 
     const body: DashboardDto = {
-      gmvCents: gmv?.gmvCents ?? 0,
-      providerMarginCents: ledgerTotals?.providerMarginCents ?? 0,
-      platformFeeCents: ledgerTotals?.platformFeeCents ?? 0,
-      paidOrders: paidOrders.map((o) => ({
-        ...o,
-        paidAt: (o.paidAt ?? new Date(0)).toISOString(),
-      })),
+      gmvCents: exactCents(row.gmv_cents, 'GMV'),
+      providerMarginCents: exactCents(row.provider_margin_cents, 'margin'),
+      platformFeeCents: exactCents(row.platform_fee_cents, 'processing fees'),
     }
     res.json(body)
   })
