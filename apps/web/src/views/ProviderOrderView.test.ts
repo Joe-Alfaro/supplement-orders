@@ -21,6 +21,7 @@ vi.mock('../api', async (importOriginal) => {
 const paid: ProviderOrderDetailDto = {
   id: 42,
   view: 'provider',
+  revision: 1,
   status: 'paid',
   patientId: 7,
   patientName: 'Jordan Lee',
@@ -391,5 +392,43 @@ describe('ProviderOrderView reopen', () => {
     ).toBeInTheDocument()
     expect(api.getOrder).toHaveBeenCalledTimes(2)
     expect(router.currentRoute.value.path).toBe('/orders/42')
+  })
+
+  it('shows the reconciliation message in the error banner when an action is blocked', async () => {
+    const user = userEvent.setup()
+    const reconciling =
+      'A payment for this order is being finalized. Try again shortly or contact support.'
+    const pending: ProviderOrderDetailDto = {
+      ...paid,
+      status: 'pending_payment',
+      paidAt: null,
+      payment: null,
+      ledger: [],
+    }
+    vi.mocked(api.getOrder).mockResolvedValue(pending)
+    vi.mocked(api.cancelOrder).mockRejectedValue(
+      new api.ApiRequestError(409, 'PAYMENT_NEEDS_RECONCILIATION', reconciling),
+    )
+    await renderWithRouter(ProviderOrderView, {
+      path: '/orders/42',
+      props: { orderId: '42' },
+    })
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Cancel order' }),
+    )
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Cancel order',
+    })
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Cancel order' }),
+    )
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(reconciling)
+    // The order is re-read and is still awaiting payment, not cancelled.
+    expect(api.getOrder).toHaveBeenCalledTimes(2)
+    expect(
+      screen.getByRole('button', { name: 'Cancel order' }),
+    ).toBeInTheDocument()
   })
 })

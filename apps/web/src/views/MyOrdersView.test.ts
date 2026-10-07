@@ -15,6 +15,7 @@ function order(id: number, providerName: string): PatientOrderSummaryDto {
   return {
     id,
     view: 'patient',
+    revision: 1,
     status: 'pending_payment',
     patientId: 1,
     patientName: 'Jordan Lee',

@@ -114,13 +114,13 @@ export function getOrder(orderId: number) {
   return request<OrderDetailDto>('GET', `/orders/${orderId}`)
 }
 
-/** Pays with the quote the patient saw (revision 9): its revision and total. */
-export function payOrder(orderId: number, options: PayOrderRequest) {
-  return request<PatientOrderDetailDto>(
-    'POST',
-    `/orders/${orderId}/pay`,
-    options,
-  )
+/**
+ * Pay the quote the patient saw (revision 9): `expectedRevision` and
+ * `expectedTotalCents` come from the displayed order. If it changed since, the
+ * server answers 409 ORDER_CHANGED and charges nothing.
+ */
+export function payOrder(orderId: number, body: PayOrderRequest) {
+  return request<PatientOrderDetailDto>('POST', `/orders/${orderId}/pay`, body)
 }
 
 export function getDashboard() {

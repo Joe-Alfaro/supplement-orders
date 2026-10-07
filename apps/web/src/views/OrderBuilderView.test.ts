@@ -81,6 +81,7 @@ function draftDetail(
   return {
     id: 99,
     view: 'provider',
+    revision: 0,
     status: 'draft',
     patientId: 7,
     patientName: 'Jordan Lee',
@@ -696,5 +697,48 @@ describe('OrderBuilderView patient and stock', () => {
       screen.getByRole('columnheader', { name: 'Processing fee (0.75%)' }),
     ).toBeInTheDocument()
     expect(document.body).not.toHaveTextContent(/Platform fee/i)
+  })
+
+  it('bounds quantity at 1000 and price at $10,000, in step 2 and in the table', async () => {
+    const user = userEvent.setup()
+    await renderBuilder()
+    await openAddProduct(user)
+    await chooseProduct(user, 'Omega-3')
+
+    // Step 2: both bounds are inline errors and block Add to order.
+    await fill(user, 'Qty', '1001')
+    expect(
+      screen.getByText('Enter a quantity of at most 1000'),
+    ).toBeInTheDocument()
+    await fill(user, 'Qty', '1')
+    await fill(user, 'Patient price (each)', '10000.01')
+    expect(
+      screen.getByText('Price can be at most $10,000.00'),
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Add to order' }))
+    expect(dialog()).toBeInTheDocument()
+
+    await fill(user, 'Patient price (each)', '10000')
+    await user.click(screen.getByRole('button', { name: 'Add to order' }))
+    await expectDialogClosed()
+    expect(sendButton()).toBeEnabled()
+
+    // Lines table: the same bounds, and Send stays off until they're met.
+    await fill(user, 'Qty Omega-3', '1001')
+    expect(
+      screen.getByRole('textbox', { name: 'Qty Omega-3' }),
+    ).toHaveAttribute('aria-invalid', 'true')
+    expect(
+      screen.getByText('Enter a quantity of at most 1000'),
+    ).toBeInTheDocument()
+    expect(sendButton()).toBeDisabled()
+    await fill(user, 'Qty Omega-3', '2')
+    await fill(user, 'Patient price (each) Omega-3', '10000.01')
+    expect(
+      screen.getByText('Price can be at most $10,000.00'),
+    ).toBeInTheDocument()
+    expect(sendButton()).toBeDisabled()
+    await fill(user, 'Patient price (each) Omega-3', '10000')
+    expect(sendButton()).toBeEnabled()
   })
 })
