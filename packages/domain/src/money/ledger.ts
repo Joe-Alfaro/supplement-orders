@@ -36,7 +36,17 @@ export function assertLedgerBalances(
     (entry) =>
       Number.isSafeInteger(entry.amountCents) && entry.amountCents >= 0,
   )
-  if (hasEachTypeOnce && amountsAreValid && actualCents === amountPaidCents) {
+  // With non-negative safe entries, Number addition is exact unless the true
+  // total passes MAX_SAFE_INTEGER, and then the rounded sum is at least 2 ** 53.
+  // Requiring a safe sum and a safe payment rules out a rounded match.
+  const totalIsExact =
+    Number.isSafeInteger(actualCents) && Number.isSafeInteger(amountPaidCents)
+  if (
+    hasEachTypeOnce &&
+    amountsAreValid &&
+    totalIsExact &&
+    actualCents === amountPaidCents
+  ) {
     return
   }
   throw new LedgerImbalanceError(amountPaidCents, actualCents)
