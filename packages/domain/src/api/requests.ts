@@ -86,6 +86,9 @@ export const listQuerySchema: z.ZodType<ParsedListQuery, ListQueryParams> =
 
 export const listProductsQuerySchema = listQuerySchema
 
+/** Revision 13: GET /api/admin/products; `q` matches the product name only. */
+export const listAdminProductsQuerySchema = listQuerySchema
+
 /** Patients list filter on each patient's most recent order (by created_at); `none` = no orders. */
 export const LATEST_ORDER_STATUS_FILTERS = ['none', ...ORDER_STATUSES] as const
 export type LatestOrderStatusFilter =
@@ -264,6 +267,41 @@ export const payOrderRequestSchema: z.ZodType<PayOrderRequest> = z.strictObject(
     expectedRevision: z.int().min(1).max(Number.MAX_SAFE_INTEGER),
     expectedTotalCents: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
     simulateFailure: z.boolean().optional(),
+  },
+)
+
+/** Revision 13: available stock is a whole number from 0 to this. */
+export const STOCK_QUANTITY_MAX = 1_000_000
+
+/**
+ * POST /api/admin/products/:id/stock/increment (admin only). Adds `by` in one
+ * atomic update, so concurrent increments never conflict. A result above
+ * STOCK_QUANTITY_MAX is a 400 VALIDATION_ERROR on `by` and changes nothing.
+ */
+export interface IncrementStockRequest {
+  by: number
+}
+
+export const incrementStockRequestSchema: z.ZodType<IncrementStockRequest> =
+  z.strictObject({ by: z.int().min(1).max(STOCK_QUANTITY_MAX) })
+
+/**
+ * PUT /api/admin/products/:id/stock (admin only), a compare-and-set: stock
+ * becomes `stockQuantity` only if it still equals `expectedStockQuantity`, the
+ * value the admin last loaded. Otherwise 409 STOCK_CHANGED carries
+ * `currentStockQuantity` and nothing changes.
+ */
+export interface SetStockRequest {
+  stockQuantity: number
+  expectedStockQuantity: number
+}
+
+const stockQuantity = z.int().min(0).max(STOCK_QUANTITY_MAX)
+
+export const setStockRequestSchema: z.ZodType<SetStockRequest> = z.strictObject(
+  {
+    stockQuantity,
+    expectedStockQuantity: stockQuantity,
   },
 )
 

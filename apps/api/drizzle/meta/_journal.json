@@ -78,6 +78,13 @@
       "when": 1791383096804,
       "tag": "0010_rev11b_ledger_db_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791387154455,
+      "tag": "0011_rev13_admin_inventory",
+      "breakpoints": true
     }
   ]
 }

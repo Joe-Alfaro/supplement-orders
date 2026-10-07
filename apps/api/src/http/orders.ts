@@ -24,7 +24,7 @@ import {
   loadPatientOrderDetail,
   loadProviderOrderDetail,
 } from '../orders/views'
-import { requireRole, type CurrentUser } from '../seams'
+import { requireAnyRole, requireRole, type CurrentUser } from '../seams'
 import type { AppContext } from '../server'
 import { forbidden, notFound } from './errors'
 import { parseId, parseOrThrow } from './validate'
@@ -46,7 +46,10 @@ export function ordersRouter(ctx: AppContext) {
   }
 
   router.get('/', async (req, res) => {
-    const user = await auth.getCurrentUser(req)
+    const user = requireAnyRole(await auth.getCurrentUser(req), [
+      'provider',
+      'patient',
+    ])
     const { patientId, status, offset, limit } = parseOrThrow(
       listOrdersQuerySchema,
       req.query,
@@ -83,7 +86,10 @@ export function ordersRouter(ctx: AppContext) {
   })
 
   router.get('/:id', async (req, res) => {
-    const user = await auth.getCurrentUser(req)
+    const user = requireAnyRole(await auth.getCurrentUser(req), [
+      'provider',
+      'patient',
+    ])
     const orderId = parseId(req.params.id)
     res.json(await loadOrderDetailFor(db, user, orderId, ctx.readHooks))
   })

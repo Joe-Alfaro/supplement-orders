@@ -6,8 +6,8 @@ import {
 } from '../testing/harness'
 import { seedIfEmpty, truncateAll } from './seed'
 
-// Named rows plus the bulk rows `db:seed` adds.
-const FULL_SEED = { users: 252, patients: 250, providers: 2, products: 300 }
+// Named rows (including revision 13's admin) plus the bulk rows `db:seed` adds.
+const FULL_SEED = { users: 253, patients: 250, providers: 2, products: 300 }
 
 let ctx: InternalTestContext
 
