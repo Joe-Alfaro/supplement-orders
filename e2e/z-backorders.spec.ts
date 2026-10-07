@@ -247,14 +247,23 @@ test('4. provider sends with low stock: warning, confirmation, then the patient 
   await dialog.getByLabel('Search products').fill('MAG-GLY')
   await dialog.getByRole('row', { name: 'MAG-GLY' }).click()
   await dialog.getByLabel('Qty').fill('5')
-  await expect(dialog.getByText(/Only 3 in stock/)).toBeVisible()
+  await expect(
+    dialog.getByText(
+      'More than the 3 in stock — the rest will be back-ordered.',
+    ),
+  ).toBeVisible()
+  await expect(dialog.getByLabel('Qty')).not.toHaveAttribute(
+    'aria-invalid',
+    'true',
+  )
   await dialog.getByRole('button', { name: 'Add to order' }).click()
   await expect(dialog).toBeHidden()
 
-  await test.step('the table warns, and saving is not blocked', async () => {
+  await test.step('one warning above Send, no per-line warnings, saving not blocked', async () => {
     await expect(
-      page.getByRole('list', { name: 'Order line warnings' }),
-    ).toContainText('Only 3 in stock')
+      page.getByText(/higher quantity than is currently in stock/),
+    ).toHaveCount(1)
+    await expect(page.getByText(/Only 3 in stock/)).toHaveCount(0)
     await page.getByRole('button', { name: 'Save draft' }).click()
     await expect(page.getByText('Draft saved')).toBeVisible()
   })
@@ -498,4 +507,41 @@ test('9. filters: Awaiting stock lists the back-order, and My orders tags both o
       table.getByRole('row').filter({ hasText: waitingTotal }),
     ).toContainText('Awaiting stock')
   })
+})
+
+test('10. a product with no stock can be picked in the dialog and added with one warning', async ({
+  page,
+  request,
+}) => {
+  await setStock(request, 'OMEGA', 0)
+  await switchTo(page, MAYA)
+  await page.getByRole('link', { name: 'Patients' }).click()
+  await page.getByLabel('Search by name or date of birth').fill(SAM)
+  await page.getByRole('row', { name: SAM }).click()
+  await page.getByRole('link', { name: 'New order' }).click()
+
+  await page.getByRole('button', { name: 'Add line' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('Search products').fill('OMEGA3')
+  const row = dialog.getByRole('row', { name: /OMEGA3/ })
+  await expect(row).toContainText('Out of stock')
+  await row.click()
+  await expect(
+    dialog.getByText(
+      'More than the 0 in stock — the rest will be back-ordered.',
+    ),
+  ).toBeVisible()
+  await dialog.getByRole('button', { name: 'Add to order' }).click()
+  await expect(dialog).toBeHidden()
+
+  await expect(page.getByRole('table', { name: 'Order lines' })).toContainText(
+    'Omega-3',
+  )
+  await expect(
+    page.getByText(/higher quantity than is currently in stock/),
+  ).toHaveCount(1)
+  await expect(page.getByRole('textbox', { name: /^Qty/ })).not.toHaveAttribute(
+    'aria-invalid',
+    'true',
+  )
 })

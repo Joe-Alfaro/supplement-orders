@@ -230,7 +230,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 **Simulated gateway failure off in production**
 
-- **Decision:** `NODE_ENV=production` on the deployed service, which disables the "Simulate gateway failure (dev only)" control.
+- **Decision:** `NODE_ENV=production` on the deployed service, which disables the API's `simulateFailure` pay option (the UI has no such control).
 - **Why:** a public URL shouldn't expose a test hook. The decline path is demonstrated locally and covered by tests.
 - **Tradeoff:** a decline can't be shown on the live demo.
 

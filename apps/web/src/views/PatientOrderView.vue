@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import type { PatientOrderDetailDto } from '@supplement-orders/domain'
 import Button from 'primevue/button'
-import Checkbox from 'primevue/checkbox'
 import Message from 'primevue/message'
 import { computed, onMounted, ref, watch } from 'vue'
 import { ApiRequestError, handleApiError, getOrder, payOrder } from '../api'
@@ -21,9 +20,6 @@ interface Props {
 }
 
 const props = defineProps<Props>()
-
-// The "Simulate gateway failure" toggle exists only in development builds.
-const isDev = import.meta.env.DEV
 
 const {
   data: order,
@@ -54,7 +50,6 @@ const payableNow = computed(() => order.value?.status === 'pending_payment')
 
 const paying = ref(false)
 const payError = ref<string | null>(null)
-const simulateFailure = ref(false)
 
 interface ChangedNotice {
   message: string
@@ -106,7 +101,6 @@ async function pay() {
       expectedTotalCents: partial
         ? (quote.value?.pay.totalCents ?? 0)
         : shown.totalCents,
-      ...(isDev && simulateFailure.value ? { simulateFailure: true } : {}),
     })
   } catch (err) {
     if (err instanceof ApiRequestError && STOCK_CODES.includes(err.code)) {
@@ -213,16 +207,6 @@ async function pay() {
     </div>
 
     <section v-if="payableNow" aria-label="Payment">
-      <div v-if="isDev" class="checkbox-field">
-        <Checkbox
-          v-model="simulateFailure"
-          input-id="simulate-failure"
-          binary
-        />
-        <label for="simulate-failure"
-          >Simulate gateway failure (dev only)</label
-        >
-      </div>
       <p>
         <Button
           :label="payLabel"

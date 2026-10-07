@@ -71,7 +71,7 @@ Authentication is stubbed. The `/login` dropdown lists every user in the databas
 
 A demo path: sign in as Dr. Maya Rivera, open Jordan Lee, click **New order**, add a product through **Add line**, set Markup % or Patient price, **Send to patient**. Sign out, sign in as Jordan Lee, open the order under My orders and click **Pay**. Sign back in as Dr. Rivera to see the order's ledger, find it under Orders, and check the dashboard. On the live demo, other visitors may have created orders too.
 
-In development builds the patient pay screen has a "Simulate gateway failure (dev only)" checkbox. A simulated decline records no payment and no ledger rows, and gives back the stock the attempt had reserved. The order stays payable; paying again starts a new attempt with a new idempotency key.
+The patient pay screen has no failure control. Outside production the API accepts `simulateFailure: true` on the pay request (the e2e test adds it to the request). A simulated decline records no payment and no ledger rows, and gives back the stock the attempt had reserved. The order stays payable; paying again starts a new attempt with a new idempotency key.
 
 ## Scripts
 
@@ -143,7 +143,7 @@ The app runs on [Railway](https://railway.com) as one service plus a Railway Pos
 Service variables:
 
 - `DATABASE_URL`: a reference to the Postgres service's private URL, `${{Postgres.DATABASE_URL}}`.
-- `NODE_ENV=production`: turns on static serving and turns off **Simulate gateway failure**. The decline path is demonstrated locally.
+- `NODE_ENV=production`: turns on static serving and turns off `simulateFailure` on the pay request. The decline path is demonstrated locally.
 - `PORT`: provided by Railway.
 
 Production static serving: hashed files under `/assets/` are cached for a year, a missing `/assets/` file is a plain 404, `index.html` is `no-cache`, and any other non-`/api` GET returns `index.html` so deep links such as `/orders?status=paid` work. Unknown `/api` routes still return a JSON 404.

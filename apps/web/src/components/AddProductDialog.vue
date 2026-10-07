@@ -10,6 +10,8 @@ import Dialog from 'primevue/dialog'
 import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
+import Message from 'primevue/message'
+import Tag from 'primevue/tag'
 import { computed, nextTick, ref, watch } from 'vue'
 import { searchProducts } from '../api'
 import {
@@ -56,7 +58,6 @@ const attempted = ref(false)
 
 function unavailableReason(product: ProductDto) {
   if (props.excludedProductIds.includes(product.id)) return 'Already added'
-  if (product.stockQuantity === 0) return 'Out of stock'
   return null
 }
 
@@ -109,11 +110,16 @@ const errorItems = computed<DialogError[]>(() => {
   return candidates.filter((item): item is DialogError => item !== null)
 })
 
-/** The error wins; otherwise a stock warning describes the field. */
+/** The error wins; otherwise the back-order note describes the field. */
 const qtyDescribedBy = computed(() => {
   if (pricing.value.errors.quantity) return 'add-product-qty-error'
   if (pricing.value.stockWarning) return 'add-product-qty-warning'
   return undefined
+})
+
+const stockNote = computed(() => {
+  if (!pricing.value.stockWarning) return null
+  return `More than the ${chosen.value?.stockQuantity ?? 0} in stock — the rest will be back-ordered.`
 })
 
 const title = computed(() => {
@@ -312,9 +318,16 @@ function addToOrder() {
           <Column field="stockQuantity" header="In stock" />
           <Column header="Status">
             <template #body="{ data }">
-              <span class="small" :data-testid="`product-status-${data.id}`">{{
-                unavailableReason(data)
-              }}</span>
+              <span class="small" :data-testid="`product-status-${data.id}`">
+                <template v-if="unavailableReason(data)">{{
+                  unavailableReason(data)
+                }}</template>
+                <Tag
+                  v-else-if="data.stockQuantity === 0"
+                  severity="secondary"
+                  value="Out of stock"
+                />
+              </span>
             </template>
           </Column>
         </DataTable>
@@ -423,9 +436,13 @@ function addToOrder() {
         </ul>
       </div>
       <div aria-live="polite" data-testid="add-product-warnings">
-        <ul v-if="pricing.stockWarning" class="warnings" aria-label="Warnings">
-          <li id="add-product-qty-warning">Qty - {{ pricing.stockWarning }}</li>
-        </ul>
+        <Message
+          v-if="stockNote"
+          id="add-product-qty-warning"
+          severity="warn"
+          size="small"
+          >{{ stockNote }}</Message
+        >
       </div>
       <p>
         Line total:

@@ -316,19 +316,6 @@ interface TableError {
 }
 
 /** One entry per problem across the lines, in line order; each id is its input's aria-describedby target. */
-const tableWarnings = computed<TableError[]>(() =>
-  evaluated.value.flatMap((row) =>
-    row.stockWarning
-      ? [
-          {
-            id: fieldId(row.line.key, 'qty-warning'),
-            text: `Qty (${row.product?.name ?? 'No product'}) - ${row.stockWarning}`,
-          },
-        ]
-      : [],
-  ),
-)
-
 const tableErrors = computed<TableError[]>(() =>
   evaluated.value.flatMap((row) => {
     const name = row.product?.name ?? 'No product'
@@ -361,10 +348,8 @@ function markupText(row: EvaluatedLine) {
   return normalizedMarkupInput(row.line.markupInput) || '—'
 }
 
-/** The error wins; otherwise a stock warning describes the Qty input. */
 function qtyDescribedBy(row: EvaluatedLine) {
   if (row.errors.quantity) return fieldId(row.line.key, 'qty-error')
-  if (row.stockWarning) return fieldId(row.line.key, 'qty-warning')
   return undefined
 }
 
@@ -520,17 +505,6 @@ function rowIndex(row: EvaluatedLine) {
         </li>
       </ul>
     </div>
-    <div aria-live="polite" data-testid="order-line-warnings">
-      <ul
-        v-if="tableWarnings.length"
-        class="warnings"
-        aria-label="Order line warnings"
-      >
-        <li v-for="item in tableWarnings" :id="item.id" :key="item.id">
-          {{ item.text }}
-        </li>
-      </ul>
-    </div>
     <p>
       <Button
         id="add-line"
@@ -557,6 +531,13 @@ function rowIndex(row: EvaluatedLine) {
       order and comes out of your margin.
     </p>
 
+    <div aria-live="polite" data-testid="low-stock-warning">
+      <Message v-if="lowStock.length" severity="warn">
+        Some items in this order have a higher quantity than is currently in
+        stock. The patient can pay for what's in stock now; the rest becomes a
+        back-order.
+      </Message>
+    </div>
     <div class="actions">
       <Button
         label="Save draft"

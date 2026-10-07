@@ -73,6 +73,13 @@ async function renderBuilder(orderId = 'new') {
   return view
 }
 
+const STOCK_MESSAGE =
+  "Some items in this order have a higher quantity than is currently in stock. The patient can pay for what's in stock now; the rest becomes a back-order."
+
+function stockMessage() {
+  return screen.queryByText(STOCK_MESSAGE)
+}
+
 function sendButton() {
   return screen.getByRole('button', { name: 'Send to patient' })
 }
@@ -404,12 +411,11 @@ describe('OrderBuilderView', () => {
     expect(items.map((item) => item.textContent)).toEqual([
       'Qty (Omega-3) - Enter a quantity of at most 1000',
     ])
-    // Over stock is a warning in its own list (revision 14), not an error.
+    // Over stock is not an error and has no per-line item (§4.10b).
+    expect(screen.queryByText(/Only 5 in stock/)).not.toBeInTheDocument()
     expect(
-      within(
-        screen.getByRole('list', { name: 'Order line warnings' }),
-      ).getByText('Qty (Magnesium) - Only 5 in stock'),
-    ).toBeInTheDocument()
+      screen.getByRole('textbox', { name: 'Qty Magnesium' }),
+    ).not.toHaveAttribute('aria-invalid', 'true')
     expect(screen.getByTestId('order-line-errors')).toHaveAttribute(
       'aria-live',
       'polite',
@@ -595,7 +601,7 @@ describe('Add-product modal', () => {
     expect(within(dialog()).getByText('Magnesium')).toBeInTheDocument()
   })
 
-  it('disables products already on the order and out-of-stock products', async () => {
+  it('disables only products already on the order; out-of-stock products can be added', async () => {
     const user = userEvent.setup()
     await renderBuilder()
     await addProduct(user, 'Vitamin D3')
@@ -609,15 +615,49 @@ describe('Add-product modal', () => {
     expect(added).toHaveClass('row-unavailable')
     expect(added).toHaveTextContent('Already added')
     const outOfStock = productRow('Zinc')
-    expect(outOfStock).toHaveClass('row-unavailable')
+    expect(outOfStock).not.toHaveClass('row-unavailable')
     expect(outOfStock).toHaveTextContent('Out of stock')
 
     await user.click(added)
-    outOfStock.focus()
-    await user.keyboard('{Enter}')
     expect(
       screen.getByRole('heading', { name: /choose a product/ }),
     ).toBeInTheDocument()
+
+    await user.click(outOfStock)
+    expect(
+      await screen.findByRole('heading', { name: 'Add Zinc' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Qty' })).not.toHaveAttribute(
+      'aria-invalid',
+      'true',
+    )
+    expect(
+      screen.getByText(
+        'More than the 0 in stock — the rest will be back-ordered.',
+      ),
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Add to order' }))
+    expect(screen.getByTestId('product-1')).toHaveTextContent('Zinc')
+    expect(stockMessage()).toBeInTheDocument()
+  })
+
+  it('shows one warning above Send only while a line exceeds stock', async () => {
+    const user = userEvent.setup()
+    await renderBuilder()
+    await addProduct(user, 'Magnesium')
+    expect(stockMessage()).not.toBeInTheDocument()
+
+    await fill(user, 'Qty Magnesium', '9')
+    expect(screen.getAllByText(STOCK_MESSAGE)).toHaveLength(1)
+    expect(
+      screen.getByRole('textbox', { name: 'Qty Magnesium' }),
+    ).not.toHaveAttribute('aria-invalid', 'true')
+    expect(
+      screen.getByRole('textbox', { name: 'Qty Magnesium' }),
+    ).not.toHaveAttribute('aria-describedby')
+
+    await fill(user, 'Qty Magnesium', '2')
+    expect(stockMessage()).not.toBeInTheDocument()
   })
 
   it('goes to step 2 on a row, and Back keeps the search', async () => {
@@ -823,9 +863,8 @@ describe('OrderBuilderView patient and stock', () => {
     expect(sendButton()).toBeEnabled()
 
     await fill(user, 'Qty Vitamin D3', '4')
-    expect(
-      screen.getByText('Qty (Vitamin D3) - Only 3 in stock'),
-    ).toBeInTheDocument()
+    expect(screen.queryByText(/Only 3 in stock/)).not.toBeInTheDocument()
+    expect(stockMessage()).toBeInTheDocument()
     expect(sendButton()).toBeEnabled()
   })
 

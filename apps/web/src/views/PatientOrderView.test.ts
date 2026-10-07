@@ -122,18 +122,12 @@ describe('PatientOrderView', () => {
     )
     const button = await openPayScreen()
 
-    await user.click(
-      screen.getByRole('checkbox', {
-        name: 'Simulate gateway failure (dev only)',
-      }),
-    )
     await user.click(button)
 
     expect(await screen.findByText(/Card declined/)).toBeInTheDocument()
     expect(api.payOrder).toHaveBeenCalledWith(42, {
       expectedRevision: 1,
       expectedTotalCents: 12000,
-      simulateFailure: true,
     })
     expect(screen.getByRole('button', { name: 'Pay $120.00' })).toBeEnabled()
     expect(
@@ -156,9 +150,6 @@ describe('PatientOrderView', () => {
     expect(screen.getByRole('rowheader', { name: 'Total' })).toBeInTheDocument()
     expect(
       screen.queryByRole('button', { name: /Pay/ }),
-    ).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole('checkbox', { name: /Simulate gateway failure/ }),
     ).not.toBeInTheDocument()
     expect(api.payOrder).not.toHaveBeenCalled()
   })

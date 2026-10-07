@@ -589,9 +589,6 @@ describe('accessibility', () => {
     })
     await screen.findByRole('button', { name: 'Pay $120.00' })
     const user = userEvent.setup()
-    await user.click(
-      screen.getByLabelText('Simulate gateway failure (dev only)'),
-    )
     await user.click(screen.getByRole('button', { name: 'Pay $120.00' }))
     await screen.findByText(/Card declined/)
     await expectAccessible(container)

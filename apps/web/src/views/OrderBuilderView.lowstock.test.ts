@@ -111,19 +111,19 @@ beforeEach(() => {
 })
 
 describe('OrderBuilderView low stock', () => {
-  it('lists an "Only N in stock" warning for an over-stock line, separate from errors', async () => {
+  it('shows one warning above Send instead of per-line warnings', async () => {
     await renderBuilder()
 
-    const warnings = screen.getByTestId('order-line-warnings')
     expect(
-      within(warnings).getByText('Qty (Magnesium) - Only 3 in stock'),
-    ).toBeInTheDocument()
-    expect(within(warnings).queryByText(/Vitamin D3/)).not.toBeInTheDocument()
+      screen.getAllByText(/higher quantity than is currently in stock/),
+    ).toHaveLength(1)
+    expect(screen.queryByText(/Only 3 in stock/)).not.toBeInTheDocument()
     expect(
-      within(screen.getByTestId('order-line-errors')).queryByText(
-        /Only 3 in stock/,
-      ),
+      screen.queryByRole('list', { name: 'Order line warnings' }),
     ).not.toBeInTheDocument()
+    const qty = screen.getByRole('textbox', { name: 'Qty Magnesium' })
+    expect(qty).not.toHaveAttribute('aria-invalid', 'true')
+    expect(qty).not.toHaveAttribute('aria-describedby')
     expect(
       screen.getByRole('button', { name: 'Send to patient' }),
     ).toBeEnabled()
@@ -226,7 +226,11 @@ describe('OrderBuilderView low stock', () => {
     await user.type(qty, '5')
 
     const warnings = screen.getByTestId('add-product-warnings')
-    expect(within(warnings).getByText(/Only 3 in stock/)).toBeInTheDocument()
+    expect(
+      within(warnings).getByText(
+        'More than the 3 in stock — the rest will be back-ordered.',
+      ),
+    ).toBeInTheDocument()
     expect(warnings).toHaveAttribute('aria-live', 'polite')
     // A warning is not an error: nothing is marked invalid and Add works.
     expect(qty).not.toHaveAttribute('aria-invalid', 'true')
@@ -234,8 +238,9 @@ describe('OrderBuilderView low stock', () => {
       screen.queryByRole('list', { name: 'Errors' }),
     ).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Add to order' }))
+    expect(screen.queryByText(/Only 3 in stock/)).not.toBeInTheDocument()
     expect(
-      screen.getByText('Qty (Magnesium) - Only 3 in stock'),
+      screen.getByText(/higher quantity than is currently in stock/),
     ).toBeInTheDocument()
   })
 })

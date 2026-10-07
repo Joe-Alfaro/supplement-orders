@@ -47,9 +47,13 @@ test('a simulated gateway failure leaves the order payable and the dashboard unc
     await expect(awaiting).toHaveCount(1)
     await awaiting.click()
 
-    await page
-      .getByRole('checkbox', { name: 'Simulate gateway failure (dev only)' })
-      .check()
+    // The pay screen has no failure control; force the decline on the request.
+    await page.route('**/api/orders/*/pay', async (route) => {
+      const body = route.request().postDataJSON() as Record<string, unknown>
+      await route.continue({
+        postData: JSON.stringify({ ...body, simulateFailure: true }),
+      })
+    })
     await page.getByRole('button', { name: /^Pay \$/ }).click()
 
     await expect(page.getByText(/Payment failed/)).toBeVisible()
