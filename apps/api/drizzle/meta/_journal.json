@@ -71,6 +71,13 @@
       "when": 1791334197981,
       "tag": "0009_rev10_execution_safe_payments",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791383096804,
+      "tag": "0010_rev11b_ledger_db_guard",
+      "breakpoints": true
     }
   ]
 }

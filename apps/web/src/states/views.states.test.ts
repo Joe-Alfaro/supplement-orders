@@ -244,9 +244,16 @@ const dashboard: DashboardDto = {
   gmvCents: 6951,
   providerMarginCents: 3499,
   platformFeeCents: 52,
+  range: {
+    preset: 'month',
+    from: '2026-10-01',
+    to: '2026-10-07',
+    timeZone: 'UTC',
+  },
 }
 
 const emptyDashboard: DashboardDto = {
+  ...dashboard,
   gmvCents: 0,
   providerMarginCents: 0,
   platformFeeCents: 0,

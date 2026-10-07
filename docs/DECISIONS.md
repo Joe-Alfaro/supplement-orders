@@ -16,7 +16,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 - **Decision:** each payment writes `cogs`, `provider_margin` and `platform_fee` entries. Their sum is asserted to equal the payment amount before insert, and the database has a unique `(payment_id, type)`.
 - **Why:** auditability is a requirement. A ledger makes "where did every cent go" a query, makes GMV and fees a `SUM`, and leaves room for refunds as new entries.
 - **Alternative:** split columns on `orders`.
-- **Tradeoff:** a little more schema. Immutability is enforced by the application, not by a trigger.
+- **Tradeoff:** a little more schema. Originally immutability was enforced only by the application; since revision 11b (migration `0010`), database triggers make `payments` and `ledger_entries` append-only and check at commit that each payment has exactly three entries, on its order, summing to its amount.
 
 **The fee is computed once, on the order subtotal**
 
@@ -264,8 +264,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 2. A reconciliation job or support tool for unresolved payment attempts (including `conflict`), backed by a real processor's lookup and webhooks.
 3. Refunds as negative ledger entries, and a payout report per provider.
 4. Real authentication and role-based access behind the existing `Auth` interface, with audit logging on PHI reads.
-5. A database trigger that makes `ledger_entries` append-only and checks each payment's entries sum to its amount.
-6. Rate limiting, structured logging with order and payment ids, and alerting on ledger imbalance or post-charge rollback.
-7. Date filters on the dashboard and a platform-level GMV and fee report.
-8. Remove the unused `lower(name)` indexes.
-9. An order events table, so reopen and cancel keep a full status history.
+5. Rate limiting, structured logging with order and payment ids, and alerting on ledger imbalance or post-charge rollback.
+6. Date filters on the dashboard and a platform-level GMV and fee report.
+7. Remove the unused `lower(name)` indexes.
+8. An order events table, so reopen and cancel keep a full status history.

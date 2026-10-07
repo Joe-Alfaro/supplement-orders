@@ -230,6 +230,12 @@ const dashboard: DashboardDto = {
   gmvCents: 6951,
   providerMarginCents: 3499,
   platformFeeCents: 52,
+  range: {
+    preset: 'month',
+    from: '2026-10-01',
+    to: '2026-10-07',
+    timeZone: 'UTC',
+  },
 }
 
 function productPage(query: ListQuery): ProductPageDto {
@@ -482,6 +488,21 @@ describe('accessibility', () => {
       })
     })
     await screen.findByText('Vitamin D3')
+    await expectAccessible(container)
+  })
+
+  it('dashboard date range control with the custom picker open', async () => {
+    const { container } = await renderWithRouter(DashboardView, {
+      path: '/dashboard',
+    })
+    await screen.findByText('GMV')
+    await screen.findByText('Vitamin D3')
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: 'Custom' }))
+    expect(
+      screen.getByRole('combobox', { name: 'Custom date range' }),
+    ).toBeInTheDocument()
     await expectAccessible(container)
   })
 

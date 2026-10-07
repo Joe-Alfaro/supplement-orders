@@ -745,10 +745,31 @@ describe('revision 9: payment integrity and hardening', () => {
     it('refuses to report a total beyond the exact cent range', async () => {
       const orderId = await sentAt(2000)
       await pay(ctx, orderId)
-      // Push the recorded payment past 2^53 directly; no API path can do this.
-      await ctx.db.execute(
-        sql`update payments set amount_cents = 9007199254740993 where order_id = ${orderId}`,
-      )
+      // A second, balanced paid order whose payment is past 2^53; no API path
+      // can create it. Payments are append-only (revision 11b), so it is
+      // written whole rather than by changing an existing payment. The amount
+      // stays text so JavaScript never rounds it.
+      const huge = '9007199254740993'
+      await ctx.db.transaction(async (tx) => {
+        const inserted = await tx.execute<{ id: number }>(sql`
+          insert into orders (provider_id, patient_id, status, subtotal_cents,
+            platform_fee_cents, total_cents, sent_at, paid_at, revision)
+          select provider_id, patient_id, 'paid', ${huge}::bigint, 0,
+            ${huge}::bigint, now(), now(), 1
+          from orders where id = ${orderId}
+          returning id`)
+        const bigOrder = inserted.rows[0]!.id
+        const payment = await tx.execute<{ id: number }>(sql`
+          insert into payments (order_id, amount_cents, idempotency_key, gateway_reference)
+          values (${bigOrder}, ${huge}::bigint, 'huge-order', 'ref-huge-order')
+          returning id`)
+        const paymentId = payment.rows[0]!.id
+        await tx.execute(sql`
+          insert into ledger_entries (order_id, payment_id, type, amount_cents) values
+            (${bigOrder}, ${paymentId}, 'cogs', ${huge}::bigint),
+            (${bigOrder}, ${paymentId}, 'provider_margin', 0),
+            (${bigOrder}, ${paymentId}, 'platform_fee', 0)`)
+      })
 
       const res = await ctx.request.get('/api/dashboard').set(provider())
 

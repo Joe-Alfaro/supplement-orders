@@ -356,23 +356,46 @@ export const patientOrderDetailDtoSchema: z.ZodType<PatientOrderDetailDto> =
   })
 
 /**
- * GET /api/dashboard (provider only). All-time values for the acting provider,
- * read from one database snapshot (revision 9). The paid-order list was removed;
- * use GET /api/orders?status=paid for it.
+ * The days a dashboard response covers, resolved by the server in `timeZone`
+ * (revision 11a-v2). `from` and `to` are inclusive YYYY-MM-DD, both null for
+ * `all`.
+ */
+export interface DashboardRangeDto {
+  preset: 'month' | 'last30' | 'all' | 'custom'
+  from: string | null
+  to: string | null
+  timeZone: string
+}
+
+/**
+ * GET /api/dashboard (provider only). Totals for the acting provider's orders
+ * paid inside `range`, read from one database snapshot (revision 9). The
+ * paid-order list was removed; use GET /api/orders?status=paid for it.
  */
 export interface DashboardDto {
-  /** SUM(payments.amountCents) over this provider's paid orders. */
+  /** SUM(payments.amountCents) over this provider's paid orders in range. */
   gmvCents: number
-  /** SUM of provider_margin ledger entries. */
+  /** SUM of provider_margin ledger entries in range. */
   providerMarginCents: number
-  /** SUM of platform_fee ledger entries. */
+  /** SUM of platform_fee ledger entries in range. */
   platformFeeCents: number
+  range: DashboardRangeDto
 }
+
+const dayString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+
+export const dashboardRangeDtoSchema: z.ZodType<DashboardRangeDto> = z.object({
+  preset: z.enum(['month', 'last30', 'all', 'custom']),
+  from: dayString.nullable(),
+  to: dayString.nullable(),
+  timeZone: z.string().min(1),
+})
 
 export const dashboardDtoSchema: z.ZodType<DashboardDto> = z.object({
   gmvCents: cents,
   providerMarginCents: cents,
   platformFeeCents: cents,
+  range: dashboardRangeDtoSchema,
 })
 
 export type ProductPageDto = Page<ProductDto>

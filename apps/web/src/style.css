@@ -230,6 +230,24 @@ input.price {
   margin-left: 1rem;
 }
 
+.range-control {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.range-custom {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.range-label {
+  margin: 0.5rem 0 0;
+}
+
 .tiles {
   display: flex;
   gap: 1rem;

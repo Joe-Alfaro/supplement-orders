@@ -85,7 +85,12 @@ Database constraints back the model:
 - Unique `payments.order_id`, unique `payments.idempotency_key`, unique `payments.payment_attempt_id`, unique `ledger_entries(payment_id, type)`.
 - `payment_attempts`: unique `idempotency_key`, unique `(order_id, revision, execution)`, `execution >= 1`, and a gateway reference exactly when the status is `succeeded`. Nothing in the database checks that a payment matches its attempt's order, amount or reference; the application does.
 
-Ledger immutability is enforced by the application: there is no update or delete path for `ledger_entries`. There is no database trigger preventing it.
+The ledger is also enforced by the database itself (revision 11b, migration `0010`), not only by the application:
+
+- **Append-only:** a `BEFORE UPDATE OR DELETE` row trigger on `payments` and on `ledger_entries` rejects any change with an integrity error (SQLSTATE `23000`). The application has no update or delete path for either table.
+- **Balanced at commit:** a `DEFERRABLE INITIALLY DEFERRED` constraint trigger fires after every insert into either table. At commit, the payment must have exactly one `cogs`, one `provider_margin` and one `platform_fee` entry, all on the payment's order, summing exactly to `payments.amount_cents`. A payment without its entries fails at commit. Deferring the check lets the pay transaction write the payment first and its entries after.
+- **If the application ever trips either trigger**, that is a bug: the pay transaction rolls back and the request returns 500.
+- **Resets** in tests, e2e and `db:seed` use `TRUNCATE`, which doesn't fire row triggers. Production data is never reset.
 
 ## 5. Money model
 
@@ -166,7 +171,7 @@ Shipping isn't modeled; the patient's address is a plain string.
 - **GMV** is the sum of `payments.amount_cents` for the provider's paid orders: what patients actually paid.
 - **Margin earned** and **processing fees** are sums of the `provider_margin` and `platform_fee` ledger entries.
 
-The dashboard tiles read the audited rows rather than recomputing anything, all three in one SQL statement so they describe one snapshot, and an aggregate beyond `Number.MAX_SAFE_INTEGER` is a 500 rather than a rounded number. Cancelled and unpaid orders contribute nothing because they have no payment or ledger rows. GMV counts finalized payments: a charge that succeeded at the gateway but hasn't been finalized yet is missing until a retried pay records it. There's no date filter in the UI; the queries are a `WHERE` clause away from one. Platform-wide fee revenue is a `SUM` over `platform_fee` entries, but it isn't exposed anywhere because there's no admin persona.
+The dashboard tiles read the audited rows rather than recomputing anything, all three in one SQL statement so they describe one snapshot, and an aggregate beyond `Number.MAX_SAFE_INTEGER` is a 500 rather than a rounded number. Cancelled and unpaid orders contribute nothing because they have no payment or ledger rows. GMV counts finalized payments: a charge that succeeded at the gateway but hasn't been finalized yet is missing until a retried pay records it. The API takes `range` (`month` by default, `last30`, `all` or `custom`), `from`/`to` calendar days (inclusive, `custom` only, at most 366 days) and `tz` (an IANA zone, UTC by default). The server resolves the range to days relative to today in `tz` (`month` is the 1st through today, `last30` is today and the 29 days before) and filters all three totals on `orders.paid_at` inside that same statement, over `[local midnight of the first day, local midnight of the day after the last)`, which Postgres computes so a 23- or 25-hour DST day is exact. The response echoes the resolved `range` (`preset`, `from`, `to`, `timeZone`; days are null for `all`) so the client only displays it. Invalid input is a 400 `VALIDATION_ERROR` naming the field. Inventory is not date-filtered. Platform-wide fee revenue is a `SUM` over `platform_fee` entries, but it isn't exposed anywhere because there's no admin persona.
 
 ## 9. API
 
@@ -189,7 +194,7 @@ Every endpoint except `/api/health` and `/api/users` requires `X-User-Id`. Appli
 | `POST /api/orders/:id/cancel`                       | provider | Cancel an order awaiting payment                                                                                                                                                                                                                                                                            |
 | `POST /api/orders/:id/reopen`                       | provider | Return a cancelled order to draft                                                                                                                                                                                                                                                                           |
 | `DELETE /api/orders/:id`                            | provider | Permanently delete a draft (204)                                                                                                                                                                                                                                                                            |
-| `GET /api/dashboard`                                | provider | GMV, margin and fees                                                                                                                                                                                                                                                                                        |
+| `GET /api/dashboard`                                | provider | GMV, margin and fees for orders paid in a range: `range=month\|last30\|all\|custom` (default `month`), `from`/`to` as `YYYY-MM-DD` for `custom` only, `tz` IANA zone (default `UTC`); returns the totals plus the resolved `range`                                                                          |
 
 Status codes: 400 `VALIDATION_ERROR`, 401 `UNAUTHENTICATED`, 403 `FORBIDDEN` (wrong persona or someone else's resource), 404 `NOT_FOUND`, 409 wrong order status (`ORDER_NOT_DRAFT`, `ORDER_NOT_PAYABLE`, `ORDER_NOT_CANCELLABLE`, `ORDER_NOT_REOPENABLE`), 409 `ORDER_CHANGED` (pay named a revision or total that's no longer current), 409 `PAYMENT_NEEDS_RECONCILIATION` (an unresolved payment attempt blocks the action), 422 business rules (`EMPTY_ORDER`, `INCOMPLETE_LINE`, `PRICE_BELOW_MINIMUM`, `INSUFFICIENT_STOCK`, `DUPLICATE_PRODUCT`, `UNKNOWN_PRODUCT`, and the other split codes), 402 `PAYMENT_FAILED`, and 500 `INTERNAL` for an unexpected failure, including a sent order whose lines no longer reproduce the stored total.
 
@@ -219,6 +224,7 @@ Migrations, all in `apps/api/drizzle/`:
 | `0007`    | Revision 9: `orders.revision`, the `payment_attempts` table, `payments.payment_attempt_id`                                                                 |
 | `0008`    | Revision 9: `payment_attempts.stock_held`, for stock reserved by an attempt                                                                                |
 | `0009`    | Revision 10: `fake_gateway_charges`, attempt executions and the `declined`/`conflict` statuses; seeds the fake gateway with the successes already recorded |
+| `0010`    | Revision 11b: append-only triggers on `payments` and `ledger_entries`, and a deferred check that each payment's three entries balance at commit            |
 
 ## 11. Front end
 
@@ -259,7 +265,6 @@ The app is deployed at <https://web-production-b7c8c.up.railway.app>. That deplo
 - **Provider payouts:** the ledger says what each provider is owed; actually moving money is a separate system.
 - **Payment reconciliation:** an unresolved attempt is only resolved when the patient pays again, and a `conflict` not even then. A real integration needs a reconciliation job or support tool that looks up unresolved attempts with the processor and finalizes or releases them, plus the processor's webhooks. Releasing stock on a timeout alone would be wrong while the outcome is unknown. The fake gateway shares the app's database for convenience; a real processor's store is its own.
 - **Real auth and RBAC:** replace `HeaderAuth` with real authentication behind the same interface. Date of birth and address are PHI, so access to them needs HIPAA-grade access controls and audit logging.
-- **Database-level ledger guarantees:** a trigger or deferred constraint that rejects updates and deletes on `ledger_entries` and checks that each payment's entries sum to its amount.
 - **Rate limiting** on the API, especially pay and search.
 - **Observability:** structured logs with order and payment ids, metrics on pay latency and gateway declines, and alerting on any `LedgerImbalanceError` or post-charge rollback.
 - **Cleanup:** the old `lower(name)` btree indexes are unused and could be dropped.
