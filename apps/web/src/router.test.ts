@@ -41,7 +41,7 @@ describe('draft order routes', () => {
     const created = await resolve('/patients/7/orders/new')
     const saved = await resolve('/patients/7/orders/42')
 
-    expect(created.matched[0].path).toBe(saved.matched[0].path)
-    expect(created.matched[0].path).toContain(':orderId')
+    expect(created.matched[0]?.path).toBe(saved.matched[0]?.path)
+    expect(created.matched[0]?.path).toContain(':orderId')
   })
 })

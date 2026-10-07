@@ -183,8 +183,7 @@ async function perform(chosen: OrderAction, current: ProviderOrderDetailDto) {
     </dl>
 
     <p v-if="order.status === 'draft'">
-      <RouterLink
-        :to="`/patients/${order.patientId}/orders/${order.id}`"
+      <RouterLink :to="`/patients/${order.patientId}/orders/${order.id}`"
         >Edit draft</RouterLink
       >
     </p>

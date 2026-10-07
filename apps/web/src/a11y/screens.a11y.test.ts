@@ -278,7 +278,7 @@ beforeEach(async () => {
 async function renderBuilder() {
   const view = await renderWithRouter(OrderBuilderView, {
     path: '/patients/7/orders/new',
-    props: { patientId: '7' },
+    props: { patientId: '7', orderId: 'new' },
   })
   await screen.findByRole('heading', { name: /New order/ })
   return view

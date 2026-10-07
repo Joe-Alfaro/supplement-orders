@@ -356,9 +356,7 @@ describe('ProviderOrderView reopen', () => {
     )
 
     await vi.waitFor(() =>
-      expect(router.currentRoute.value.fullPath).toBe(
-        '/patients/7/orders/42',
-      ),
+      expect(router.currentRoute.value.fullPath).toBe('/patients/7/orders/42'),
     )
     expect(api.reopenOrder).toHaveBeenCalledTimes(1)
     expect(api.reopenOrder).toHaveBeenCalledWith(42)
