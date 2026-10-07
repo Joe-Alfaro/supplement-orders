@@ -129,7 +129,7 @@ const PROVIDER_DETAIL_KEYS = [
   'patientAddress',
   'lines',
   'payment',
-  'quote',
+  'partialPaymentQuote',
   'ledger',
 ]
 
@@ -150,6 +150,8 @@ const PROVIDER_LINE_KEYS = [
   'lineTotalCents',
   'lineId',
   'availableQuantity',
+  'payableQuantity',
+  'shortQuantity',
   'unitCogsCents',
   'markupBps',
   'minUnitPriceCents',

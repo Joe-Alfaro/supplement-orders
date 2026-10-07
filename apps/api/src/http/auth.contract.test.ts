@@ -75,7 +75,7 @@ const PATIENT_DETAIL_KEYS = [
   'patientAddress',
   'lines',
   'payment',
-  'quote',
+  'partialPaymentQuote',
 ]
 
 const SPLIT_KEYS = [
@@ -92,7 +92,7 @@ const PROVIDER_DETAIL_KEYS = [
   'patientAddress',
   'lines',
   'payment',
-  'quote',
+  'partialPaymentQuote',
   'ledger',
 ]
 
@@ -105,6 +105,8 @@ const PROVIDER_LINE_KEYS = [
   'lineTotalCents',
   'lineId',
   'availableQuantity',
+  'payableQuantity',
+  'shortQuantity',
   'unitCogsCents',
   'markupBps',
   'minUnitPriceCents',
@@ -120,6 +122,8 @@ const PATIENT_LINE_KEYS = [
   'lineTotalCents',
   'lineId',
   'availableQuantity',
+  'payableQuantity',
+  'shortQuantity',
 ]
 
 const PAYMENT_KEYS = ['id', 'amountCents', 'reference', 'createdAt']

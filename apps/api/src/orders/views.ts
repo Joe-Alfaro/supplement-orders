@@ -223,13 +223,6 @@ function summaryBase(order: OrderRow) {
   }
 }
 
-/** A draft or an order awaiting payment or stock: stock still matters to it. */
-function isOpen(order: OrderRow) {
-  return (
-    order.storedStatus === 'draft' || order.storedStatus === 'pending_payment'
-  )
-}
-
 /**
  * Revision 14: what a pay can charge now, from live stock, while the order
  * awaits payment or stock; null otherwise. The same plan the pay makes, minus
@@ -316,7 +309,7 @@ function derived(compute: () => number | null): number | null {
   }
 }
 
-function providerLine(order: OrderRow, l: LineRow): ProviderOrderLineDto {
+function providerLine(l: LineRow): ProviderOrderLineDto {
   const { unitCogsCents, unitPriceCents } = l
   return {
     lineId: l.lineId,
@@ -336,7 +329,7 @@ function providerLine(order: OrderRow, l: LineRow): ProviderOrderLineDto {
         : derived(() => markupBpsFromPrice(unitCogsCents, unitPriceCents)),
     stockQuantity: l.stockQuantity,
     availableQuantity: l.stockQuantity,
-    ...lineAvailability(l, isOpen(order)),
+    ...lineAvailability(l, true),
     minUnitPriceCents:
       unitCogsCents === null
         ? null
@@ -472,7 +465,7 @@ async function readProviderOrderDetail(
     ...providerSummary(order, lines),
     patientDateOfBirth: order.patientDateOfBirth,
     patientAddress: order.patientAddress,
-    lines: lines.map((line) => providerLine(order, line)),
+    lines: lines.map(providerLine),
     payment,
     ledger,
     partialPaymentQuote: quoteFor(order, lines, 'provider'),

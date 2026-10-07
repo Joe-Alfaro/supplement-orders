@@ -63,7 +63,7 @@ const PROVIDER_DETAIL_KEYS = [
   'patientAddress',
   'lines',
   'payment',
-  'quote',
+  'partialPaymentQuote',
   'ledger',
 ]
 
@@ -72,7 +72,7 @@ const PATIENT_DETAIL_KEYS = [
   'patientAddress',
   'lines',
   'payment',
-  'quote',
+  'partialPaymentQuote',
 ]
 
 const DASHBOARD_KEYS = [

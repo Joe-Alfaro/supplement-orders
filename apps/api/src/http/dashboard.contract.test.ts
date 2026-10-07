@@ -45,7 +45,7 @@ const PROVIDER_DETAIL_KEYS = [
   'patientAddress',
   'lines',
   'payment',
-  'quote',
+  'partialPaymentQuote',
   'ledger',
 ]
 

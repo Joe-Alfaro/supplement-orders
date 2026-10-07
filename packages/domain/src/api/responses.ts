@@ -271,9 +271,9 @@ export interface ProviderOrderLineDto {
    * draft never checks stock; send asks for an acknowledgement instead.
    */
   availableQuantity: number | null
-  /** min(quantity, availableQuantity) for a draft or an order awaiting payment or stock, with a product; else null. */
+  /** min(quantity, availableQuantity) from live stock; null without a product. */
   payableQuantity: number | null
-  /** quantity - payableQuantity, under the same conditions; else null. */
+  /** quantity - payableQuantity; null without a product. */
   shortQuantity: number | null
 }
 
