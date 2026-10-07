@@ -55,6 +55,11 @@ export interface InternalTestContext extends TestContext {
    * carried over. Replaces `request` and `gateway`; pay hooks are cleared.
    */
   restart(): void
+  /**
+   * The app's "now" for the dashboard range (revision 11a-v2). Null, the
+   * default, means the real clock; reset() clears it.
+   */
+  clock?: { now: Date | null }
 }
 
 /** This checkout's root; its path keys the test database when no session id is set. */
@@ -95,6 +100,8 @@ export async function createInternalTestContext(
   const notifier = new RecordingNotifier()
   const payHooks: PayHooks = {}
   const readHooks: ReadHooks = {}
+  const clock: { now: Date | null } = { now: null }
+  const now = () => clock.now ?? new Date()
   const gateway = new FakePaymentGateway(db)
   const app = createApp({
     db,
@@ -104,6 +111,7 @@ export async function createInternalTestContext(
     nodeEnv: options.nodeEnv ?? 'test',
     payHooks,
     readHooks,
+    now,
   })
 
   async function reseed() {
@@ -119,6 +127,7 @@ export async function createInternalTestContext(
     notifier,
     payHooks,
     readHooks,
+    clock,
     restart() {
       delete payHooks.afterLedgerInsert
       delete readHooks.afterOrderHeader
@@ -132,12 +141,14 @@ export async function createInternalTestContext(
           nodeEnv: options.nodeEnv ?? 'test',
           payHooks,
           readHooks,
+          now,
         }),
       )
     },
     async reset() {
       ctx.seed = await reseed()
       ctx.gateway.reset()
+      clock.now = null
       notifier.sent.length = 0
       notifier.cancelled.length = 0
       delete payHooks.afterLedgerInsert

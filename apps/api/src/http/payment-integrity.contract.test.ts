@@ -69,7 +69,12 @@ const PATIENT_DETAIL_KEYS = [
   'payment',
 ]
 
-const DASHBOARD_KEYS = ['gmvCents', 'providerMarginCents', 'platformFeeCents']
+const DASHBOARD_KEYS = [
+  'gmvCents',
+  'providerMarginCents',
+  'platformFeeCents',
+  'range',
+]
 
 interface ContextHolder {
   ctx?: TestContext

@@ -161,7 +161,12 @@ const AWAITING_KEYS = [
   'cancelledAt',
 ]
 
-const DASHBOARD_KEYS = ['gmvCents', 'providerMarginCents', 'platformFeeCents']
+const DASHBOARD_KEYS = [
+  'gmvCents',
+  'providerMarginCents',
+  'platformFeeCents',
+  'range',
+]
 
 interface ContextHolder {
   ctx?: TestContext
