@@ -52,6 +52,18 @@ export interface PaymentGateway {
 
 const DECLINE_MESSAGE = 'Card declined (simulated gateway failure)'
 
+/**
+ * The database a FakePaymentGateway constructed without one uses. The test
+ * harness registers its database here, so a freshly constructed gateway
+ * (`new FakePaymentGateway()`, as after a restart) reaches the same durable
+ * store, like a second process talking to the same external processor.
+ */
+const fakeGatewayHome: { db: Db | null } = { db: null }
+
+export function useFakeGatewayDatabase(db: Db) {
+  fakeGatewayHome.db = db
+}
+
 type StoredCharge = typeof fakeGatewayCharges.$inferSelect
 
 function asResult(stored: StoredCharge): ChargeResult {
@@ -84,7 +96,17 @@ export class FakePaymentGateway implements PaymentGateway {
   /** Every charge call, in order (for tests); lookups are not charges. */
   readonly charges: ChargeRequest[] = []
 
-  constructor(private readonly db: Db) {}
+  constructor(private readonly explicitDb?: Db) {}
+
+  private get db(): Db {
+    const db = this.explicitDb ?? fakeGatewayHome.db
+    if (!db) {
+      throw new Error(
+        'FakePaymentGateway needs a database: pass one or call useFakeGatewayDatabase',
+      )
+    }
+    return db
+  }
 
   /** Clears the in-process call log; the durable store is the test's to truncate. */
   reset() {

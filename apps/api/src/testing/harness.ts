@@ -4,7 +4,11 @@ import { createDb, type Db } from '../db/client'
 import { ensureDatabase, testDatabaseUrl } from '../db/databases'
 import { runMigrations } from '../db/migrate'
 import { seedDatabase, truncateAll, type SeedResult } from '../db/seed'
-import { FakePaymentGateway, RecordingNotifier } from '../seams'
+import {
+  FakePaymentGateway,
+  RecordingNotifier,
+  useFakeGatewayDatabase,
+} from '../seams'
 import { createApp, type PayHooks } from '../server'
 
 // Contract: notes/DOMAIN_CONTRACT.md "API test harness". Black-box HTTP tests use
@@ -40,12 +44,6 @@ export interface InternalTestContext extends TestContext {
   notifier: RecordingNotifier
   /** Mutable: assign hooks in a test; reset() clears them. */
   payHooks: PayHooks
-  /**
-   * Simulates a process restart (revision 10, N2): a freshly constructed
-   * gateway and app against the same database, with no in-process state
-   * carried over. Replaces `request` and `gateway`; hooks are cleared.
-   */
-  restart(): void
 }
 
 /** This checkout's root; its path keys the test database when no session id is set. */
@@ -81,19 +79,19 @@ export async function createInternalTestContext(
   const { db, pool, ping } = createDb(url)
   await runMigrations(db)
 
+  // A gateway constructed without a database (as after a restart) uses this one.
+  useFakeGatewayDatabase(db)
   const notifier = new RecordingNotifier()
   const payHooks: PayHooks = {}
-  function buildApp(gateway: FakePaymentGateway) {
-    return createApp({
-      db,
-      gateway,
-      notifier,
-      pingDb: ping,
-      nodeEnv: options.nodeEnv ?? 'test',
-      payHooks,
-    })
-  }
   const gateway = new FakePaymentGateway(db)
+  const app = createApp({
+    db,
+    gateway,
+    notifier,
+    pingDb: ping,
+    nodeEnv: options.nodeEnv ?? 'test',
+    payHooks,
+  })
 
   async function reseed() {
     await truncateAll(db)
@@ -101,17 +99,12 @@ export async function createInternalTestContext(
   }
 
   const ctx: InternalTestContext = {
-    request: supertest(buildApp(gateway)),
+    request: supertest(app),
     seed: await reseed(),
     db,
     gateway,
     notifier,
     payHooks,
-    restart() {
-      ctx.gateway = new FakePaymentGateway(db)
-      ctx.request = supertest(buildApp(ctx.gateway))
-      delete payHooks.afterLedgerInsert
-    },
     async reset() {
       ctx.seed = await reseed()
       ctx.gateway.reset()
@@ -124,6 +117,26 @@ export async function createInternalTestContext(
     },
   }
   return ctx
+}
+
+/**
+ * Simulates a process restart (revision 10, N2): a freshly constructed gateway
+ * and app against the same database, with no in-process state carried over.
+ * Replaces the context's `request` and `gateway` and clears its pay hooks.
+ */
+export function restartContext(ctx: InternalTestContext, nodeEnv = 'test') {
+  delete ctx.payHooks.afterLedgerInsert
+  ctx.gateway = new FakePaymentGateway(ctx.db)
+  ctx.request = supertest(
+    createApp({
+      db: ctx.db,
+      gateway: ctx.gateway,
+      notifier: ctx.notifier,
+      pingDb: async () => {},
+      nodeEnv,
+      payHooks: ctx.payHooks,
+    }),
+  )
 }
 
 export async function createTestContext(): Promise<TestContext> {

@@ -28,6 +28,7 @@ import {
 } from '../testing/flows'
 import {
   createInternalTestContext,
+  restartContext,
   type InternalTestContext,
 } from '../testing/harness'
 
@@ -470,7 +471,7 @@ describe('revision 9: payment integrity and hardening', () => {
       }
       expect((await pay(ctx, orderId)).status).toBe(500)
 
-      ctx.restart()
+      restartContext(ctx)
       const retry = await pay(ctx, orderId)
 
       expect(retry.status).toBe(200)
@@ -492,7 +493,7 @@ describe('revision 9: payment integrity and hardening', () => {
       expect((await pay(ctx, orderId)).status).toBe(500)
       expect((await attemptsFor(orderId))[0]?.status).toBe('pending')
 
-      ctx.restart()
+      restartContext(ctx)
       const retry = await pay(ctx, orderId)
 
       expect(retry.status).toBe(200)
@@ -509,7 +510,7 @@ describe('revision 9: payment integrity and hardening', () => {
       expect((await pay(ctx, orderId)).status).toBe(500)
       expect((await chargesAndPayments()).charged).toEqual([])
 
-      ctx.restart()
+      restartContext(ctx)
       const retry = await pay(ctx, orderId)
 
       expect(retry.status).toBe(200)
