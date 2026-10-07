@@ -30,6 +30,11 @@ export function listUsers() {
   return request<UserDto[]>('GET', '/users')
 }
 
+/** The curated login list, already in display order. */
+export function listSignInOptions() {
+  return request<UserDto[]>('GET', '/users/sign-in-options')
+}
+
 /** Query string for a paged list; empty values are omitted. */
 function listQueryString(query: ListQuery) {
   const params = new URLSearchParams()

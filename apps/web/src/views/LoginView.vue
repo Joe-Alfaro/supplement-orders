@@ -2,20 +2,23 @@
 import Button from 'primevue/button'
 import Message from 'primevue/message'
 import Select from 'primevue/select'
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { accessibleSelectPt } from '../primevue'
 import { useRouter } from 'vue-router'
 import { ErrorBanner } from '../components'
 import { homePathFor, useCurrentUser, userOptions } from '../user'
 
 const router = useRouter()
-const { users, loadError, ensureUsersLoaded, signIn } = useCurrentUser()
+const { signInOptions, loadError, ensureSignInOptionsLoaded, signIn } =
+  useCurrentUser()
 const selectedId = ref<number | null>(null)
 
-const options = computed(() => userOptions(users.value))
+const options = computed(() => userOptions(signInOptions.value))
+
+onMounted(ensureSignInOptionsLoaded)
 
 async function submit() {
-  const user = users.value.find(
+  const user = signInOptions.value.find(
     (candidate) => candidate.id === selectedId.value,
   )
   if (!user) return
@@ -34,7 +37,7 @@ async function submit() {
       v-if="loadError"
       :message="`Could not load users: ${loadError}`"
       retryable
-      @retry="ensureUsersLoaded"
+      @retry="ensureSignInOptionsLoaded"
     />
     <form class="login-form" @submit.prevent="submit">
       <div class="field">
@@ -47,8 +50,6 @@ async function submit() {
           option-label="label"
           option-value="id"
           placeholder="Choose a user…"
-          filter
-          filter-placeholder="Search users"
           append-to="self"
           :pt="accessibleSelectPt"
           fluid

@@ -15,6 +15,7 @@ vi.mock('../api', async (importOriginal) => {
   return {
     ...actual,
     listUsers: vi.fn(),
+    listSignInOptions: vi.fn(),
     searchPatients: vi.fn(),
     listOrders: vi.fn(),
     searchAdminProducts: vi.fn(),
@@ -56,6 +57,7 @@ async function startApp(path: string) {
 
 beforeEach(() => {
   vi.mocked(api.listUsers).mockResolvedValue(users)
+  vi.mocked(api.listSignInOptions).mockResolvedValue(users)
   vi.mocked(api.searchPatients).mockResolvedValue({
     items: [],
     total: 0,
