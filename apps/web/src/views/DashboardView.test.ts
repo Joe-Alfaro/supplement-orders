@@ -1,9 +1,8 @@
-import type { ProductDto, ProductPageDto } from '@supplement-orders/domain'
+import type { DashboardDto, ProductDto, ProductPageDto } from '@supplement-orders/domain'
 import { screen, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
-import type { DashboardResponse } from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
 import DashboardView from './DashboardView.vue'
 
@@ -12,7 +11,7 @@ vi.mock('../api', async (importOriginal) => {
   return { ...actual, getDashboard: vi.fn(), searchProducts: vi.fn() }
 })
 
-const dashboard: DashboardResponse = {
+const dashboard: DashboardDto = {
   gmvCents: 6951,
   providerMarginCents: 3499,
   platformFeeCents: 52,
@@ -28,10 +27,10 @@ const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
 
 /** What the server resolved for a preset, so the label can be rendered. */
 function resolved(
-  preset: DashboardResponse['range']['preset'],
+  preset: DashboardDto['range']['preset'],
   from: string | null,
   to: string | null,
-): DashboardResponse {
+): DashboardDto {
   return {
     ...dashboard,
     range: { preset, from, to, timeZone: tz },
@@ -569,9 +568,9 @@ describe('DashboardView date range', () => {
     const user = userEvent.setup()
     await renderWithRouter(DashboardView, { path: '/dashboard' })
     await screen.findByText('$69.51')
-    let resolve: (value: DashboardResponse) => void = () => {}
+    let resolve: (value: DashboardDto) => void = () => {}
     vi.mocked(api.getDashboard).mockReturnValueOnce(
-      new Promise<DashboardResponse>((done) => {
+      new Promise<DashboardDto>((done) => {
         resolve = done
       }),
     )
@@ -609,10 +608,10 @@ describe('DashboardView date range', () => {
     const user = userEvent.setup()
     await renderWithRouter(DashboardView, { path: '/dashboard' })
     await screen.findByText('$69.51')
-    let resolveSlow: (value: DashboardResponse) => void = () => {}
+    let resolveSlow: (value: DashboardDto) => void = () => {}
     vi.mocked(api.getDashboard)
       .mockReturnValueOnce(
-        new Promise<DashboardResponse>((done) => {
+        new Promise<DashboardDto>((done) => {
           resolveSlow = done
         }),
       )

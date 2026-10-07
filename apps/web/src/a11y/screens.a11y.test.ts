@@ -1,4 +1,5 @@
 import type {
+  DashboardDto,
   ListQuery,
   PatientDto,
   PatientOrderDetailDto,
@@ -15,7 +16,6 @@ import userEvent from '@testing-library/user-event'
 import type { UserEvent } from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
-import type { DashboardResponse } from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
 import { useCurrentUser } from '../user'
 import DashboardView from '../views/DashboardView.vue'
@@ -226,7 +226,7 @@ const myOrders: PatientOrderSummaryDto[] = [
   },
 ]
 
-const dashboard: DashboardResponse = {
+const dashboard: DashboardDto = {
   gmvCents: 6951,
   providerMarginCents: 3499,
   platformFeeCents: 52,

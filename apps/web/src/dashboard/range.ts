@@ -1,5 +1,6 @@
 import type { LocationQuery } from 'vue-router'
-import type { DashboardParams, DashboardRangeDto } from '../api'
+import type { DashboardRangeDto } from '@supplement-orders/domain'
+import type { DashboardParams } from '../api'
 
 // The dashboard range lives in the URL exactly as the API takes it
 // (DOMAIN_CONTRACT 11a-v2). The server resolves "this month", "last 30 days"

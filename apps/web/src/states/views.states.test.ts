@@ -1,4 +1,5 @@
 import type {
+  DashboardDto,
   PatientDto,
   PatientOrderDetailDto,
   PatientOrderSummaryDto,
@@ -15,7 +16,6 @@ import PrimeVue from 'primevue/config'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory } from 'vue-router'
 import * as api from '../api'
-import type { DashboardResponse } from '../api'
 import App from '../App.vue'
 import { primeVueOptions } from '../primevue'
 import { createAppRouter } from '../router'
@@ -240,7 +240,7 @@ const myOrder: PatientOrderSummaryDto = {
   totalCents: 12000,
 }
 
-const dashboard: DashboardResponse = {
+const dashboard: DashboardDto = {
   gmvCents: 6951,
   providerMarginCents: 3499,
   platformFeeCents: 52,
@@ -252,7 +252,7 @@ const dashboard: DashboardResponse = {
   },
 }
 
-const emptyDashboard: DashboardResponse = {
+const emptyDashboard: DashboardDto = {
   ...dashboard,
   gmvCents: 0,
   providerMarginCents: 0,
@@ -534,7 +534,7 @@ describe('DashboardView states', () => {
   }
 
   it('shows Loading… for sales and for inventory while each is pending', async () => {
-    const salesPending = deferred<DashboardResponse>()
+    const salesPending = deferred<DashboardDto>()
     const inventoryPending = deferred<ProductPageDto>()
     vi.mocked(api.getDashboard).mockReturnValue(salesPending.promise)
     vi.mocked(api.searchProducts).mockReturnValue(inventoryPending.promise)

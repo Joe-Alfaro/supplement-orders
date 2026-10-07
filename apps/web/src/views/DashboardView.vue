@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { DashboardRangePreset } from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable, { type DataTablePageEvent } from 'primevue/datatable'
@@ -99,7 +100,10 @@ function urlMatches(state: InventoryUrlState) {
   return current.q === state.q && current.offset === state.offset
 }
 
-const presets = [
+const presets: {
+  id: Exclude<DashboardRangePreset, 'custom'>
+  label: string
+}[] = [
   { id: 'month', label: 'This month' },
   { id: 'last30', label: 'Last 30 days' },
   { id: 'all', label: 'All time' },
@@ -122,7 +126,7 @@ function chooseRange(next: RangeParams) {
   sales.load()
 }
 
-function choosePreset(id: string) {
+function choosePreset(id: Exclude<DashboardRangePreset, 'custom'>) {
   customRequested.value = false
   chooseRange(id === 'month' ? DEFAULT_RANGE : { range: id })
 }

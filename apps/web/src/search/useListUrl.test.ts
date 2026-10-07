@@ -1,4 +1,5 @@
 import type {
+  DashboardDto,
   ListPatientsQuery,
   PatientPageDto,
   ProductDto,
@@ -44,7 +45,7 @@ function patientPage(query: ListPatientsQuery): PatientPageDto {
   }
 }
 
-const dashboard: api.DashboardResponse = {
+const dashboard: DashboardDto = {
   range: {
     preset: 'month',
     from: '2026-10-01',

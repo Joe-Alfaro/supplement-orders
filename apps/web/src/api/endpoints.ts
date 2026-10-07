@@ -134,19 +134,6 @@ export interface DashboardParams {
   tz?: string
 }
 
-/** The window the server actually used (revision 11a-v2). */
-export interface DashboardRangeDto {
-  preset: 'month' | 'last30' | 'all' | 'custom'
-  from: string | null
-  to: string | null
-  timeZone: string
-}
-
-// TODO: move into @supplement-orders/domain's DashboardDto once the API branch lands.
-export interface DashboardResponse extends DashboardDto {
-  range: DashboardRangeDto
-}
-
 export function getDashboard(params: DashboardParams = {}) {
   const search = new URLSearchParams()
   const keys = ['range', 'from', 'to', 'tz'] as const
@@ -155,8 +142,5 @@ export function getDashboard(params: DashboardParams = {}) {
     if (value) search.set(key, value)
   })
   const query = search.toString()
-  return request<DashboardResponse>(
-    'GET',
-    `/dashboard${query ? `?${query}` : ''}`,
-  )
+  return request<DashboardDto>('GET', `/dashboard${query ? `?${query}` : ''}`)
 }
