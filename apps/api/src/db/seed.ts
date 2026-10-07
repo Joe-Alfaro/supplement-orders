@@ -110,7 +110,7 @@ export interface SeedResult {
 }
 
 /** Every table, in an order TRUNCATE ... CASCADE accepts. */
-const ALL_TABLES = sql`ledger_entries, payments, payment_attempts, order_items, orders, products, patients, providers, users`
+const ALL_TABLES = sql`ledger_entries, payments, payment_attempts, fake_gateway_charges, order_items, orders, products, patients, providers, users`
 
 /** Removes all data and restarts ids so a reseed produces the same ids every time. */
 export async function truncateAll(db: Db) {

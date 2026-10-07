@@ -18,7 +18,8 @@ function appServingWeb(dist: string | undefined) {
   return createApp({
     db: {} as Db,
     pingDb: async () => {},
-    gateway: new FakePaymentGateway(),
+    // The gateway is never called here, so it needs no real database.
+    gateway: new FakePaymentGateway({} as Db),
     notifier: new ConsoleNotifier(),
     webDist: dist,
   })

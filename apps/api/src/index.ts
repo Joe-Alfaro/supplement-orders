@@ -16,7 +16,8 @@ const { db, ping } = createDb(config.DATABASE_URL)
 const app = createApp({
   db,
   pingDb: ping,
-  gateway: new FakePaymentGateway(),
+  // Durable: the fake gateway keeps its charges in this database (revision 10).
+  gateway: new FakePaymentGateway(db),
   notifier: new ConsoleNotifier(),
   nodeEnv: process.env.NODE_ENV,
   webDist,

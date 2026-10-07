@@ -33,11 +33,52 @@ export const orderStatusEnum = pgEnum('order_status', [
   'cancelled',
 ])
 
+/**
+ * Revision 10: pending = stock held, gateway outcome unknown; succeeded = the
+ * gateway charged it; declined = the gateway refused it and the stock was
+ * released; conflict = the key is bound to another amount at the gateway, so
+ * the outcome is unresolved and the stock stays held.
+ */
 export const paymentAttemptStatusEnum = pgEnum('payment_attempt_status', [
   'pending',
   'succeeded',
-  'failed',
+  'declined',
+  'conflict',
 ])
+
+export const fakeGatewayChargeStatusEnum = pgEnum(
+  'fake_gateway_charge_status',
+  ['succeeded', 'declined'],
+)
+
+/**
+ * Revision 10: the fake payment gateway's own durable store, standing in for
+ * an external processor's idempotency records. Written only by
+ * FakePaymentGateway, each in its own committed statement and never inside the
+ * API's payment transactions. The first call for a key decides its outcome.
+ */
+export const fakeGatewayCharges = pgTable(
+  'fake_gateway_charges',
+  {
+    idempotencyKey: text('idempotency_key').primaryKey(),
+    amountCents: cents('amount_cents').notNull(),
+    status: fakeGatewayChargeStatusEnum('status').notNull(),
+    reference: text('reference').unique(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    check(
+      'fake_gateway_charges_reference_iff_succeeded',
+      sql`(${t.status} = 'succeeded') = (${t.reference} is not null)`,
+    ),
+    check(
+      'fake_gateway_charges_amount_nonnegative',
+      sql`${t.amountCents} >= 0`,
+    ),
+  ],
+)
 
 export const ledgerEntryTypeEnum = pgEnum('ledger_entry_type', [
   'cogs',
@@ -238,6 +279,9 @@ export const paymentAttempts = pgTable(
       .notNull()
       .references(() => orders.id),
     revision: integer('revision').notNull(),
+    /** Revision 10: 1, 2, ... per (order, revision); a new one only after a decline. */
+    execution: integer('execution').notNull().default(1),
+    /** order-<id>-r<revision>-e<execution> (attempts before revision 10 keep order-<id>-r<revision>). */
     idempotencyKey: text('idempotency_key').notNull().unique(),
     amountCents: cents('amount_cents').notNull(),
     status: paymentAttemptStatusEnum('status').notNull().default('pending'),
@@ -254,7 +298,12 @@ export const paymentAttempts = pgTable(
       .defaultNow(),
   },
   (t) => [
-    unique('payment_attempts_order_revision_unique').on(t.orderId, t.revision),
+    unique('payment_attempts_order_revision_execution_unique').on(
+      t.orderId,
+      t.revision,
+      t.execution,
+    ),
+    check('payment_attempts_execution_positive', sql`${t.execution} >= 1`),
     check('payment_attempts_amount_nonnegative', sql`${t.amountCents} >= 0`),
     check(
       'payment_attempts_reference_iff_succeeded',
