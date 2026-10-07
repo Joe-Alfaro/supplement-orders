@@ -59,6 +59,20 @@ describe('seedIfEmpty', () => {
     expect(first).toEqual({ id: 1, name: 'Dr. Maya Rivera' })
   })
 
+  it('seeds no two patients with the same full name', async () => {
+    await truncateAll(ctx.db)
+
+    await seedIfEmpty(ctx.db)
+
+    const [row] = await ctx.db
+      .execute<{ total: string; distinct: string }>(
+        sql`select count(*) as total, count(distinct name) as distinct
+          from users where role = 'patient'`,
+      )
+      .then((r) => r.rows)
+    expect(row!.total).toBe(row!.distinct)
+  })
+
   it('does nothing when users already exist', async () => {
     const before = await counts()
 
