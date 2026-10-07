@@ -85,7 +85,12 @@ Database constraints back the model:
 - Unique `payments.order_id`, unique `payments.idempotency_key`, unique `payments.payment_attempt_id`, unique `ledger_entries(payment_id, type)`.
 - `payment_attempts`: unique `idempotency_key`, unique `(order_id, revision, execution)`, `execution >= 1`, and a gateway reference exactly when the status is `succeeded`. Nothing in the database checks that a payment matches its attempt's order, amount or reference; the application does.
 
-Ledger immutability is enforced by the application: there is no update or delete path for `ledger_entries`. There is no database trigger preventing it.
+The ledger is also enforced by the database itself (revision 11b, migration `0010`), not only by the application:
+
+- **Append-only:** a `BEFORE UPDATE OR DELETE` row trigger on `payments` and on `ledger_entries` rejects any change with an integrity error (SQLSTATE `23000`). The application has no update or delete path for either table.
+- **Balanced at commit:** a `DEFERRABLE INITIALLY DEFERRED` constraint trigger fires after every insert into either table. At commit, the payment must have exactly one `cogs`, one `provider_margin` and one `platform_fee` entry, all on the payment's order, summing exactly to `payments.amount_cents`. A payment without its entries fails at commit. Deferring the check lets the pay transaction write the payment first and its entries after.
+- **If the application ever trips either trigger**, that is a bug: the pay transaction rolls back and the request returns 500.
+- **Resets** in tests, e2e and `db:seed` use `TRUNCATE`, which doesn't fire row triggers. Production data is never reset.
 
 ## 5. Money model
 
@@ -219,6 +224,7 @@ Migrations, all in `apps/api/drizzle/`:
 | `0007`    | Revision 9: `orders.revision`, the `payment_attempts` table, `payments.payment_attempt_id`                                                                 |
 | `0008`    | Revision 9: `payment_attempts.stock_held`, for stock reserved by an attempt                                                                                |
 | `0009`    | Revision 10: `fake_gateway_charges`, attempt executions and the `declined`/`conflict` statuses; seeds the fake gateway with the successes already recorded |
+| `0010`    | Revision 11b: append-only triggers on `payments` and `ledger_entries`, and a deferred check that each payment's three entries balance at commit            |
 
 ## 11. Front end
 
@@ -259,7 +265,6 @@ The app is deployed at <https://web-production-b7c8c.up.railway.app>. That deplo
 - **Provider payouts:** the ledger says what each provider is owed; actually moving money is a separate system.
 - **Payment reconciliation:** an unresolved attempt is only resolved when the patient pays again, and a `conflict` not even then. A real integration needs a reconciliation job or support tool that looks up unresolved attempts with the processor and finalizes or releases them, plus the processor's webhooks. Releasing stock on a timeout alone would be wrong while the outcome is unknown. The fake gateway shares the app's database for convenience; a real processor's store is its own.
 - **Real auth and RBAC:** replace `HeaderAuth` with real authentication behind the same interface. Date of birth and address are PHI, so access to them needs HIPAA-grade access controls and audit logging.
-- **Database-level ledger guarantees:** a trigger or deferred constraint that rejects updates and deletes on `ledger_entries` and checks that each payment's entries sum to its amount.
 - **Rate limiting** on the API, especially pay and search.
 - **Observability:** structured logs with order and payment ids, metrics on pay latency and gateway declines, and alerting on any `LedgerImbalanceError` or post-charge rollback.
 - **Cleanup:** the old `lower(name)` btree indexes are unused and could be dropped.

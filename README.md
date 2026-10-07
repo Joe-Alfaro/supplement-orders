@@ -45,7 +45,7 @@ Prerequisites: Node 22 LTS, 22.13 or later (`engines` in `package.json` is `>=22
 ```sh
 npm install
 npm run db:up        # Postgres 16 in Docker on localhost:54329; waits until healthy
-npm run db:migrate   # applies migrations 0000-0009 (includes the pg_trgm extension)
+npm run db:migrate   # applies migrations 0000-0010 (includes the pg_trgm extension)
 npm run db:seed      # wipes the dev database and loads the demo seed
 npm run dev          # API on http://localhost:3000, web on http://localhost:5173
 ```
@@ -180,7 +180,7 @@ apps/api              Express REST API
   src/orders/         order service (send, pay, cancel, delete, reopen) and read views
   src/seams/          Auth, PaymentGateway, Notifier interfaces and fakes
   src/db/             Drizzle schema, migration runner, seed, test/e2e database helpers
-  drizzle/            SQL migrations 0000-0009
+  drizzle/            SQL migrations 0000-0010
   scripts/            explain-search.ts
 apps/web              Vue 3 + Vite + PrimeVue SPA (views, components, api client, a11y and state tests)
 e2e/                  Playwright specs
