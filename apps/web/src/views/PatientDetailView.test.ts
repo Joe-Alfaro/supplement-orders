@@ -36,7 +36,7 @@ beforeEach(() => {
 })
 
 describe('PatientDetailView', () => {
-  it('opens a draft row on the order detail page', async () => {
+  it('opens a draft row in the builder at its canonical URL', async () => {
     const user = userEvent.setup()
     const { router } = await renderWithRouter(PatientDetailView, {
       path: '/patients/7',
@@ -45,6 +45,21 @@ describe('PatientDetailView', () => {
 
     await user.click(await screen.findByText('Incomplete draft'))
 
-    expect(router.currentRoute.value.path).toBe('/orders/13')
+    expect(router.currentRoute.value.path).toBe('/patients/7/orders/13')
+  })
+
+  it('opens a non-draft row on the order detail page', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.listOrders).mockResolvedValue([
+      { ...draft, id: 14, status: 'pending_payment' },
+    ])
+    const { router } = await renderWithRouter(PatientDetailView, {
+      path: '/patients/7',
+      props: { patientId: '7' },
+    })
+
+    await user.click(await screen.findByText('Incomplete draft'))
+
+    expect(router.currentRoute.value.path).toBe('/orders/14')
   })
 })
