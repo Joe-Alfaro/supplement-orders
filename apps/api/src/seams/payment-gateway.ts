@@ -1,23 +1,29 @@
 import { randomUUID } from 'node:crypto'
+import { eq, sql } from 'drizzle-orm'
+import type { Db } from '../db/client'
+import { fakeGatewayCharges } from '../db/schema'
 
 export interface ChargeRequest {
   amountCents: number
   /**
-   * One key per (order, revision) quote. A real gateway must not charge twice for
-   * it, and must refuse it for a different amount.
+   * One key per payment execution. The gateway charges a key at most once:
+   * every later call with the same key and amount replays the first outcome,
+   * and the same key with another amount is refused.
    */
   idempotencyKey: string
   description: string
+  /** Force a decline on the first call for this key. Honored by the fake only. */
+  simulateFailure?: boolean
 }
 
-/** failureMessage of a key reused for a different amount (revision 9). */
+/** failureMessage of a key already bound to another amount. */
 export const IDEMPOTENCY_KEY_REUSED = 'IDEMPOTENCY_KEY_REUSED'
 
 export interface ChargeResult {
   status: 'succeeded' | 'failed'
-  /** The gateway's charge reference; empty when the charge failed. */
+  /** The charge reference; empty unless succeeded. */
   reference: string
-  /** What was actually charged, on success. The API checks it against the quote. */
+  /** The amount the key is bound to: what was (or would have been) charged. */
   amountCents?: number
   /**
    * Why a charge failed: IDEMPOTENCY_KEY_REUSED for a key bound to another
@@ -27,37 +33,63 @@ export interface ChargeResult {
 }
 
 export interface ChargeOptions {
-  /** Force a decline to exercise the failure path. Honored by the fake only. */
+  /** Same as ChargeRequest.simulateFailure. */
   simulateFailure?: boolean
+}
+
+/** What the gateway already decided for a key. Looking it up never charges. */
+export interface ChargeLookup {
+  status: 'succeeded' | 'declined'
+  amountCents: number
+  /** Null for a decline. */
+  reference: string | null
 }
 
 export interface PaymentGateway {
   charge(request: ChargeRequest, options?: ChargeOptions): Promise<ChargeResult>
+  lookup(idempotencyKey: string): Promise<ChargeLookup | null>
 }
 
-interface BoundCharge {
-  amountCents: number
-  result: ChargeResult
+const DECLINE_MESSAGE = 'Card declined (simulated gateway failure)'
+
+type StoredCharge = typeof fakeGatewayCharges.$inferSelect
+
+function asResult(stored: StoredCharge): ChargeResult {
+  if (stored.status === 'succeeded' && stored.reference !== null) {
+    return {
+      status: 'succeeded',
+      reference: stored.reference,
+      amountCents: stored.amountCents,
+    }
+  }
+  return {
+    status: 'failed',
+    reference: '',
+    amountCents: stored.amountCents,
+    failureMessage: DECLINE_MESSAGE,
+  }
 }
 
 /**
- * In-process stand-in for a card processor. Succeeds unless failure is forced.
- * Each idempotency key is bound to the amount of its first successful charge: the
- * same key and amount replays that result, and the same key with a different
- * amount fails with IDEMPOTENCY_KEY_REUSED. Declines are not bound, so a declined
- * key can be retried.
+ * Stand-in for a card processor with durable, Stripe-style idempotency
+ * (revision 10). Its state lives in fake_gateway_charges, written in its own
+ * committed statements and never inside the API's transactions, so it behaves
+ * like an external system: it survives restarts and is shared by every API
+ * process. The first call for a key decides the outcome atomically (insert or
+ * get); later calls with the same key and amount replay it, decline included.
  */
 export class FakePaymentGateway implements PaymentGateway {
-  /** Forces every charge to fail while true (for tests and demos). */
+  /** Forces first calls to decline while true (for tests and demos). */
   failNextCharges = false
+  /** Every charge call, in order (for tests); lookups are not charges. */
   readonly charges: ChargeRequest[] = []
-  private readonly byKey = new Map<string, BoundCharge>()
 
-  /** Forget every charge and key binding (test resets reuse order ids). */
+  constructor(private readonly db: Db) {}
+
+  /** Clears the in-process call log; the durable store is the test's to truncate. */
   reset() {
     this.failNextCharges = false
     this.charges.length = 0
-    this.byKey.clear()
   }
 
   async charge(
@@ -65,31 +97,60 @@ export class FakePaymentGateway implements PaymentGateway {
     options: ChargeOptions = {},
   ): Promise<ChargeResult> {
     this.charges.push(request)
-    const bound = this.byKey.get(request.idempotencyKey)
-    if (bound && bound.amountCents !== request.amountCents) {
+    const decline =
+      this.failNextCharges ||
+      request.simulateFailure === true ||
+      options.simulateFailure === true
+    // First call decides: only one insert can win for a key, even across processes.
+    const [inserted] = await this.db
+      .insert(fakeGatewayCharges)
+      .values({
+        idempotencyKey: request.idempotencyKey,
+        amountCents: request.amountCents,
+        status: decline ? 'declined' : 'succeeded',
+        reference: decline ? null : `fake_ch_${randomUUID()}`,
+      })
+      .onConflictDoNothing({ target: fakeGatewayCharges.idempotencyKey })
+      .returning()
+    const stored = inserted ?? (await this.find(request.idempotencyKey))
+    if (!stored) {
+      throw new Error(`Fake gateway lost key ${request.idempotencyKey}`)
+    }
+    if (stored.amountCents !== request.amountCents) {
       return {
         status: 'failed',
         reference: '',
+        amountCents: stored.amountCents,
         failureMessage: IDEMPOTENCY_KEY_REUSED,
       }
     }
-    if (bound) return bound.result
-    if (this.failNextCharges || options.simulateFailure) {
-      return {
-        status: 'failed',
-        reference: '',
-        failureMessage: 'Card declined (simulated gateway failure)',
-      }
-    }
-    const result: ChargeResult = {
-      status: 'succeeded',
-      reference: `fake_ch_${randomUUID()}`,
-      amountCents: request.amountCents,
-    }
-    this.byKey.set(request.idempotencyKey, {
-      amountCents: request.amountCents,
-      result,
-    })
-    return result
+    return asResult(stored)
   }
+
+  async lookup(idempotencyKey: string): Promise<ChargeLookup | null> {
+    const stored = await this.find(idempotencyKey)
+    if (!stored) return null
+    return {
+      status: stored.status,
+      amountCents: stored.amountCents,
+      reference: stored.reference,
+    }
+  }
+
+  private async find(idempotencyKey: string) {
+    const [row] = await this.db
+      .select()
+      .from(fakeGatewayCharges)
+      .where(eq(fakeGatewayCharges.idempotencyKey, idempotencyKey))
+    return row
+  }
+}
+
+/** Every successful charge reference the fake gateway holds (for tests and audits). */
+export async function fakeGatewaySucceededReferences(db: Db) {
+  const rows = await db
+    .select({ reference: fakeGatewayCharges.reference })
+    .from(fakeGatewayCharges)
+    .where(sql`${fakeGatewayCharges.status} = 'succeeded'`)
+  return rows.flatMap((r) => (r.reference === null ? [] : [r.reference]))
 }
