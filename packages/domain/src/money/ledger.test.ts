@@ -239,4 +239,46 @@ describe('assertLedgerBalances', () => {
       expectImbalance(entryCase.entries, entryCase.amountPaidCents)
     })
   })
+
+  // Audit 3 N7: every entry is a safe integer, but Number addition rounds the
+  // exact total 9007199254740993 down to the supplied payment 9007199254740992.
+  it('rejects entries whose exact total exceeds the safe integer range', () => {
+    const entries: LedgerEntryDraft[] = [
+      { type: 'cogs', amountCents: Number.MAX_SAFE_INTEGER },
+      { type: 'provider_margin', amountCents: 2 },
+      { type: 'platform_fee', amountCents: 0 },
+    ]
+    expectImbalance(entries, 2 ** 53)
+  })
+
+  it('rejects a payment above the safe integer range even when the entries sum to it exactly', () => {
+    const entries: LedgerEntryDraft[] = [
+      { type: 'cogs', amountCents: Number.MAX_SAFE_INTEGER },
+      { type: 'provider_margin', amountCents: 1 },
+      { type: 'platform_fee', amountCents: 0 },
+    ]
+    expectImbalance(entries, 2 ** 53)
+  })
+
+  it('accepts entries that total exactly the largest safe integer', () => {
+    const entries: LedgerEntryDraft[] = [
+      { type: 'cogs', amountCents: Number.MAX_SAFE_INTEGER - 3 },
+      { type: 'provider_margin', amountCents: 2 },
+      { type: 'platform_fee', amountCents: 1 },
+    ]
+    expect(
+      assertLedgerBalances(entries, Number.MAX_SAFE_INTEGER),
+    ).toBeUndefined()
+  })
+
+  it('rejects a non-integer or non-finite payment', () => {
+    const entries: LedgerEntryDraft[] = [
+      { type: 'cogs', amountCents: 0 },
+      { type: 'provider_margin', amountCents: 0 },
+      { type: 'platform_fee', amountCents: 0 },
+    ]
+    ;[0.5, Number.NaN, Number.POSITIVE_INFINITY].forEach((amountPaidCents) => {
+      expectImbalance(entries, amountPaidCents)
+    })
+  })
 })
