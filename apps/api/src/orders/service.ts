@@ -1,7 +1,7 @@
 import {
   assertLedgerBalances,
   computeSplit,
-  partialPaymentQuote,
+  partialPaymentQuoteDto,
   planPartialPayment,
   SplitValidationError,
   toLedgerEntries,
@@ -11,7 +11,7 @@ import {
   type OrderStatus,
   type PartialPaymentPlan,
   type PayMode,
-  type PaymentQuoteDto,
+  type PartialPaymentQuoteDto,
   type SplitLine,
   type StockAvailabilityDto,
 } from '@supplement-orders/domain'
@@ -432,13 +432,13 @@ function idempotencyKeyFor(
   return `order-${orderId}-r${revision}-e${execution}`
 }
 
-function orderChanged(quote?: PaymentQuoteDto) {
+function orderChanged(partialPaymentQuote?: PartialPaymentQuoteDto) {
   return new ApiError(
     409,
     'ORDER_CHANGED',
     'This order changed since you opened it. Review the new total before paying.',
     undefined,
-    quote === undefined ? {} : { quote },
+    partialPaymentQuote === undefined ? {} : { partialPaymentQuote },
   )
 }
 
@@ -597,23 +597,10 @@ async function lockStock(tx: Tx, lines: PayLine[]) {
   return new Map(rows.map((r) => [r.id, r.stock]))
 }
 
-/** What the patient can pay now for this order (revision 14). */
-function quoteFor(order: Order, plan: PayPlan): PaymentQuoteDto {
-  const { pay, backorder } = partialPaymentQuote(plan)
-  return {
-    revision: order.revision,
-    totalCents: order.totalCents ?? 0,
-    availableTotalCents: pay.totalCents,
-    backorderTotalCents: backorder.totalCents,
-    payable: plan.payable,
-    hasShortfall: plan.hasShortfall,
-  }
-}
-
 function insufficientStock(
   lines: PayLine[],
   stock: ReadonlyMap<number, number>,
-  quote: PaymentQuoteDto,
+  partialPaymentQuote: PartialPaymentQuoteDto,
 ) {
   const availability = lines.map((line): StockAvailabilityDto => ({
     lineId: line.lineId,
@@ -626,7 +613,7 @@ function insufficientStock(
     'INSUFFICIENT_STOCK',
     'Some items are no longer in stock in the quantity ordered.',
     undefined,
-    { availability, quote },
+    { availability, partialPaymentQuote },
   )
 }
 
@@ -835,10 +822,11 @@ async function preparePayment(
     // stock, locked, so the reservation below cannot come up short.
     const stock = await lockStock(tx, lines)
     const plan = planPartialPayment(lines, stock)
-    const quote = quoteFor(order, plan)
+    // Pay errors go to the patient, so the quote carries no fee.
+    const quote = partialPaymentQuoteDto(plan, 'patient')
     const stale =
       order.revision !== expectedRevision ||
-      (mode === 'full' ? order.totalCents : quote.availableTotalCents) !==
+      (mode === 'full' ? order.totalCents : quote.pay.totalCents) !==
         expectedTotalCents
     if (mode === 'full') {
       if (stale) throw orderChanged()
@@ -862,7 +850,7 @@ async function preparePayment(
       ? await splitOrder(tx, order, plan, expectedRevision)
       : order.revision
     const amountCents = plan.hasShortfall
-      ? quote.availableTotalCents
+      ? quote.pay.totalCents
       : order.totalCents
 
     // Reserve, then record. A first execution after a split starts at the new revision.

@@ -2,12 +2,12 @@ import {
   computeSplit,
   markupBpsFromPrice,
   minUnitPriceCents,
-  partialPaymentQuote,
+  partialPaymentQuoteDto,
   planPartialPayment,
   SplitValidationError,
   STORED_ORDER_STATUSES,
   type OrderStatus,
-  type PaymentQuoteDto,
+  type PartialPaymentQuoteDto,
   type OrderStatusSelection,
   type ProviderOrderListItemDto,
   type ProviderOrderListPageDto,
@@ -223,12 +223,23 @@ function summaryBase(order: OrderRow) {
   }
 }
 
+/** A draft or an order awaiting payment or stock: stock still matters to it. */
+function isOpen(order: OrderRow) {
+  return (
+    order.storedStatus === 'draft' || order.storedStatus === 'pending_payment'
+  )
+}
+
 /**
  * Revision 14: what a pay can charge now, from live stock, while the order
  * awaits payment or stock; null otherwise. The same plan the pay makes, minus
  * the stock lock, so a pay with this quote succeeds unless stock moves first.
  */
-function quoteFor(order: OrderRow, lines: LineRow[]): PaymentQuoteDto | null {
+function quoteFor(
+  order: OrderRow,
+  lines: LineRow[],
+  view: OrderView,
+): PartialPaymentQuoteDto | null {
   if (order.storedStatus !== 'pending_payment' || order.totalCents === null) {
     return null
   }
@@ -253,16 +264,16 @@ function quoteFor(order: OrderRow, lines: LineRow[]): PaymentQuoteDto | null {
         : [[l.productId, l.stockQuantity] as const],
     ),
   )
-  const plan = planPartialPayment(complete, stock)
-  const { pay, backorder } = partialPaymentQuote(plan)
-  return {
-    revision: order.revision,
-    totalCents: order.totalCents,
-    availableTotalCents: pay.totalCents,
-    backorderTotalCents: backorder.totalCents,
-    payable: plan.payable,
-    hasShortfall: plan.hasShortfall,
+  return partialPaymentQuoteDto(planPartialPayment(complete, stock), view)
+}
+
+/** Per-line availability (revision 14.3), null when stock no longer matters. */
+function lineAvailability(l: LineRow, open: boolean) {
+  if (!open || l.stockQuantity === null) {
+    return { payableQuantity: null, shortQuantity: null }
   }
+  const payableQuantity = Math.min(l.quantity, Math.max(l.stockQuantity, 0))
+  return { payableQuantity, shortQuantity: l.quantity - payableQuantity }
 }
 
 function providerSummary(
@@ -305,7 +316,7 @@ function derived(compute: () => number | null): number | null {
   }
 }
 
-function providerLine(l: LineRow): ProviderOrderLineDto {
+function providerLine(order: OrderRow, l: LineRow): ProviderOrderLineDto {
   const { unitCogsCents, unitPriceCents } = l
   return {
     lineId: l.lineId,
@@ -325,6 +336,7 @@ function providerLine(l: LineRow): ProviderOrderLineDto {
         : derived(() => markupBpsFromPrice(unitCogsCents, unitPriceCents)),
     stockQuantity: l.stockQuantity,
     availableQuantity: l.stockQuantity,
+    ...lineAvailability(l, isOpen(order)),
     minUnitPriceCents:
       unitCogsCents === null
         ? null
@@ -353,6 +365,7 @@ function patientLine(order: OrderRow, l: LineRow): OrderLineDto {
     lineTotalCents: l.quantity * l.unitPriceCents,
     availableQuantity:
       order.storedStatus === 'pending_payment' ? l.stockQuantity : null,
+    ...lineAvailability(l, order.storedStatus === 'pending_payment'),
   }
 }
 
@@ -459,10 +472,10 @@ async function readProviderOrderDetail(
     ...providerSummary(order, lines),
     patientDateOfBirth: order.patientDateOfBirth,
     patientAddress: order.patientAddress,
-    lines: lines.map(providerLine),
+    lines: lines.map((line) => providerLine(order, line)),
     payment,
     ledger,
-    quote: quoteFor(order, lines),
+    partialPaymentQuote: quoteFor(order, lines, 'provider'),
   }
 }
 
@@ -477,7 +490,7 @@ async function readPatientOrderDetail(
     patientAddress: order.patientAddress,
     lines: lines.map((line) => patientLine(order, line)),
     payment,
-    quote: quoteFor(order, lines),
+    partialPaymentQuote: quoteFor(order, lines, 'patient'),
   }
 }
 

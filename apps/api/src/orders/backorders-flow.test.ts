@@ -71,7 +71,9 @@ describe('revision 14: low stock, partial payment and back-orders', () => {
     return {
       expectedRevision: detail.revision,
       expectedTotalCents:
-        mode === 'full' ? detail.totalCents : detail.quote!.availableTotalCents,
+        mode === 'full'
+          ? detail.totalCents
+          : detail.partialPaymentQuote!.pay.totalCents,
       mode,
     }
   }
@@ -185,10 +187,10 @@ describe('revision 14: low stock, partial payment and back-orders', () => {
       expect((await providerDetail(orderId)).status).toBe('awaiting_stock')
       const patientView = await patientDetail(orderId)
       expect(patientView.status).toBe('awaiting_stock')
-      expect(patientView.quote).toMatchObject({
+      expect(patientView.partialPaymentQuote).toMatchObject({
         payable: false,
         hasShortfall: true,
-        availableTotalCents: 0,
+        pay: { subtotalCents: 0, totalCents: 0 },
       })
 
       const provider = as(ctx.seed.providerUserId)
@@ -296,7 +298,7 @@ describe('revision 14: low stock, partial payment and back-orders', () => {
             l.productId === product(1).id ? 1 : l.availableQuantity,
         })),
       )
-      expect(body.error.quote).toEqual(detail.quote)
+      expect(body.error.partialPaymentQuote).toEqual(detail.partialPaymentQuote)
       expect(ctx.gateway.charges).toHaveLength(0)
       expect(await backordersOf(orderId)).toEqual([])
     })
@@ -308,7 +310,7 @@ describe('revision 14: low stock, partial payment and back-orders', () => {
       await setStock(ctx, product(0).id, 0)
       await setStock(ctx, product(1).id, 1)
       const before = await patientDetail(orderId)
-      const quote = before.quote!
+      const quote = before.partialPaymentQuote!
       expect(quote).toMatchObject({ payable: true, hasShortfall: true })
 
       const res = await payAvailable(orderId)
@@ -317,8 +319,8 @@ describe('revision 14: low stock, partial payment and back-orders', () => {
       const paid = patientOrderDetailDtoSchema.parse(res.body)
       expect(paid.status).toBe('paid')
       expect(paid.revision).toBe(before.revision + 1)
-      expect(paid.totalCents).toBe(quote.availableTotalCents)
-      expect(paid.payment?.amountCents).toBe(quote.availableTotalCents)
+      expect(paid.totalCents).toBe(quote.pay.totalCents)
+      expect(paid.payment?.amountCents).toBe(quote.pay.totalCents)
       expect(paid.lines.map((l) => [l.productId, l.quantity])).toEqual([
         [product(1).id, 1],
         [product(2).id, 2],
@@ -326,16 +328,14 @@ describe('revision 14: low stock, partial payment and back-orders', () => {
       expect(paid.backorderOrderId).toEqual(expect.any(Number))
       expect(paid.splitFromOrderId).toBeNull()
       expect(ctx.gateway.charges).toHaveLength(1)
-      expect(ctx.gateway.charges[0]?.amountCents).toBe(
-        quote.availableTotalCents,
-      )
+      expect(ctx.gateway.charges[0]?.amountCents).toBe(quote.pay.totalCents)
 
       const backorder = await patientDetail(paid.backorderOrderId!)
       expect(backorder.splitFromOrderId).toBe(orderId)
       expect(backorder.backorderOrderId).toBeNull()
       expect(backorder.revision).toBe(1)
       expect(backorder.status).toBe('awaiting_stock')
-      expect(backorder.totalCents).toBe(quote.backorderTotalCents)
+      expect(backorder.totalCents).toBe(quote.backorder.totalCents)
       expect(
         backorder.lines.map((l) => [l.productId, l.quantity, l.unitPriceCents]),
       ).toEqual([
@@ -380,9 +380,11 @@ describe('revision 14: low stock, partial payment and back-orders', () => {
 
       expect(res.status).toBe(409)
       expect(res.body.error.code).toBe('ORDER_CHANGED')
-      expect(res.body.error.quote).toEqual((await patientDetail(orderId)).quote)
-      expect(res.body.error.quote.availableTotalCents).not.toBe(
-        seen.quote!.availableTotalCents,
+      expect(res.body.error.partialPaymentQuote).toEqual(
+        (await patientDetail(orderId)).partialPaymentQuote,
+      )
+      expect(res.body.error.partialPaymentQuote.pay.totalCents).not.toBe(
+        seen.partialPaymentQuote!.pay.totalCents,
       )
       expect(await backordersOf(orderId)).toEqual([])
       expect(ctx.gateway.charges).toHaveLength(0)
@@ -445,7 +447,9 @@ describe('revision 14: low stock, partial payment and back-orders', () => {
 
       const retried = await payAvailable(orderId)
       expect(retried.status).toBe(200)
-      expect(retried.body.totalCents).toBe(seen.quote!.availableTotalCents)
+      expect(retried.body.totalCents).toBe(
+        seen.partialPaymentQuote!.pay.totalCents,
+      )
       expect(await backordersOf(orderId)).toHaveLength(1)
     })
 

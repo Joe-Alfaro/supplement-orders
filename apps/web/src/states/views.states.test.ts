@@ -137,12 +137,14 @@ const providerSummary: ProviderOrderSummaryDto = {
 }
 
 const providerOrder: ProviderOrderDetailDto = {
-  quote: null,
+  partialPaymentQuote: null,
   ...providerSummary,
   patientDateOfBirth: '1984-03-14',
   patientAddress: '214 Alder St, Portland, OR 97205',
   lines: [
     {
+      payableQuantity: null,
+      shortQuantity: null,
       lineId: 904,
       availableQuantity: null,
       productId: 1,
@@ -203,7 +205,7 @@ const draftWithLine: ProviderOrderDetailDto = {
 }
 
 const patientOrder: PatientOrderDetailDto = {
-  quote: null,
+  partialPaymentQuote: null,
   splitFromOrderId: null,
   backorderOrderId: null,
   id: 42,
@@ -222,6 +224,8 @@ const patientOrder: PatientOrderDetailDto = {
   totalCents: 12000,
   lines: [
     {
+      payableQuantity: null,
+      shortQuantity: null,
       lineId: 903,
       availableQuantity: null,
       productId: 1,

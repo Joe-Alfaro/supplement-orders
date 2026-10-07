@@ -1,5 +1,8 @@
 import { z } from 'zod'
-import { paymentQuoteDtoSchema, type PaymentQuoteDto } from './responses'
+import {
+  partialPaymentQuoteDtoSchema,
+  type PartialPaymentQuoteDto,
+} from './responses'
 
 /**
  * Every non-2xx response body is `{ error: { code, message, field? } }`.
@@ -16,9 +19,9 @@ import { paymentQuoteDtoSchema, type PaymentQuoteDto } from './responses'
  *   business rule failed. INCOMPLETE_LINE (send only) names the missing part,
  *   e.g. `lines.1.productId` or `lines.0.unitPriceCents`. EMPTY_ORDER has no field.
  * - 409 ORDER_CHANGED: pay's expectedRevision/expectedTotalCents no longer match the order.
- *   With `mode: 'available'` the body carries the fresh `quote` (revision 14).
+ *   With `mode: 'available'` the body carries the fresh `partialPaymentQuote` (revision 14).
  * - 409 INSUFFICIENT_STOCK (revision 14): a `full` pay found a line short of stock; the
- *   body carries `availability` per line and the current `quote`. Nothing was charged.
+ *   body carries `availability` per line and the current `partialPaymentQuote`. Nothing was charged.
  * - 409 AWAITING_STOCK (revision 14): an `available` pay found nothing in stock to pay for.
  * - 409 LOW_STOCK_UNACKNOWLEDGED (revision 14): send found lines above available stock
  *   without `acknowledgeLowStock: true`; the body lists them in `lines`.
@@ -113,8 +116,8 @@ export interface ApiErrorBody {
   currentStockQuantity?: number
   /** INSUFFICIENT_STOCK only. */
   availability?: StockAvailabilityDto[]
-  /** INSUFFICIENT_STOCK, and ORDER_CHANGED from an `available` pay: the quote now. */
-  quote?: PaymentQuoteDto
+  /** INSUFFICIENT_STOCK, and ORDER_CHANGED from an `available` pay: the quote now (no fee). */
+  partialPaymentQuote?: PartialPaymentQuoteDto
   /** LOW_STOCK_UNACKNOWLEDGED only. */
   lines?: LowStockLineDto[]
 }
@@ -145,7 +148,7 @@ export interface InsufficientStockErrorResponse {
     code: 'INSUFFICIENT_STOCK'
     message: string
     availability: StockAvailabilityDto[]
-    quote: PaymentQuoteDto
+    partialPaymentQuote: PartialPaymentQuoteDto
   }
 }
 
@@ -155,7 +158,7 @@ export const insufficientStockErrorResponseSchema: z.ZodType<InsufficientStockEr
       code: z.literal('INSUFFICIENT_STOCK'),
       message: z.string(),
       availability: z.array(stockAvailabilityDtoSchema),
-      quote: paymentQuoteDtoSchema,
+      partialPaymentQuote: partialPaymentQuoteDtoSchema,
     }),
   })
 
@@ -183,7 +186,7 @@ export const apiErrorResponseSchema: z.ZodType<ApiErrorResponse> = z.object({
     field: z.string().optional(),
     currentStockQuantity: z.int().nonnegative().optional(),
     availability: z.array(stockAvailabilityDtoSchema).optional(),
-    quote: paymentQuoteDtoSchema.optional(),
+    partialPaymentQuote: partialPaymentQuoteDtoSchema.optional(),
     lines: z.array(lowStockLineDtoSchema).optional(),
   }),
 })
