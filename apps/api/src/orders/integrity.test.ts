@@ -135,10 +135,15 @@ describe('revision 9: payment integrity and hardening', () => {
 
       const same = await pay(ctx, orderId)
       const other = await pay(ctx, orderId, { expectedRevision: 2 })
+      const wrongTotal = await pay(ctx, orderId, { expectedTotalCents: 1999 })
 
       expect(same.status).toBe(200)
       expect(same.body).toEqual(first.body)
       expect([other.status, other.body.error.code]).toEqual([
+        409,
+        'ORDER_CHANGED',
+      ])
+      expect([wrongTotal.status, wrongTotal.body.error.code]).toEqual([
         409,
         'ORDER_CHANGED',
       ])

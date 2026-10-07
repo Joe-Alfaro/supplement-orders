@@ -10,21 +10,21 @@ export interface ChargeRequest {
   description: string
 }
 
-export type ChargeFailureCode = 'DECLINED' | 'IDEMPOTENCY_KEY_REUSED'
+/** failureMessage of a key reused for a different amount (revision 9). */
+export const IDEMPOTENCY_KEY_REUSED = 'IDEMPOTENCY_KEY_REUSED'
 
-export type ChargeResult =
-  | {
-      status: 'succeeded'
-      reference: string
-      /** What was actually charged; the API checks it against the expected total. */
-      amountCents: number
-    }
-  | {
-      status: 'failed'
-      failureCode: ChargeFailureCode
-      /** Safe to show to the payer. */
-      failureMessage: string
-    }
+export interface ChargeResult {
+  status: 'succeeded' | 'failed'
+  /** The gateway's charge reference; empty when the charge failed. */
+  reference: string
+  /** What was actually charged, on success. The API checks it against the quote. */
+  amountCents?: number
+  /**
+   * Why a charge failed: IDEMPOTENCY_KEY_REUSED for a key bound to another
+   * amount, otherwise a decline message safe to show to the payer.
+   */
+  failureMessage?: string
+}
 
 export interface ChargeOptions {
   /** Force a decline to exercise the failure path. Honored by the fake only. */
@@ -69,16 +69,15 @@ export class FakePaymentGateway implements PaymentGateway {
     if (bound && bound.amountCents !== request.amountCents) {
       return {
         status: 'failed',
-        failureCode: 'IDEMPOTENCY_KEY_REUSED',
-        failureMessage:
-          'This payment key was already used for a different amount',
+        reference: '',
+        failureMessage: IDEMPOTENCY_KEY_REUSED,
       }
     }
     if (bound) return bound.result
     if (this.failNextCharges || options.simulateFailure) {
       return {
         status: 'failed',
-        failureCode: 'DECLINED',
+        reference: '',
         failureMessage: 'Card declined (simulated gateway failure)',
       }
     }

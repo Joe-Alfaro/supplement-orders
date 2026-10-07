@@ -20,7 +20,7 @@ import {
   products,
 } from '../db/schema'
 import { ApiError, forbidden, notFound } from '../http/errors'
-import type { CurrentUser } from '../seams'
+import { IDEMPOTENCY_KEY_REUSED, type CurrentUser } from '../seams'
 import type { AppContext } from '../server'
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
@@ -536,7 +536,13 @@ async function preparePayment(
     // The patient never saw an unsent order, including a draft cancelled before sending.
     if (order.sentAt === null) throw notFound('Order')
     if (order.status === 'paid') {
-      if (order.revision !== expectedRevision) throw orderChanged()
+      // A replay must name the quote that was paid: same revision and total.
+      if (
+        order.revision !== expectedRevision ||
+        order.totalCents !== expectedTotalCents
+      ) {
+        throw orderChanged()
+      }
       return null
     }
     if (order.status !== 'pending_payment' || order.totalCents === null) {
@@ -651,10 +657,18 @@ async function chargeAttempt(
   )
   if (charge.status === 'failed') {
     await recordFailure(db, attempt)
-    if (charge.failureCode === 'IDEMPOTENCY_KEY_REUSED') {
-      throw new ApiError(409, 'IDEMPOTENCY_KEY_REUSED', charge.failureMessage)
+    if (charge.failureMessage === IDEMPOTENCY_KEY_REUSED) {
+      throw new ApiError(
+        409,
+        'IDEMPOTENCY_KEY_REUSED',
+        'This payment could not be matched to its earlier attempt. Contact support before trying again.',
+      )
     }
-    throw new ApiError(402, 'PAYMENT_FAILED', charge.failureMessage)
+    throw new ApiError(
+      402,
+      'PAYMENT_FAILED',
+      charge.failureMessage ?? 'Payment was declined',
+    )
   }
   // Recorded before checking the amount: whatever the gateway did, it is now durable.
   await db
@@ -665,12 +679,13 @@ async function chargeAttempt(
       updatedAt: new Date(),
     })
     .where(eq(paymentAttempts.id, attempt.id))
+  // A success without an amount can't be verified, so it is treated as a mismatch.
   if (charge.amountCents !== attempt.amountCents) {
     throw new Error(
       `Gateway charged ${charge.amountCents} for attempt ${attempt.id}, expected ${attempt.amountCents}`,
     )
   }
-  return { reference: charge.reference, amountCents: charge.amountCents }
+  return { reference: charge.reference, amountCents: attempt.amountCents }
 }
 
 /**
