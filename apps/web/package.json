@@ -28,7 +28,7 @@
     "eslint-plugin-testing-library": "^7.16.2",
     "jsdom": "^27.0.1",
     "vite": "^7.3.6",
-    "vitest": "^3.2.7",
+    "vitest": "^4.1.11",
     "vue-tsc": "^3.3.12"
   }
 }
