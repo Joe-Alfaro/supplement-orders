@@ -108,6 +108,85 @@ describe('revision 14 availability HTTP contract', () => {
     expect(latest.body.total).toBe(1)
   })
 
+  // Revision 14.3b: orders_with_status.effective_status must reflect current
+  // product stock for every referencing order, without order-local refreshes.
+  it.each(['admin adjustment', 'payment'])(
+    'immediately refreshes every open order sharing a product after %s and restock',
+    async (change) => {
+      const [shared, other] = lines()
+      const first = await createSentOrder(ctx, [shared!])
+      const second = await createSentOrder(ctx, [shared!])
+      const mixed = await createSentOrder(ctx, [shared!, other!])
+      const consuming = await createSentOrder(ctx, [shared!])
+      await stock(
+        shared!.productId,
+        shared!.quantity,
+        ctx.seed.products[0]!.stockQuantity,
+      )
+
+      async function expectStatuses(awaiting: boolean, consumed: boolean) {
+        const expectedOpenStatus = awaiting
+          ? 'awaiting_stock'
+          : 'pending_payment'
+        const expected = [
+          {
+            id: first,
+            status: awaiting ? 'awaiting_stock' : 'pending_payment',
+          },
+          {
+            id: second,
+            status: awaiting ? 'awaiting_stock' : 'pending_payment',
+          },
+          // Another payable product keeps this order pending even at zero shared stock.
+          { id: mixed, status: 'pending_payment' },
+          { id: consuming, status: consumed ? 'paid' : expectedOpenStatus },
+        ]
+        const results = await Promise.all(
+          [ctx.seed.providerUserId, ctx.seed.patientUserId].flatMap((user) =>
+            expected.map(async (order) => ({
+              expected: order,
+              response: await detail(order.id, user),
+            })),
+          ),
+        )
+        results.forEach(({ expected: order, response }) => {
+          expect(response.status).toBe(200)
+          expect(response.body).toMatchObject(order)
+        })
+        const lists = await Promise.all(
+          [ctx.seed.providerUserId, ctx.seed.patientUserId].map((user) =>
+            ctx.request.get('/api/orders').set(as(user)),
+          ),
+        )
+        lists.forEach((response) => {
+          expect(response.status).toBe(200)
+          expect(response.body).toHaveLength(expected.length)
+          expect(response.body).toEqual(
+            expect.arrayContaining(
+              expected.map((order) => expect.objectContaining(order)),
+            ),
+          )
+        })
+      }
+
+      await expectStatuses(false, false)
+      if (change === 'payment') {
+        const quote = await detail(consuming)
+        const paid = await pay(consuming, {
+          expectedRevision: quote.body.revision,
+          expectedTotalCents: quote.body.totalCents,
+        })
+        expect(paid.status).toBe(200)
+      } else {
+        await stock(shared!.productId, 0, shared!.quantity)
+      }
+      // No delay, restart, resend, or mutation of the other orders.
+      await expectStatuses(true, change === 'payment')
+      await stock(shared!.productId, 1, 0)
+      await expectStatuses(false, change === 'payment')
+    },
+  )
+
   it.each([undefined, 'full'])(
     'returns full-pay shortfall availability and current quote for mode %s',
     async (mode) => {
