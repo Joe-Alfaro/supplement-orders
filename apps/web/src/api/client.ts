@@ -9,7 +9,7 @@ import { readStoredUserId } from '../user/storage'
 export class ApiRequestError extends Error {
   constructor(
     readonly status: number,
-    readonly code: ApiErrorCode | 'NETWORK' | 'STOCK_CHANGED',
+    readonly code: ApiErrorCode | 'NETWORK',
     message: string,
     readonly field?: string,
     /** Set on 409 STOCK_CHANGED: the stock the server holds now. */
@@ -22,44 +22,8 @@ export class ApiRequestError extends Error {
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
-interface StockChangedBody {
-  error: {
-    code: 'STOCK_CHANGED'
-    message: string
-    currentStockQuantity?: unknown
-  }
-  currentStockQuantity?: unknown
-}
-
-// STOCK_CHANGED is not in the shared error codes until the API branch merges.
-// The contract does not say whether the current value sits in `error` or beside
-// it, so both are read.
-function stockChangedBody(body: unknown): StockChangedBody | null {
-  if (typeof body !== 'object' || body === null || !('error' in body)) {
-    return null
-  }
-  const { error } = body as { error: unknown }
-  if (typeof error !== 'object' || error === null) return null
-  const { code, message } = error as { code?: unknown; message?: unknown }
-  if (code !== 'STOCK_CHANGED' || typeof message !== 'string') return null
-  return body as StockChangedBody
-}
-
 async function toError(response: Response) {
   const body: unknown = await response.json().catch(() => null)
-  const stockChanged = stockChangedBody(body)
-  if (stockChanged) {
-    const current =
-      stockChanged.error.currentStockQuantity ??
-      stockChanged.currentStockQuantity
-    return new ApiRequestError(
-      response.status,
-      'STOCK_CHANGED',
-      stockChanged.error.message,
-      undefined,
-      typeof current === 'number' ? current : undefined,
-    )
-  }
   const parsed = apiErrorResponseSchema.safeParse(body)
   if (!parsed.success) {
     return new ApiRequestError(
@@ -68,8 +32,14 @@ async function toError(response: Response) {
       `Request failed (${response.status})`,
     )
   }
-  const { code, message, field } = parsed.data.error
-  return new ApiRequestError(response.status, code, message, field)
+  const { code, message, field, currentStockQuantity } = parsed.data.error
+  return new ApiRequestError(
+    response.status,
+    code,
+    message,
+    field,
+    currentStockQuantity,
+  )
 }
 
 /** The only place the app calls fetch. Sends the selected user as X-User-Id. */

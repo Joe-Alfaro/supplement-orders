@@ -1,7 +1,7 @@
-import { screen, waitFor, within } from '@testing-library/vue'
+import type { AdminProductDto, AdminProductPageDto } from '@supplement-orders/domain'
+import { fireEvent, screen, waitFor, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AdminProductDto, AdminProductPageDto } from '../admin/types'
 import * as api from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
 import AdminInventoryView from './AdminInventoryView.vue'
@@ -289,6 +289,16 @@ describe('AdminInventoryView editing stock', () => {
         expectedStockQuantity: 55,
       }),
     )
+  })
+
+  it('shows Save for a plain input event (autofill, scripted input)', async () => {
+    await renderPage()
+
+    await fireEvent.update(stockInput(), '77')
+
+    expect(
+      screen.getByRole('button', { name: 'Save stock for Vitamin D3' }),
+    ).toBeInTheDocument()
   })
 
   it('Enter saves', async () => {

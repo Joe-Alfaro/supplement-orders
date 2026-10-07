@@ -1,5 +1,4 @@
 import type { UserDto } from '@supplement-orders/domain'
-import type { AppRole } from '../admin/types'
 import userEvent from '@testing-library/user-event'
 import { render, screen, within } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -22,9 +21,7 @@ vi.mock('../api', async (importOriginal) => {
   }
 })
 
-type TestUser = Omit<UserDto, 'role'> & { role: AppRole }
-
-const users: TestUser[] = [
+const users: UserDto[] = [
   {
     id: 1,
     name: 'Dr. Maya Rivera',
@@ -58,7 +55,7 @@ async function startApp(path: string) {
 }
 
 beforeEach(() => {
-  vi.mocked(api.listUsers).mockResolvedValue(users as UserDto[])
+  vi.mocked(api.listUsers).mockResolvedValue(users)
   vi.mocked(api.searchPatients).mockResolvedValue({
     items: [],
     total: 0,

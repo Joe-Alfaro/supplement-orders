@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { STOCK_QUANTITY_MAX, type AdminProductDto } from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable, { type DataTablePageEvent } from 'primevue/datatable'
@@ -8,7 +9,6 @@ import InputNumber from 'primevue/inputnumber'
 import InputText from 'primevue/inputtext'
 import { onMounted, reactive, watch } from 'vue'
 import { useRoute, type LocationQuery } from 'vue-router'
-import { MAX_STOCK, MIN_STOCK, type AdminProductDto } from '../admin/types'
 import {
   ApiRequestError,
   handleApiError,
@@ -101,6 +101,18 @@ function isDirty(row: RowState) {
 
 function setTyped(product: AdminProductDto, value: number | null) {
   rowOf(product).typed = value
+}
+
+// InputNumber only reports keypresses and paste. Autofill, IME and scripted
+// input fire a plain `input` event, so the Save button would never appear.
+function onNativeInput(product: AdminProductDto, event: Event) {
+  if (!(event.target instanceof HTMLInputElement)) return
+  const digits = event.target.value.replace(/\D/g, '')
+  if (digits === '') {
+    setTyped(product, null)
+    return
+  }
+  setTyped(product, Math.min(Number(digits), STOCK_QUANTITY_MAX))
 }
 
 function applyServerStock(row: RowState, updated: AdminProductDto) {
@@ -258,14 +270,15 @@ const INCREMENTS = [1, 10, 100]
           <template #body="{ data }">
             <div
               class="stock-cell"
+              @input="onNativeInput(data, $event)"
               @keydown.enter.prevent="save(data)"
               @keydown.esc="cancel(data)"
             >
               <div class="stock-controls">
                 <InputNumber
                   :model-value="rowOf(data).typed"
-                  :min="MIN_STOCK"
-                  :max="MAX_STOCK"
+                  :min="0"
+                  :max="STOCK_QUANTITY_MAX"
                   :use-grouping="false"
                   :max-fraction-digits="0"
                   :aria-label="`Stock for ${data.name}`"

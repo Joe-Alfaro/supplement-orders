@@ -1,5 +1,9 @@
 import type {
+  AdminProductDto,
+  AdminProductPageDto,
   CreateOrderRequest,
+  IncrementStockRequest,
+  SetStockRequest,
   DashboardDto,
   ListOrdersQuery,
   ListPatientsQuery,
@@ -18,7 +22,6 @@ import type {
   ReplaceOrderLinesRequest,
   UserDto,
 } from '@supplement-orders/domain'
-import type { AdminProductDto, AdminProductPageDto } from '../admin/types'
 import { request } from './client'
 
 // One typed function per endpoint in FRONTEND_DESIGN.md §7.
@@ -54,15 +57,12 @@ export function incrementProductStock(productId: number, by: number) {
   return request<AdminProductDto>(
     'POST',
     `/admin/products/${productId}/stock/increment`,
-    { by },
+    { by } satisfies IncrementStockRequest,
   )
 }
 
 /** PUT .../stock: compare-and-set; 409 STOCK_CHANGED when `expected` is stale. */
-export function setProductStock(
-  productId: number,
-  body: { stockQuantity: number; expectedStockQuantity: number },
-) {
+export function setProductStock(productId: number, body: SetStockRequest) {
   return request<AdminProductDto>(
     'PUT',
     `/admin/products/${productId}/stock`,

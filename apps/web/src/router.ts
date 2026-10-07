@@ -1,4 +1,4 @@
-import type { AppRole } from './admin/types'
+import type { Role } from '@supplement-orders/domain'
 import {
   createRouter,
   createWebHistory,
@@ -16,7 +16,7 @@ import LoginView from './views/LoginView.vue'
 
 declare module 'vue-router' {
   interface RouteMeta {
-    persona?: AppRole
+    persona?: Role
   }
 }
 
