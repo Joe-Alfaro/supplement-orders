@@ -210,11 +210,21 @@ export interface ParsedReplaceOrderLinesRequest {
   lines: DraftLine[]
 }
 
+/** Draft line bounds (revision 9), checked before anything is written. */
+export const MAX_LINE_QUANTITY = 1000
+/** $10,000 per unit. */
+export const MAX_UNIT_PRICE_CENTS = 1_000_000
+
 export const orderLineInputSchema: z.ZodType<DraftLine, OrderLineInput> =
   z.strictObject({
     productId: id.nullable().default(null),
-    quantity: z.int().min(1).default(1),
-    unitPriceCents: z.int().nonnegative().nullable().default(null),
+    quantity: z.int().min(1).max(MAX_LINE_QUANTITY).default(1),
+    unitPriceCents: z
+      .int()
+      .min(0)
+      .max(MAX_UNIT_PRICE_CENTS)
+      .nullable()
+      .default(null),
   })
 
 export const replaceOrderLinesRequestSchema: z.ZodType<
@@ -225,15 +235,23 @@ export const replaceOrderLinesRequestSchema: z.ZodType<
 })
 
 /**
- * POST /api/orders/:id/pay. The body may be empty.
- * `simulateFailure` forces the fake gateway to decline; ignored when NODE_ENV is production.
+ * POST /api/orders/:id/pay (revision 9). The patient echoes the quote they saw;
+ * if the order's revision or total has changed since, the server answers 409
+ * ORDER_CHANGED and charges nothing. `simulateFailure` forces the fake gateway
+ * to decline; ignored when NODE_ENV is production.
  */
 export interface PayOrderRequest {
+  /** The order's `revision` as shown to the patient. */
+  expectedRevision: number
+  /** The `totalCents` the patient saw and is consenting to pay. */
+  expectedTotalCents: number
   simulateFailure?: boolean
 }
 
 export const payOrderRequestSchema: z.ZodType<PayOrderRequest> = z.strictObject(
   {
+    expectedRevision: z.int().min(1).max(Number.MAX_SAFE_INTEGER),
+    expectedTotalCents: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
     simulateFailure: z.boolean().optional(),
   },
 )

@@ -248,6 +248,11 @@ interface OrderSummaryBase {
   paidAt: string | null
   /** Set when a provider cancelled the order (from pending_payment; revision 6 also allowed drafts). */
   cancelledAt: string | null
+  /**
+   * The quote version (revision 9): 0 for a never-sent draft, incremented on every
+   * send, including a re-send after reopen. Pay must echo it as `expectedRevision`.
+   */
+  revision: number
 }
 
 /**
@@ -284,6 +289,7 @@ const summaryShape = {
   sentAt: timestamp.nullable(),
   paidAt: timestamp.nullable(),
   cancelledAt: timestamp.nullable(),
+  revision: z.int().nonnegative(),
 }
 
 export const providerOrderSummaryDtoSchema: z.ZodType<ProviderOrderSummaryDto> =
@@ -349,19 +355,11 @@ export const patientOrderDetailDtoSchema: z.ZodType<PatientOrderDetailDto> =
     payment: paymentDtoSchema.nullable(),
   })
 
-export interface DashboardPaidOrderDto {
-  orderId: number
-  patientId: number
-  patientName: string
-  paidAt: string
-  /** Amount the patient paid (payments.amountCents). */
-  totalCents: number
-  cogsCents: number
-  providerMarginCents: number
-  platformFeeCents: number
-}
-
-/** GET /api/dashboard (provider only). All-time values for the acting provider. */
+/**
+ * GET /api/dashboard (provider only). All-time values for the acting provider,
+ * read from one database snapshot (revision 9). The paid-order list was removed;
+ * use GET /api/orders?status=paid for it.
+ */
 export interface DashboardDto {
   /** SUM(payments.amountCents) over this provider's paid orders. */
   gmvCents: number
@@ -369,26 +367,12 @@ export interface DashboardDto {
   providerMarginCents: number
   /** SUM of platform_fee ledger entries. */
   platformFeeCents: number
-  /** Newest first. */
-  paidOrders: DashboardPaidOrderDto[]
 }
 
 export const dashboardDtoSchema: z.ZodType<DashboardDto> = z.object({
   gmvCents: cents,
   providerMarginCents: cents,
   platformFeeCents: cents,
-  paidOrders: z.array(
-    z.object({
-      orderId: id,
-      patientId: id,
-      patientName: z.string(),
-      paidAt: timestamp,
-      totalCents: cents,
-      cogsCents: cents,
-      providerMarginCents: cents,
-      platformFeeCents: cents,
-    }),
-  ),
 })
 
 export type ProductPageDto = Page<ProductDto>
