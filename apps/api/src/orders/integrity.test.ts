@@ -242,16 +242,41 @@ describe('revision 9: payment integrity and hardening', () => {
       )
     })
 
-    it('completes from the stored reference even if the gateway forgot the key (restart)', async () => {
+    it('never records an unverifiable retry: a gateway that lost the key leaves the charge unreconciled', async () => {
       const orderId = await sentAt(2000)
       await unreconciledCharge(orderId)
+      const [original] = await attemptsFor(orderId)
       ctx.gateway.reset()
 
+      const declined = await pay(ctx, orderId, { simulateFailure: true })
+      const differentCharge = await pay(ctx, orderId)
+
+      // Neither a decline nor a new reference can stand in for the known
+      // success, so nothing is recorded and the attempt is left as it was.
+      ;[declined, differentCharge].forEach((res) => {
+        expect([res.status, res.body.error.code]).toEqual([
+          409,
+          'PAYMENT_NEEDS_RECONCILIATION',
+        ])
+      })
+      expect((await moneyState(ctx, orderId)).payments).toEqual([])
+      expect(await attemptsFor(orderId)).toEqual([original])
+    })
+
+    it('a retry that the gateway replays completes the known success', async () => {
+      const orderId = await sentAt(2000)
+      await unreconciledCharge(orderId)
+      const [original] = await attemptsFor(orderId)
+
+      // The bound key replays even when this request asks for a decline.
       const retry = await pay(ctx, orderId, { simulateFailure: true })
 
-      // No new charge: the attempt's recorded success is used, not re-attempted.
       expect(retry.status).toBe(200)
-      expect(ctx.gateway.charges).toEqual([])
+      expect(retry.body.payment.reference).toBe(original!.gatewayReference)
+      expect(ctx.gateway.charges.map((c) => c.idempotencyKey)).toEqual([
+        `order-${orderId}-r1`,
+        `order-${orderId}-r1`,
+      ])
     })
 
     it('maps a key reused for another amount to 409 and never records a payment', async () => {

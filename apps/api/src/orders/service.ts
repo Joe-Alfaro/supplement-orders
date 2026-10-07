@@ -82,6 +82,9 @@ async function lockOwnedDraft(
   if (order.providerId !== user.providerId) {
     throw forbidden('This order belongs to another provider')
   }
+  // An unreconciled charge outranks the status conflict (revision 9): edits and
+  // deletes report PAYMENT_NEEDS_RECONCILIATION whatever the order's status.
+  if (action !== 'sent') await assertNoUnreconciledCharge(tx, orderId)
   if (order.status !== 'draft') {
     throw new ApiError(
       409,
@@ -142,7 +145,6 @@ export async function replaceDraftLines(
 ) {
   await db.transaction(async (tx) => {
     await lockOwnedDraft(tx, user, orderId, 'edited')
-    await assertNoUnreconciledCharge(tx, orderId)
 
     const productIds = lines.flatMap((l) =>
       l.productId === null ? [] : [l.productId],
@@ -301,7 +303,6 @@ export async function sendOrder(
 export async function deleteDraft(db: Db, user: ProviderUser, orderId: number) {
   await db.transaction(async (tx) => {
     await lockOwnedDraft(tx, user, orderId, 'deleted')
-    await assertNoUnreconciledCharge(tx, orderId)
     // A reopened draft may keep failed attempts from earlier sends; they hold no money.
     await tx.delete(paymentAttempts).where(eq(paymentAttempts.orderId, orderId))
     await tx.delete(orderItems).where(eq(orderItems.orderId, orderId))
@@ -360,9 +361,7 @@ export async function cancelOrder(
     if (order.providerId !== user.providerId) {
       throw forbidden('This order belongs to another provider')
     }
-    if (order.status === 'pending_payment') {
-      await assertNoUnreconciledCharge(tx, orderId)
-    }
+    await assertNoUnreconciledCharge(tx, orderId)
     if (order.status !== 'pending_payment') {
       throw new ApiError(
         409,
@@ -633,20 +632,15 @@ async function recordFailure(db: Db, attempt: Attempt) {
 
 /**
  * Steps 3 and 4: charge with the attempt's key and amount, then record the result
- * in its own committed transaction. An attempt already marked succeeded is not
- * charged again; its stored reference completes the payment.
+ * in its own committed transaction. Retrying an attempt already marked succeeded
+ * calls the gateway again with the same key and amount, which must replay the
+ * original charge (same reference) for the payment to be recorded.
  */
 async function chargeAttempt(
   { db, gateway, allowSimulatedFailure }: AppContext,
   attempt: Attempt,
   simulateFailure: boolean,
 ): Promise<{ reference: string; amountCents: number }> {
-  if (attempt.status === 'succeeded' && attempt.gatewayReference !== null) {
-    return {
-      reference: attempt.gatewayReference,
-      amountCents: attempt.amountCents,
-    }
-  }
   const charge = await gateway.charge(
     {
       amountCents: attempt.amountCents,
@@ -655,6 +649,24 @@ async function chargeAttempt(
     },
     { simulateFailure: allowSimulatedFailure && simulateFailure },
   )
+  if (attempt.status === 'succeeded') {
+    // A retry of a charge already known to have succeeded: the gateway must
+    // replay that same charge. Anything else (a decline, or a different
+    // reference after the gateway lost the key) cannot be verified, so the
+    // known success is left untouched and nothing is recorded.
+    if (
+      charge.status === 'succeeded' &&
+      charge.reference === attempt.gatewayReference &&
+      charge.amountCents === attempt.amountCents
+    ) {
+      return { reference: charge.reference, amountCents: attempt.amountCents }
+    }
+    throw new ApiError(
+      409,
+      'PAYMENT_NEEDS_RECONCILIATION',
+      'A payment for this order is being finalized. Try again shortly or contact support.',
+    )
+  }
   if (charge.status === 'failed') {
     await recordFailure(db, attempt)
     if (charge.failureMessage === IDEMPOTENCY_KEY_REUSED) {
