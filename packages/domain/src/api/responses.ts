@@ -346,6 +346,12 @@ interface OrderSummaryBase {
   splitFromOrderId: number | null
   /** Revision 14: this order's back-order (its direct child), or null. */
   backorderOrderId: number | null
+  /**
+   * Revision 15.3: the unpaid order this back-order was split from, while this
+   * one awaits payment or stock; null otherwise. A chain pays in order, so pay
+   * answers 409 PRIOR_ORDER_UNPAID until that order is paid.
+   */
+  blockedByOrderId: number | null
 }
 
 /**
@@ -385,6 +391,7 @@ const summaryShape = {
   revision: z.int().nonnegative(),
   splitFromOrderId: id.nullable(),
   backorderOrderId: id.nullable(),
+  blockedByOrderId: id.nullable(),
 }
 
 export const providerOrderSummaryDtoSchema: z.ZodType<ProviderOrderSummaryDto> =
@@ -402,12 +409,47 @@ export const patientOrderSummaryDtoSchema: z.ZodType<PatientOrderSummaryDto> =
   })
 
 /**
+ * Revision 15.1: an unresolved payment attempt on the order (pending, succeeded
+ * without a recorded payment, or in conflict). The patient completes it by
+ * paying again with exactly this revision and amount (`mode: 'full'`), which
+ * never starts a new charge.
+ */
+export interface PaymentInProgressDto {
+  revision: number
+  amountCents: number
+}
+
+export const paymentInProgressDtoSchema: z.ZodType<PaymentInProgressDto> =
+  z.object({
+    revision: z.int().min(1),
+    amountCents: cents,
+  })
+
+/** Revision 15 fields shared by both detail views. */
+interface OrderDetailExtras {
+  /** Revision 15.1: set while a payment attempt is unresolved, else null. */
+  paymentInProgress: PaymentInProgressDto | null
+  /**
+   * Revision 15.3: the status of this order's back-order (`backorderOrderId`),
+   * or null without one. A cancelled original whose back-order is cancelled
+   * shows "Back-order #B was cancelled with this order."
+   */
+  backorderStatus: OrderStatus | null
+}
+
+const detailExtrasShape = {
+  paymentInProgress: paymentInProgressDtoSchema.nullable(),
+  backorderStatus: z.enum(ORDER_STATUSES).nullable(),
+}
+
+/**
  * Returned by POST /api/orders (201), PUT /api/orders/:id/lines, POST /api/orders/:id/send,
  * POST /api/orders/:id/cancel, POST /api/orders/:id/reopen, and GET /api/orders/:id when
  * the caller is the order's provider. DELETE /api/orders/:id returns 204 with no body.
  * `payment` and `ledger` are populated once paid; ledger is empty before that.
  */
-export interface ProviderOrderDetailDto extends ProviderOrderSummaryDto {
+export interface ProviderOrderDetailDto
+  extends ProviderOrderSummaryDto, OrderDetailExtras {
   /** `YYYY-MM-DD`, so the provider can confirm the right patient before sending. */
   patientDateOfBirth: string
   patientAddress: string
@@ -422,7 +464,8 @@ export interface ProviderOrderDetailDto extends ProviderOrderSummaryDto {
  * Returned by GET /api/orders/:id and POST /api/orders/:id/pay when the caller is the
  * order's patient. Contains no wholesale cost, platform fee, margin, or ledger.
  */
-export interface PatientOrderDetailDto extends PatientOrderSummaryDto {
+export interface PatientOrderDetailDto
+  extends PatientOrderSummaryDto, OrderDetailExtras {
   patientAddress: string
   lines: OrderLineDto[]
   payment: PaymentDto | null
@@ -443,6 +486,7 @@ export const providerOrderDetailDtoSchema: z.ZodType<ProviderOrderDetailDto> =
     payment: paymentDtoSchema.nullable(),
     ledger: z.array(ledgerEntryDtoSchema),
     partialPaymentQuote: partialPaymentQuoteDtoSchema.nullable(),
+    ...detailExtrasShape,
   })
 
 export const patientOrderDetailDtoSchema: z.ZodType<PatientOrderDetailDto> =
@@ -454,6 +498,7 @@ export const patientOrderDetailDtoSchema: z.ZodType<PatientOrderDetailDto> =
     lines: z.array(orderLineDtoSchema),
     payment: paymentDtoSchema.nullable(),
     partialPaymentQuote: partialPaymentQuoteDtoSchema.nullable(),
+    ...detailExtrasShape,
   })
 
 /**
@@ -549,6 +594,8 @@ export interface ProviderOrderListItemDto {
   /** Revision 14 links, as on the order summary. */
   splitFromOrderId: number | null
   backorderOrderId: number | null
+  /** Revision 15.3, as on the order summary. */
+  blockedByOrderId: number | null
 }
 
 export const providerOrderListItemDtoSchema: z.ZodType<ProviderOrderListItemDto> =
@@ -565,6 +612,7 @@ export const providerOrderListItemDtoSchema: z.ZodType<ProviderOrderListItemDto>
     cancelledAt: timestamp.nullable(),
     splitFromOrderId: id.nullable(),
     backorderOrderId: id.nullable(),
+    blockedByOrderId: id.nullable(),
   })
 
 export type ProviderOrderListPageDto = Page<ProviderOrderListItemDto>

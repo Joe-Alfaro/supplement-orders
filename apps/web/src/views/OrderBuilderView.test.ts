@@ -90,8 +90,11 @@ function draftDetail(
 ): ProviderOrderDetailDto {
   return {
     partialPaymentQuote: null,
+    paymentInProgress: null,
+    backorderStatus: null,
     splitFromOrderId: null,
     backorderOrderId: null,
+    blockedByOrderId: null,
     id: 99,
     view: 'provider',
     revision: 0,

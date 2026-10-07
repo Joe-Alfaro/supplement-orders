@@ -15,6 +15,7 @@ function order(id: number, providerName: string): PatientOrderSummaryDto {
   return {
     splitFromOrderId: null,
     backorderOrderId: null,
+    blockedByOrderId: null,
     id,
     view: 'patient',
     revision: 1,

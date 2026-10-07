@@ -91,7 +91,10 @@ const base: PatientOrderDetailDto = {
   payment: null,
   splitFromOrderId: null,
   backorderOrderId: null,
+  blockedByOrderId: null,
   partialPaymentQuote: quoteOf(15000, 3000),
+  paymentInProgress: null,
+  backorderStatus: null,
 }
 
 const limited = base
@@ -180,6 +183,10 @@ describe('PatientOrderView with limited stock', () => {
 
     expect(api.payOrder).toHaveBeenCalledWith(42, {
       mode: 'available',
+      expectedPayableLines: [
+        { productId: 1, quantity: 3 },
+        { productId: 2, quantity: 3 },
+      ],
       expectedRevision: 3,
       expectedTotalCents: 15000,
     })

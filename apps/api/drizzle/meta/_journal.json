@@ -92,6 +92,13 @@
       "when": 1791398576682,
       "tag": "0012_rev14_backorders",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1791417040922,
+      "tag": "0013_rev15_frozen_paid_orders",
+      "breakpoints": true
     }
   ]
 }

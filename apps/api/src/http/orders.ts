@@ -144,6 +144,7 @@ export function ordersRouter(ctx: AppContext) {
       expectedTotalCents: body.expectedTotalCents,
       simulateFailure: body.simulateFailure === true,
       mode: body.mode ?? 'full',
+      expectedPayableLines: body.expectedPayableLines,
     })
     res.json(await loadPatientOrderDetail(db, orderId))
   })

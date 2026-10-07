@@ -28,6 +28,7 @@ const base = {
   totalCents: null,
   splitFromOrderId: null,
   backorderOrderId: null,
+  blockedByOrderId: null,
 }
 
 const ORDERS: Record<OrderStatus, ProviderOrderListItemDto> = {

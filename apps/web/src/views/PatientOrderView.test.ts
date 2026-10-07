@@ -13,8 +13,11 @@ vi.mock('../api', async (importOriginal) => {
 
 const pending: PatientOrderDetailDto = {
   partialPaymentQuote: null,
+  paymentInProgress: null,
+  backorderStatus: null,
   splitFromOrderId: null,
   backorderOrderId: null,
+  blockedByOrderId: null,
   id: 42,
   view: 'patient',
   revision: 1,

@@ -3,10 +3,12 @@ import {
   computeSplit,
   partialPaymentQuoteDto,
   planPartialPayment,
+  samePayableLines,
   SplitValidationError,
   toLedgerEntries,
   ORDER_STATUS_LABELS,
   type DraftLine,
+  type ExpectedPayableLine,
   type LowStockLineDto,
   type OrderStatus,
   type PartialPaymentPlan,
@@ -22,6 +24,7 @@ import {
   gte,
   inArray,
   isNull,
+  ne,
   notInArray,
   sql,
 } from 'drizzle-orm'
@@ -142,7 +145,8 @@ export async function createDraft(
  * Replaces every line of a draft, keeping request order. Lines may be incomplete
  * (no product or no price yet). Saving rejects only what can never become valid:
  * a duplicate or unknown product. Completeness, stock, and the minimum price are
- * checked on send. Wholesale cost is snapshotted now and refreshed on send.
+ * checked on send. Wholesale cost, product name and SKU (revision 15.5) are
+ * snapshotted now and refreshed on send.
  */
 export async function replaceDraftLines(
   db: Db,
@@ -174,15 +178,27 @@ export async function replaceDraftLines(
       productIds.length === 0
         ? []
         : await tx
-            .select({ id: products.id, cogsCents: products.cogsCents })
+            .select({
+              id: products.id,
+              cogsCents: products.cogsCents,
+              name: products.name,
+              sku: products.sku,
+            })
             .from(products)
             .where(inArray(products.id, productIds))
-    const cogsById = new Map(productRows.map((p) => [p.id, p.cogsCents]))
+    const productById = new Map(productRows.map((p) => [p.id, p]))
     const rows = lines.map((line, index) => {
-      if (line.productId === null)
-        return { ...line, orderId, unitCogsCents: null }
-      const unitCogsCents = cogsById.get(line.productId)
-      if (unitCogsCents === undefined) {
+      if (line.productId === null) {
+        return {
+          ...line,
+          orderId,
+          unitCogsCents: null,
+          productName: null,
+          productSku: null,
+        }
+      }
+      const product = productById.get(line.productId)
+      if (product === undefined) {
         throw new ApiError(
           422,
           'UNKNOWN_PRODUCT',
@@ -190,7 +206,13 @@ export async function replaceDraftLines(
           `lines.${index}.productId`,
         )
       }
-      return { ...line, orderId, unitCogsCents }
+      return {
+        ...line,
+        orderId,
+        unitCogsCents: product.cogsCents,
+        productName: product.name,
+        productSku: product.sku,
+      }
     })
 
     await tx.delete(orderItems).where(eq(orderItems.orderId, orderId))
@@ -216,8 +238,8 @@ function incompleteLine(index: number, part: 'productId' | 'unitPriceCents') {
  * Draft -> pending_payment. Requires at least one line, every line complete,
  * and every price at or above its minimum (via computeSplit). Quantities above
  * available stock need `acknowledgeLowStock` (revision 14); stock is not
- * reserved here. Re-snapshots wholesale cost and persists the split. Notifies
- * after commit.
+ * reserved here. Re-snapshots wholesale cost, product name and SKU, and
+ * persists the split. Notifies after commit.
  */
 export async function sendOrder(
   { db, notifier }: AppContext,
@@ -232,6 +254,7 @@ export async function sendOrder(
         itemId: orderItems.id,
         productId: orderItems.productId,
         productName: products.name,
+        productSku: products.sku,
         quantity: orderItems.quantity,
         unitPriceCents: orderItems.unitPriceCents,
         currentCogsCents: products.cogsCents,
@@ -253,6 +276,7 @@ export async function sendOrder(
       if (
         row.productId === null ||
         row.productName === null ||
+        row.productSku === null ||
         row.currentCogsCents === null ||
         row.stockQuantity === null
       ) {
@@ -265,6 +289,7 @@ export async function sendOrder(
         itemId: row.itemId,
         productId: row.productId,
         productName: row.productName,
+        productSku: row.productSku,
         quantity: row.quantity,
         unitPriceCents: row.unitPriceCents,
         unitCogsCents: row.currentCogsCents,
@@ -295,7 +320,11 @@ export async function sendOrder(
       lines.map((line) =>
         tx
           .update(orderItems)
-          .set({ unitCogsCents: line.unitCogsCents })
+          .set({
+            unitCogsCents: line.unitCogsCents,
+            productName: line.productName,
+            productSku: line.productSku,
+          })
           .where(eq(orderItems.id, line.itemId)),
       ),
     )
@@ -322,18 +351,72 @@ export async function sendOrder(
 }
 
 /**
+ * Revision 15.3: the ids of every back-order downstream of `orderId` (its
+ * child, the child's child, and so on), ascending. A back-order is always
+ * created after the order it splits from, so ascending id is chain order.
+ */
+async function descendantIds(tx: Tx, orderId: number): Promise<number[]> {
+  const rows = await tx.execute<{ id: number }>(sql`
+    with recursive chain(id) as (
+      select id from orders where split_from_order_id = ${orderId}
+      union all
+      select o.id from orders o join chain c on o.split_from_order_id = c.id
+    )
+    select id from chain order by id`)
+  return rows.rows.map((row) => Number(row.id))
+}
+
+/**
+ * Locks every downstream back-order of an already locked order, in ascending
+ * id (revision 15.3), and returns them in that order. A split only happens
+ * under the lock of the order being split, so once the whole chain is locked
+ * it can't grow; if it grew while locking, lock the newcomers too.
+ */
+async function lockDescendants(tx: Tx, orderId: number): Promise<Order[]> {
+  const ids = await descendantIds(tx, orderId)
+  if (ids.length === 0) return []
+  const locked = await tx
+    .select()
+    .from(orders)
+    .where(inArray(orders.id, ids))
+    .orderBy(asc(orders.id))
+    .for('update')
+  const after = await descendantIds(tx, orderId)
+  if (after.length === ids.length) return locked
+  return lockDescendants(tx, orderId)
+}
+
+/**
  * Permanently deletes a draft and its lines. Safe because a draft was never sent
  * and so has no payment or ledger rows. Takes the order row lock, so a concurrent
  * send serializes with it: if send wins, the delete gets 409 ORDER_NOT_DRAFT; if
  * the delete wins, the send finds no order (404).
+ *
+ * Revision 15.3: a reopened original can still have back-orders, cancelled with
+ * it and never paid. They are deleted with it, in the same transaction.
  */
 export async function deleteDraft(db: Db, user: ProviderUser, orderId: number) {
   await db.transaction(async (tx) => {
     await lockOwnedDraft(tx, user, orderId, 'deleted')
+    const chain = await lockDescendants(tx, orderId)
+    const chainIds = chain.map((o) => o.id)
+    await assertNoUnreconciledCharge(tx, chainIds)
+    const paid = chain.find((o) => o.status === 'paid')
+    if (paid) {
+      throw new ApiError(
+        409,
+        'ORDER_NOT_DRAFT',
+        `Back-order #${paid.id} of this order is paid, so the order can't be deleted.`,
+      )
+    }
+    const ids = [orderId, ...chainIds]
     // A reopened draft may keep failed attempts from earlier sends; they hold no money.
-    await tx.delete(paymentAttempts).where(eq(paymentAttempts.orderId, orderId))
-    await tx.delete(orderItems).where(eq(orderItems.orderId, orderId))
-    await tx.delete(orders).where(eq(orders.id, orderId))
+    await tx
+      .delete(paymentAttempts)
+      .where(inArray(paymentAttempts.orderId, ids))
+    await tx.delete(orderItems).where(inArray(orderItems.orderId, ids))
+    // One statement, so each back-order's link to its parent goes with it.
+    await tx.delete(orders).where(inArray(orders.id, ids))
   })
 }
 
@@ -384,13 +467,18 @@ export async function reopenOrder(db: Db, user: ProviderUser, orderId: number) {
  * a concurrent cancel and pay serialize: whichever commits first wins and the
  * other gets a 409. No ledger rows, no stock change (stock only moves on pay).
  * The patient is notified only if the order had been sent to them.
+ *
+ * Revision 15.3: every downstream back-order awaiting payment or stock is
+ * cancelled with it, its chain locked in ascending id. An unresolved payment
+ * attempt anywhere in that chain refuses the whole cancel (409) and changes
+ * nothing. Back-orders already cancelled stay as they are.
  */
 export async function cancelOrder(
   { db, notifier }: AppContext,
   user: ProviderUser,
   orderId: number,
 ) {
-  const wasSent = await db.transaction(async (tx) => {
+  const sentIds = await db.transaction(async (tx) => {
     const order = await lockOrder(tx, orderId)
     if (order.providerId !== user.providerId) {
       throw forbidden('This order belongs to another provider')
@@ -403,19 +491,37 @@ export async function cancelOrder(
         `This order is ${statusInSentence(order.status)}; only orders awaiting payment can be cancelled.`,
       )
     }
+    // Revision 15.3: the downstream back-orders go with it, all or nothing.
+    const chain = await lockDescendants(tx, orderId)
+    await assertNoUnreconciledCharge(
+      tx,
+      chain.map((o) => o.id),
+    )
+    const cancelled = [
+      order,
+      ...chain.filter((o) => o.status === 'pending_payment'),
+    ]
     const now = new Date()
     await tx
       .update(orders)
       .set({ status: 'cancelled', cancelledAt: now, updatedAt: now })
-      .where(eq(orders.id, orderId))
-    return order.sentAt !== null
+      .where(
+        inArray(
+          orders.id,
+          cancelled.map((o) => o.id),
+        ),
+      )
+    return cancelled.filter((o) => o.sentAt !== null).map((o) => o.id)
   })
 
-  if (!wasSent) return
   // Already committed; a notification failure must not undo the cancel.
-  await notifier.notifyPatientOrderCancelled(orderId).catch((err: unknown) => {
-    console.error(`[notifier] cancel notice failed for order ${orderId}`, err)
-  })
+  await Promise.all(
+    sentIds.map((id) =>
+      notifier.notifyPatientOrderCancelled(id).catch((err: unknown) => {
+        console.error(`[notifier] cancel notice failed for order ${id}`, err)
+      }),
+    ),
+  )
 }
 
 /** One idempotency key per quote: a re-sent order is a new quote with a new key. */
@@ -450,14 +556,19 @@ function orderChanged(partialPaymentQuote?: PartialPaymentQuoteDto) {
  * the gateway call runs outside the order lock and a cancel committed while a
  * charge is in flight would strand that charge on an order that can't be paid.)
  */
-async function assertNoUnreconciledCharge(tx: Tx, orderId: number) {
+async function assertNoUnreconciledCharge(
+  tx: Tx,
+  orderIds: number | readonly number[],
+) {
+  const ids = typeof orderIds === 'number' ? [orderIds] : [...orderIds]
+  if (ids.length === 0) return
   const [open] = await tx
     .select({ id: paymentAttempts.id })
     .from(paymentAttempts)
     .leftJoin(payments, eq(payments.paymentAttemptId, paymentAttempts.id))
     .where(
       and(
-        eq(paymentAttempts.orderId, orderId),
+        inArray(paymentAttempts.orderId, ids),
         inArray(paymentAttempts.status, ['pending', 'succeeded', 'conflict']),
         isNull(payments.id),
       ),
@@ -480,6 +591,8 @@ interface PayLine {
   quantity: number
   unitPriceCents: number
   unitCogsCents: number
+  productName: string | null
+  productSku: string | null
 }
 
 /** The snapshotted lines of a sent order, in line order, with their indexes. */
@@ -491,13 +604,26 @@ async function loadPayLines(tx: Tx, orderId: number): Promise<PayLine[]> {
       quantity: orderItems.quantity,
       unitPriceCents: orderItems.unitPriceCents,
       unitCogsCents: orderItems.unitCogsCents,
+      productName: orderItems.productName,
+      productSku: orderItems.productSku,
     })
     .from(orderItems)
     .where(eq(orderItems.orderId, orderId))
     .orderBy(asc(orderItems.id))
   // Send is the only way out of draft and it rejects incomplete lines.
   return rows.map(
-    ({ lineId, productId, unitPriceCents, unitCogsCents, quantity }, index) => {
+    (
+      {
+        lineId,
+        productId,
+        unitPriceCents,
+        unitCogsCents,
+        quantity,
+        productName,
+        productSku,
+      },
+      index,
+    ) => {
       if (
         productId === null ||
         unitPriceCents === null ||
@@ -512,6 +638,8 @@ async function loadPayLines(tx: Tx, orderId: number): Promise<PayLine[]> {
         quantity,
         unitPriceCents,
         unitCogsCents,
+        productName,
+        productSku,
       }
     },
   )
@@ -572,6 +700,45 @@ export interface PayRequest {
   simulateFailure: boolean
   /** Revision 14; `full` unless the patient chose to pay for what is in stock. */
   mode: PayMode
+  /** Revision 15.2: the in-stock lines the patient approved (`available` only). */
+  expectedPayableLines?: readonly ExpectedPayableLine[]
+}
+
+function asPayable(lines: readonly PayLine[]): ExpectedPayableLine[] {
+  return lines.map(({ productId, quantity }) => ({ productId, quantity }))
+}
+
+/**
+ * Revision 15.2: an `available` pay approves exactly these lines; any other
+ * set, even at the same revision and total, is a changed order.
+ */
+function approvesLines(request: PayRequest, lines: readonly PayLine[]) {
+  return (
+    request.mode !== 'available' ||
+    samePayableLines(request.expectedPayableLines ?? [], asPayable(lines))
+  )
+}
+
+/**
+ * Revision 15.3: a back-order can't be paid while the order it was split from
+ * is unpaid, whatever the stock. Paid is final, so no lock is needed on it.
+ */
+async function assertPriorOrderPaid(tx: Tx, order: Order) {
+  if (order.splitFromOrderId === null) return
+  const [prior] = await tx
+    .select({ id: orders.id })
+    .from(orders)
+    .where(
+      and(eq(orders.id, order.splitFromOrderId), ne(orders.status, 'paid')),
+    )
+  if (!prior) return
+  throw new ApiError(
+    409,
+    'PRIOR_ORDER_UNPAID',
+    `Pay order #${prior.id} first; this back-order can be paid once it is.`,
+    undefined,
+    { priorOrderId: prior.id },
+  )
 }
 
 type Order = typeof orders.$inferSelect
@@ -688,6 +855,8 @@ async function splitOrder(
       quantity: line.quantity,
       unitPriceCents: line.unitPriceCents,
       unitCogsCents: line.unitCogsCents,
+      productName: line.productName,
+      productSku: line.productSku,
     })),
   )
   const kept = new Set(plan.payLines.map((line) => line.lineId))
@@ -773,6 +942,16 @@ async function preparePayment(
         `This order is ${statusInSentence(order.status)} and can't be paid.`,
       )
     }
+    const attempts = await tx
+      .select()
+      .from(paymentAttempts)
+      .where(eq(paymentAttempts.orderId, orderId))
+      .orderBy(asc(paymentAttempts.revision), asc(paymentAttempts.execution))
+    // An unresolved attempt is always completed; only a new charge waits for
+    // the prior order in the chain (revision 15.3).
+    if (attempts.every((a) => a.status === 'declined')) {
+      await assertPriorOrderPaid(tx, order)
+    }
     // A full pay's quote is the stored total; an available pay's depends on
     // stock, so it is checked once the plan is made.
     if (
@@ -783,11 +962,6 @@ async function preparePayment(
       throw orderChanged()
     }
 
-    const attempts = await tx
-      .select()
-      .from(paymentAttempts)
-      .where(eq(paymentAttempts.orderId, orderId))
-      .orderBy(asc(paymentAttempts.revision), asc(paymentAttempts.execution))
     // An unresolved outcome from an earlier quote must be settled first (N1).
     const olderUnresolved = attempts.some(
       (a) => a.revision !== order.revision && a.status !== 'declined',
@@ -801,7 +975,8 @@ async function preparePayment(
       // plan: it is the same quote, retried.
       if (
         order.revision !== expectedRevision ||
-        order.totalCents !== expectedTotalCents
+        order.totalCents !== expectedTotalCents ||
+        !approvesLines(request, lines)
       ) {
         throw orderChanged()
       }
@@ -827,7 +1002,8 @@ async function preparePayment(
     const stale =
       order.revision !== expectedRevision ||
       (mode === 'full' ? order.totalCents : quote.pay.totalCents) !==
-        expectedTotalCents
+        expectedTotalCents ||
+      !approvesLines(request, plan.payLines)
     if (mode === 'full') {
       if (stale) throw orderChanged()
       if (plan.hasShortfall) throw insufficientStock(lines, stock, quote)

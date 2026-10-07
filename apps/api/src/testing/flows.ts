@@ -3,8 +3,9 @@ import {
   type DraftLine,
   type OrderLineInput,
 } from '@supplement-orders/domain'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { expect } from 'vitest'
+import type { Db } from '../db/client'
 import { ledgerEntries, orders, payments, products } from '../db/schema'
 import type { InternalTestContext, TestContext } from './harness'
 
@@ -121,4 +122,30 @@ export async function setStock(
     .update(products)
     .set({ stockQuantity })
     .where(eq(products.id, productId))
+}
+
+type FixtureTx = Parameters<Parameters<Db['transaction']>[0]>[0]
+
+/**
+ * Test fixtures only: runs `write` with migration 0013's paid-order freeze
+ * switched off for this one transaction, e.g. to pin a paid order's paid_at.
+ * The application never does this; ALTER TABLE is transactional, so the
+ * trigger is back on for everyone the moment this commits or rolls back.
+ */
+export async function withPaidOrdersUnfrozen<T>(
+  db: Db,
+  write: (tx: FixtureTx) => Promise<T>,
+): Promise<T> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`alter table orders disable trigger orders_paid_frozen`)
+    await tx.execute(
+      sql`alter table order_items disable trigger order_items_paid_frozen`,
+    )
+    const result = await write(tx)
+    await tx.execute(sql`alter table orders enable trigger orders_paid_frozen`)
+    await tx.execute(
+      sql`alter table order_items enable trigger order_items_paid_frozen`,
+    )
+    return result
+  })
 }

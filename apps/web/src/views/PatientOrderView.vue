@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import type { PatientOrderDetailDto } from '@supplement-orders/domain'
+import {
+  expectedPayableLinesOf,
+  type PatientOrderDetailDto,
+} from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import Message from 'primevue/message'
 import { computed, onMounted, ref, watch } from 'vue'
@@ -96,7 +99,12 @@ async function pay() {
     // Pay exactly the quote on screen (revision 9); nothing is charged if it changed.
     const partial = limited.value
     order.value = await payOrder(shown.id, {
-      ...(partial ? { mode: 'available' as const } : {}),
+      ...(partial
+        ? {
+            mode: 'available' as const,
+            expectedPayableLines: expectedPayableLinesOf(shown.lines),
+          }
+        : {}),
       expectedRevision: shown.revision,
       expectedTotalCents: partial
         ? (quote.value?.pay.totalCents ?? 0)

@@ -19,15 +19,19 @@ import {
  *   business rule failed. INCOMPLETE_LINE (send only) names the missing part,
  *   e.g. `lines.1.productId` or `lines.0.unitPriceCents`. EMPTY_ORDER has no field.
  * - 409 ORDER_CHANGED: pay's expectedRevision/expectedTotalCents no longer match the order.
- *   With `mode: 'available'` the body carries the fresh `partialPaymentQuote` (revision 14).
+ *   With `mode: 'available'` the body carries the fresh `partialPaymentQuote` (revision 14),
+ *   and a different set of `expectedPayableLines` is a change too (revision 15.2).
  * - 409 INSUFFICIENT_STOCK (revision 14): a `full` pay found a line short of stock; the
  *   body carries `availability` per line and the current `partialPaymentQuote`. Nothing was charged.
  * - 409 AWAITING_STOCK (revision 14): an `available` pay found nothing in stock to pay for.
  * - 409 LOW_STOCK_UNACKNOWLEDGED (revision 14): send found lines above available stock
  *   without `acknowledgeLowStock: true`; the body lists them in `lines`.
  * - 409 BACKORDER_NOT_EDITABLE (revision 14): a back-order can never be reopened as a draft.
+ * - 409 PRIOR_ORDER_UNPAID (revision 15.3): a back-order can't be paid while the order it
+ *   was split from is unpaid, whatever the stock; the body carries `priorOrderId`.
  * - 409 PAYMENT_NEEDS_RECONCILIATION: a charge succeeded but its payment was not recorded;
- *   cancel, reopen, delete and line edits are blocked until a retried pay completes it
+ *   cancel, reopen, delete and line edits are blocked until a retried pay completes it.
+ *   Cancel and delete check every order in the back-order chain (revision 15.3).
  * - 409 IDEMPOTENCY_KEY_REUSED: the gateway refused a known key with a different amount
  * - 409 STOCK_CHANGED (revision 13): an admin's stock set expected a value that is no
  *   longer current; the body carries `currentStockQuantity`
@@ -53,6 +57,7 @@ export const API_ERROR_CODES = [
   'AWAITING_STOCK',
   'LOW_STOCK_UNACKNOWLEDGED',
   'BACKORDER_NOT_EDITABLE',
+  'PRIOR_ORDER_UNPAID',
   'EMPTY_ORDER',
   'INVALID_QUANTITY',
   'INVALID_AMOUNT',
@@ -120,6 +125,8 @@ export interface ApiErrorBody {
   partialPaymentQuote?: PartialPaymentQuoteDto
   /** LOW_STOCK_UNACKNOWLEDGED only. */
   lines?: LowStockLineDto[]
+  /** PRIOR_ORDER_UNPAID only: the unpaid order to pay first. */
+  priorOrderId?: number
 }
 
 export interface ApiErrorResponse {
@@ -179,6 +186,23 @@ export const lowStockUnacknowledgedErrorResponseSchema: z.ZodType<LowStockUnackn
     }),
   })
 
+export interface PriorOrderUnpaidErrorResponse {
+  error: {
+    code: 'PRIOR_ORDER_UNPAID'
+    message: string
+    priorOrderId: number
+  }
+}
+
+export const priorOrderUnpaidErrorResponseSchema: z.ZodType<PriorOrderUnpaidErrorResponse> =
+  z.object({
+    error: z.object({
+      code: z.literal('PRIOR_ORDER_UNPAID'),
+      message: z.string(),
+      priorOrderId: z.int().positive(),
+    }),
+  })
+
 export const apiErrorResponseSchema: z.ZodType<ApiErrorResponse> = z.object({
   error: z.object({
     code: z.enum(API_ERROR_CODES),
@@ -188,5 +212,6 @@ export const apiErrorResponseSchema: z.ZodType<ApiErrorResponse> = z.object({
     availability: z.array(stockAvailabilityDtoSchema).optional(),
     partialPaymentQuote: partialPaymentQuoteDtoSchema.optional(),
     lines: z.array(lowStockLineDtoSchema).optional(),
+    priorOrderId: z.int().positive().optional(),
   }),
 })

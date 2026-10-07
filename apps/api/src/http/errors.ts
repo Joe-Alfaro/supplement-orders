@@ -14,7 +14,11 @@ export class ApiError extends Error {
     /** Extra error-body fields some codes carry, e.g. STOCK_CHANGED. */
     readonly details: Pick<
       ApiErrorBody,
-      'currentStockQuantity' | 'availability' | 'partialPaymentQuote' | 'lines'
+      | 'currentStockQuantity'
+      | 'availability'
+      | 'partialPaymentQuote'
+      | 'lines'
+      | 'priorOrderId'
     > = {},
   ) {
     super(message)
