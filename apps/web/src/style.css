@@ -142,6 +142,13 @@ main {
   font-weight: 600;
 }
 
+.errors {
+  margin: 0.75rem 0 0;
+  padding-left: 1.25rem;
+  font-size: 0.85rem;
+  color: var(--p-red-700);
+}
+
 .search {
   display: flex;
   flex-direction: column;

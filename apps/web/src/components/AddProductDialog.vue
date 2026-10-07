@@ -10,7 +10,6 @@ import Dialog from 'primevue/dialog'
 import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
-import Message from 'primevue/message'
 import { computed, nextTick, ref, watch } from 'vue'
 import { searchProducts } from '../api'
 import {
@@ -74,6 +73,33 @@ const priceError = computed(
     pricing.value.errors.unitPriceCents ??
     (attempted.value ? belowMinimumError.value : null),
 )
+
+interface DialogError {
+  id: string
+  label: string
+  text: string
+}
+
+/** One entry per invalid input, in field order; each id is that input's aria-describedby target. */
+const errorItems = computed<DialogError[]>(() => {
+  const { quantity, markup } = pricing.value.errors
+  const candidates: Array<DialogError | null> = [
+    quantity
+      ? { id: 'add-product-qty-error', label: 'Qty', text: quantity }
+      : null,
+    markup
+      ? { id: 'add-product-markup-error', label: 'Markup %', text: markup }
+      : null,
+    priceError.value
+      ? {
+          id: 'add-product-price-error',
+          label: 'Patient price (each)',
+          text: priceError.value,
+        }
+      : null,
+  ]
+  return candidates.filter((item): item is DialogError => item !== null)
+})
 
 const title = computed(() =>
   step.value === 2 && chosen.value
@@ -297,14 +323,6 @@ function addToOrder() {
             "
             @update:model-value="quantityInput = $event ?? ''"
           />
-          <Message
-            v-if="pricing.errors.quantity"
-            id="add-product-qty-error"
-            severity="error"
-            size="small"
-            variant="simple"
-            >{{ pricing.errors.quantity }}</Message
-          >
         </div>
         <div class="field">
           <label for="add-product-markup">Markup %</label>
@@ -330,22 +348,12 @@ function addToOrder() {
           <small v-if="zeroCost" id="add-product-markup-na" class="hint"
             >No markup on a $0 cost; enter the price.</small
           >
-          <Message
-            v-if="pricing.errors.markup"
-            id="add-product-markup-error"
-            severity="error"
-            size="small"
-            variant="simple"
-            >{{ pricing.errors.markup }}</Message
-          >
         </div>
         <div class="field">
           <!-- Read-only by nature: plain text in a labelled <output>, not a control. -->
           <label for="add-product-fee">{{ feeLabel }}</label>
           <output id="add-product-fee" class="fee-value" aria-live="polite">{{
-            pricing.lineFeeCents === null
-              ? ''
-              : formatCents(pricing.lineFeeCents)
+            formatCents(pricing.lineFeeCents ?? 0)
           }}</output>
         </div>
         <div class="field">
@@ -357,29 +365,20 @@ function addToOrder() {
             placeholder="0.00"
             :model-value="priceInput"
             :invalid="Boolean(priceError) || pricing.belowMinimum"
-            aria-describedby="add-product-min add-product-price-error"
+            :aria-describedby="
+              priceError ? 'add-product-price-error' : undefined
+            "
             @update:model-value="onPrice($event ?? '')"
             @blur="priceInput = normalizedPriceInput(priceInput)"
           />
-          <small
-            v-if="pricing.minPriceCents !== null"
-            id="add-product-min"
-            class="hint"
-            :class="{ negative: pricing.belowMinimum }"
-          >
-            Min {{ formatCents(pricing.minPriceCents) }}</small
-          >
         </div>
       </div>
-      <div aria-live="polite">
-        <Message
-          v-if="priceError"
-          id="add-product-price-error"
-          severity="error"
-          size="small"
-          variant="simple"
-          >{{ priceError }}</Message
-        >
+      <div aria-live="polite" data-testid="add-product-errors">
+        <ul v-if="errorItems.length" class="errors" aria-label="Errors">
+          <li v-for="item in errorItems" :id="item.id" :key="item.id">
+            {{ item.label }} - {{ item.text }}
+          </li>
+        </ul>
       </div>
       <p>
         Line total:

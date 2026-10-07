@@ -479,10 +479,60 @@ describe('Add-product modal', () => {
     await user.click(screen.getByRole('button', { name: 'Add to order' }))
 
     expect(
-      screen.getByText('Price must be at least $10.08'),
+      screen.getByText('Patient price (each) - Price must be at least $10.08'),
     ).toBeInTheDocument()
     expect(dialog()).toBeInTheDocument()
     expect(screen.queryByTestId('product-0')).not.toBeInTheDocument()
+  })
+
+  it('lists every step 2 error in one live area, in field order', async () => {
+    const user = userEvent.setup()
+    await renderBuilder()
+    await openAddProduct(user)
+    await chooseProduct(user, 'Omega-3')
+
+    await fill(user, 'Qty', '0')
+    await fill(user, 'Patient price (each)', '10.05')
+    await fill(user, 'Markup %', 'abc')
+    await user.click(screen.getByRole('button', { name: 'Add to order' }))
+
+    const area = within(dialog()).getByRole('list', { name: 'Errors' })
+    const items = within(area).getAllByRole('listitem')
+    expect(items.map((item) => item.textContent)).toEqual([
+      'Qty - Enter a whole number of 1 or more',
+      'Markup % - Enter a markup of 0 or more, with up to two decimals',
+      'Patient price (each) - Price must be at least $10.08',
+    ])
+    expect(screen.getByTestId('add-product-errors')).toHaveAttribute(
+      'aria-live',
+      'polite',
+    )
+    const labels = ['Qty', 'Markup %', 'Patient price (each)']
+    labels.forEach((label, index) => {
+      const item = items[index]
+      const input = screen.getByRole('textbox', { name: label })
+      expect(input).toHaveAttribute('aria-invalid', 'true')
+      expect(input.getAttribute('aria-describedby')).toContain(item?.id)
+      expect(item?.id).toBeTruthy()
+    })
+    expect(screen.queryByText(/^Min \$/)).not.toBeInTheDocument()
+    expect(
+      within(dialog()).getByRole('status', { name: 'Processing fee (0.75%)' }),
+    ).toHaveTextContent('$0.00')
+  })
+
+  it('takes no space for the error area when there are no errors', async () => {
+    const user = userEvent.setup()
+    await renderBuilder()
+    await openAddProduct(user)
+    await chooseProduct(user, 'Omega-3')
+
+    expect(
+      within(dialog()).queryByRole('list', { name: 'Errors' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('textbox', { name: 'Patient price (each)' }),
+    ).not.toHaveAttribute('aria-describedby')
   })
 
   it('closes on Escape and returns focus to Add line', async () => {
@@ -696,7 +746,7 @@ describe('OrderBuilderView patient and stock', () => {
       screen.queryByRole('textbox', { name: /Processing fee/ }),
     ).not.toBeInTheDocument()
     await fill(user, 'Patient price (each)', '')
-    expect(fee).toBeEmptyDOMElement()
+    expect(fee).toHaveTextContent('$0.00')
     await fill(user, 'Patient price (each)', '20')
 
     await user.click(screen.getByRole('button', { name: 'Add to order' }))
@@ -716,12 +766,14 @@ describe('OrderBuilderView patient and stock', () => {
     // Step 2: both bounds are inline errors and block Add to order.
     await fill(user, 'Qty', '1001')
     expect(
-      screen.getByText('Enter a quantity of at most 1000'),
+      screen.getByText('Qty - Enter a quantity of at most 1000'),
     ).toBeInTheDocument()
     await fill(user, 'Qty', '1')
     await fill(user, 'Patient price (each)', '10000.01')
     expect(
-      screen.getByText('Price can be at most $10,000.00'),
+      screen.getByText(
+        'Patient price (each) - Price can be at most $10,000.00',
+      ),
     ).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Add to order' }))
     expect(dialog()).toBeInTheDocument()
