@@ -245,13 +245,30 @@ describe('revision 14 availability HTTP contract', () => {
     const response = await detail(id)
     expect(response.status).toBe(200)
     const total = input[0]!.unitPriceCents + 3 * input[1]!.unitPriceCents
+    const backorderTotal = 2 * input[0]!.unitPriceCents
     expect(response.body.partialPaymentQuote).toMatchObject({
+      pay: { subtotalCents: total, totalCents: total },
+      backorder: { subtotalCents: backorderTotal, totalCents: backorderTotal },
+    })
+    expect(response.body.partialPaymentQuote.pay).not.toHaveProperty(
+      'platformFeeCents',
+    )
+    expect(response.body.partialPaymentQuote.backorder).not.toHaveProperty(
+      'platformFeeCents',
+    )
+    const provider = await detail(id, ctx.seed.providerUserId)
+    expect(provider.status).toBe(200)
+    expect(provider.body.partialPaymentQuote).toMatchObject({
       pay: {
         subtotalCents: total,
         totalCents: total,
         platformFeeCents: Math.ceil((total * 75) / 10000),
       },
-      backorder: { totalCents: 2 * input[0]!.unitPriceCents },
+      backorder: {
+        subtotalCents: backorderTotal,
+        totalCents: backorderTotal,
+        platformFeeCents: Math.ceil((backorderTotal * 75) / 10000),
+      },
     })
     expect(response.body.lines).toMatchObject([
       { availableQuantity: 1, payableQuantity: 1, shortQuantity: 2 },
