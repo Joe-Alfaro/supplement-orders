@@ -182,6 +182,10 @@ describe('PatientOrderView with limited stock', () => {
       mode: 'available',
       expectedRevision: 3,
       expectedTotalCents: 15000,
+      expectedPayableLines: [
+        { productId: 1, quantity: 3 },
+        { productId: 2, quantity: 3 },
+      ],
     })
     const links = await screen.findAllByRole('link', { name: '#77' })
     links.forEach((link) =>

@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import type { PatientOrderDetailDto } from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import Message from 'primevue/message'
 import { computed, onMounted, ref, watch } from 'vue'
 import { ApiRequestError, handleApiError, getOrder, payOrder } from '../api'
+import {
+  PRIOR_ORDER_UNPAID,
+  type PatientOrder,
+  type PayRequest,
+} from '../api/rev15'
 import {
   BackorderLinks,
   ErrorBanner,
@@ -26,7 +30,7 @@ const {
   loading,
   error,
   load,
-} = useResource(async (): Promise<PatientOrderDetailDto> => {
+} = useResource(async (): Promise<PatientOrder> => {
   const detail = await getOrder(Number(props.orderId))
   if (detail.view !== 'patient') {
     throw new ApiRequestError(403, 'FORBIDDEN', 'This is not your order')
@@ -39,14 +43,35 @@ watch(() => props.orderId, load)
 
 /** The server's quote for the in-stock part (14.5); the UI renders it, never recomputes it. */
 const quote = computed(() => order.value?.partialPaymentQuote ?? null)
+/** 15.1: an unresolved attempt holds this order's stock, so it is never awaiting stock. */
+const attempt = computed(() => order.value?.unresolvedAttempt ?? null)
+const status = computed(() => {
+  const current = order.value
+  if (!current) return null
+  if (attempt.value && current.status === 'awaiting_stock') {
+    return 'pending_payment'
+  }
+  return current.status
+})
+
+/** 15.3: set from a 409 PRIOR_ORDER_UNPAID when the reloaded order lacks it. */
+const priorFromError = ref<number | null>(null)
+const blockedByOrderId = computed(() => {
+  const fromOrder = order.value?.blockedByOrderId
+  return fromOrder === undefined ? priorFromError.value : fromOrder
+})
+
 const limited = computed(
   () =>
-    order.value?.status === 'pending_payment' &&
+    status.value === 'pending_payment' &&
+    attempt.value === null &&
     quote.value !== null &&
     quote.value.payable &&
     quote.value.hasShortfall,
 )
-const payableNow = computed(() => order.value?.status === 'pending_payment')
+const payableNow = computed(
+  () => status.value === 'pending_payment' && blockedByOrderId.value === null,
+)
 
 const paying = ref(false)
 const payError = ref<string | null>(null)
@@ -60,6 +85,12 @@ interface ChangedNotice {
 
 const STOCK_CHANGED = 'Stock changed; please review the updated amounts.'
 const STOCK_CODES = ['INSUFFICIENT_STOCK', 'AWAITING_STOCK']
+
+function priorOrderIdOf(err: ApiRequestError) {
+  const id: unknown = (err.details as { priorOrderId?: unknown } | undefined)
+    ?.priorOrderId
+  return typeof id === 'number' ? id : null
+}
 
 /** Set when pay was refused because the order changed after it was shown. */
 const changed = ref<ChangedNotice | null>(null)
@@ -77,7 +108,18 @@ async function reloadChangedOrder(id: number) {
   }
 }
 
+/** Exactly the in-stock portion the patient saw (15.2). */
+function displayedPayableLines(shown: PatientOrder) {
+  return shown.lines
+    .filter((line) => (line.payableQuantity ?? 0) > 0)
+    .map((line) => ({
+      productId: line.productId,
+      quantity: line.payableQuantity ?? 0,
+    }))
+}
+
 const payLabel = computed(() => {
+  if (attempt.value) return paying.value ? 'Completing…' : 'Complete payment'
   const cents = limited.value
     ? (quote.value?.pay.totalCents ?? 0)
     : (order.value?.totalCents ?? 0)
@@ -94,15 +136,34 @@ async function pay() {
   changed.value = null
   try {
     // Pay exactly the quote on screen (revision 9); nothing is charged if it changed.
+    // An unresolved attempt is retried as it was charged (15.1), never re-quoted.
     const partial = limited.value
-    order.value = await payOrder(shown.id, {
-      ...(partial ? { mode: 'available' as const } : {}),
-      expectedRevision: shown.revision,
-      expectedTotalCents: partial
-        ? (quote.value?.pay.totalCents ?? 0)
-        : shown.totalCents,
-    })
+    const retry = attempt.value
+    const body: PayRequest = retry
+      ? {
+          expectedRevision: retry.revision,
+          expectedTotalCents: retry.amountCents,
+        }
+      : {
+          ...(partial
+            ? {
+                mode: 'available' as const,
+                expectedPayableLines: displayedPayableLines(shown),
+              }
+            : {}),
+          expectedRevision: shown.revision,
+          expectedTotalCents: partial
+            ? (quote.value?.pay.totalCents ?? 0)
+            : shown.totalCents,
+        }
+    order.value = await payOrder(shown.id, body)
+    priorFromError.value = null
   } catch (err) {
+    if (err instanceof ApiRequestError && err.code === PRIOR_ORDER_UNPAID) {
+      priorFromError.value = priorOrderIdOf(err)
+      await reloadChangedOrder(shown.id)
+      return
+    }
     if (err instanceof ApiRequestError && STOCK_CODES.includes(err.code)) {
       changed.value = {
         message: STOCK_CHANGED,
@@ -134,7 +195,9 @@ async function pay() {
   <p v-if="loading">Loading…</p>
   <ErrorBanner v-else-if="error" :message="error" retryable @retry="load" />
   <template v-else-if="order">
-    <h1>Order #{{ order.id }} <StatusBadge :status="order.status" /></h1>
+    <h1>
+      Order #{{ order.id }} <StatusBadge :status="status ?? order.status" />
+    </h1>
     <dl class="facts">
       <dt>Provider</dt>
       <dd>{{ order.providerName }}</dd>
@@ -170,7 +233,7 @@ async function pay() {
       Some items have limited stock.
     </Message>
     <Message
-      v-if="order.status === 'awaiting_stock'"
+      v-if="status === 'awaiting_stock'"
       severity="info"
       class="banner"
       role="status"
@@ -181,7 +244,7 @@ async function pay() {
     </Message>
     <LinesTable
       :lines="order.lines"
-      :show-availability="limited || order.status === 'awaiting_stock'"
+      :show-availability="limited || status === 'awaiting_stock'"
     />
     <TotalsSummary :total-cents="order.totalCents" />
     <template v-if="limited">
@@ -198,7 +261,7 @@ async function pay() {
     <div aria-live="polite">
       <Message v-if="changed" severity="warn" class="banner">
         {{ changed.message }}
-        <template v-if="order.status === 'pending_payment' && !changed.stock">
+        <template v-if="status === 'pending_payment' && !changed.stock">
           The total was {{ formatCents(changed.previousTotalCents) }} and is now
           <strong>{{ formatCents(order.totalCents) }}</strong
           >.
@@ -206,7 +269,26 @@ async function pay() {
       </Message>
     </div>
 
+    <section v-if="blockedByOrderId !== null" aria-label="Payment">
+      <p class="banner">
+        Pay order
+        <RouterLink :to="`/my-orders/${blockedByOrderId}`"
+          >#{{ blockedByOrderId }}</RouterLink
+        >
+        first
+      </p>
+    </section>
+
     <section v-if="payableNow" aria-label="Payment">
+      <Message
+        v-if="attempt"
+        severity="info"
+        class="banner"
+        role="status"
+        aria-live="polite"
+      >
+        Your payment is being processed
+      </Message>
       <p>
         <Button
           :label="payLabel"

@@ -66,7 +66,9 @@ interface OrderAction {
 const PENDING_CANCEL: OrderAction = {
   label: 'Cancel order',
   prompt: (o) =>
-    `Cancel order #${o.id} for ${o.patientName}? The patient will no longer be able to pay it.`,
+    `Cancel order #${o.id} for ${o.patientName}? The patient will no longer be able to pay it.${
+      o.backorderOrderId ? ' Its back-orders will be cancelled too.' : ''
+    }`,
   keepLabel: 'Keep order',
   destructive: true,
   run: async (o) => {
@@ -83,7 +85,9 @@ const ACTIONS: Partial<Record<OrderStatus, OrderAction>> = {
   draft: {
     label: 'Delete draft',
     prompt: (o) =>
-      `Delete draft order #${o.id} for ${o.patientName}? This can't be undone.`,
+      `Delete draft order #${o.id} for ${o.patientName}? This can't be undone.${
+        o.backorderOrderId ? ' Its linked back-orders will be deleted too.' : ''
+      }`,
     keepLabel: 'Keep draft',
     destructive: true,
     run: async (o) => {
@@ -212,6 +216,13 @@ async function perform(chosen: OrderAction, current: ProviderOrderDetailDto) {
       :backorder-order-id="order.backorderOrderId"
       base-path="/orders"
     />
+    <p
+      v-if="order.status === 'cancelled' && order.backorderOrderId"
+      class="banner"
+      role="status"
+    >
+      Back-order #{{ order.backorderOrderId }} was cancelled with this order.
+    </p>
     <p v-if="action">
       <Button
         :label="action.label"

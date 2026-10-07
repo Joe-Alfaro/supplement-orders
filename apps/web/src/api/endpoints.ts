@@ -15,8 +15,6 @@ import type {
   OrderSummaryDto,
   PatientDto,
   PatientPageDto,
-  PatientOrderDetailDto,
-  PayOrderRequest,
   SendOrderRequest,
   ProductPageDto,
   ProviderOrderDetailDto,
@@ -24,6 +22,7 @@ import type {
   UserDto,
 } from '@supplement-orders/domain'
 import { request } from './client'
+import type { PatientOrder, PayRequest } from './rev15'
 
 // One typed function per endpoint in FRONTEND_DESIGN.md §7.
 
@@ -160,8 +159,8 @@ export function getOrder(orderId: number) {
  * `expectedTotalCents` come from the displayed order. If it changed since, the
  * server answers 409 ORDER_CHANGED and charges nothing.
  */
-export function payOrder(orderId: number, body: PayOrderRequest) {
-  return request<PatientOrderDetailDto>('POST', `/orders/${orderId}/pay`, body)
+export function payOrder(orderId: number, body: PayRequest) {
+  return request<PatientOrder>('POST', `/orders/${orderId}/pay`, body)
 }
 
 /** Dashboard window, passed through to the server, which resolves the days. */
