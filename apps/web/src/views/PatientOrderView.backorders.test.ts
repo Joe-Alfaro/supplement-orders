@@ -12,6 +12,16 @@ vi.mock('../api', async (importOriginal) => {
   return { ...actual, getOrder: vi.fn(), payOrder: vi.fn() }
 })
 
+/** The server's quote shape: an empty side is zeros. */
+function quoteOf(payCents: number, backorderCents: number) {
+  const side = (totalCents: number) => ({
+    subtotalCents: totalCents,
+    platformFeeCents: 0,
+    totalCents,
+  })
+  return { pay: side(payCents), backorder: side(backorderCents) }
+}
+
 const base: PatientOrderWithStock = {
   id: 42,
   view: 'patient',
@@ -59,12 +69,14 @@ const base: PatientOrderWithStock = {
   payment: null,
   splitFromOrderId: null,
   backorderOrderId: null,
+  partialPaymentQuote: quoteOf(15000, 3000),
 }
 
 const limited = base
 const awaiting: PatientOrderWithStock = {
   ...base,
   status: 'awaiting_stock',
+  partialPaymentQuote: quoteOf(0, 18000),
   lines: base.lines.map((line) => ({ ...line, availableQuantity: 0 })),
 }
 
@@ -87,6 +99,7 @@ describe('PatientOrderView with limited stock', () => {
   it('shows nothing extra when everything is in stock', async () => {
     await renderOrder({
       ...base,
+      partialPaymentQuote: quoteOf(18000, 0),
       lines: base.lines.map((line) => ({ ...line, availableQuantity: 99 })),
     })
     expect(screen.queryByText(/limited stock/)).not.toBeInTheDocument()
@@ -163,6 +176,7 @@ describe('PatientOrderView with limited stock', () => {
       ...base,
       revision: 4,
       totalCents: 18000,
+      partialPaymentQuote: quoteOf(13000, 5000),
       lines: base.lines.map((line) => ({
         ...line,
         availableQuantity: line.productId === 2 ? 1 : line.availableQuantity,

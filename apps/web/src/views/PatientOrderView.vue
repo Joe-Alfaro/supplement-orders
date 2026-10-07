@@ -13,7 +13,7 @@ import {
 } from '../components'
 import { formatDateTime } from '../format'
 import { formatCents } from '../money'
-import { quoteAvailable, type PatientOrderWithStock } from '../stock'
+import type { PatientOrderWithStock } from '../stock'
 import { useResource } from '../useResource'
 
 interface Props {
@@ -39,14 +39,17 @@ const {
 })
 onMounted(load)
 
-/** What the patient can pay now, from the stock each line reports (revision 14). */
-const quote = computed(() => quoteAvailable(order.value?.lines ?? []))
-const limited = computed(
-  () =>
+/** The server's quote for the in-stock part (14.5); the UI renders it, never recomputes it. */
+const quote = computed(() => order.value?.partialPaymentQuote ?? null)
+const limited = computed(() => {
+  const current = quote.value
+  return (
     order.value?.status === 'pending_payment' &&
-    quote.value.hasShortfall &&
-    !quote.value.nothingPayable,
-)
+    current !== null &&
+    current.pay.totalCents > 0 &&
+    current.backorder.totalCents > 0
+  )
+})
 const payableNow = computed(() => order.value?.status === 'pending_payment')
 
 const paying = ref(false)
@@ -81,7 +84,7 @@ async function reloadChangedOrder(id: number) {
 
 const payLabel = computed(() => {
   const cents = limited.value
-    ? quote.value.payCents
+    ? (quote.value?.pay.totalCents ?? 0)
     : (order.value?.totalCents ?? 0)
   const suffix = limited.value ? ' for in-stock items' : ''
   if (paying.value) return `Paying ${formatCents(cents)}${suffix}…`
@@ -100,7 +103,9 @@ async function pay() {
     order.value = (await payOrder(shown.id, {
       ...(partial ? { mode: 'available' as const } : {}),
       expectedRevision: shown.revision,
-      expectedTotalCents: partial ? quote.value.payCents : shown.totalCents,
+      expectedTotalCents: partial
+        ? (quote.value?.pay.totalCents ?? 0)
+        : shown.totalCents,
       ...(isDev && simulateFailure.value ? { simulateFailure: true } : {}),
     })) as PatientOrderWithStock
   } catch (err) {
@@ -187,11 +192,12 @@ async function pay() {
     <TotalsSummary :total-cents="order.totalCents" />
     <template v-if="limited">
       <p>
-        Pay now (in stock): <strong>{{ formatCents(quote.payCents) }}</strong>
+        Pay now (in stock):
+        <strong>{{ formatCents(quote?.pay.totalCents ?? 0) }}</strong>
       </p>
       <p>
         Back-order (pay later):
-        <strong>{{ formatCents(quote.backorderCents) }}</strong>
+        <strong>{{ formatCents(quote?.backorder.totalCents ?? 0) }}</strong>
       </p>
     </template>
 
