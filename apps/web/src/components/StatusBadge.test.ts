@@ -2,10 +2,10 @@ import { render, screen } from '@testing-library/vue'
 import PrimeVue from 'primevue/config'
 import { describe, expect, it } from 'vitest'
 import { primeVueOptions } from '../primevue'
-import type { UiOrderStatus } from '../stock'
+import type { OrderStatus } from '@supplement-orders/domain'
 import StatusBadge from './StatusBadge.vue'
 
-function renderBadge(status: UiOrderStatus) {
+function renderBadge(status: OrderStatus) {
   return render(StatusBadge, {
     props: { status },
     global: { plugins: [[PrimeVue, primeVueOptions]] },

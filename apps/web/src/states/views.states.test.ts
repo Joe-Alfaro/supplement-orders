@@ -119,6 +119,8 @@ const paidSplit = {
 }
 
 const providerSummary: ProviderOrderSummaryDto = {
+  splitFromOrderId: null,
+  backorderOrderId: null,
   id: 7,
   view: 'provider',
   status: 'paid',
@@ -135,11 +137,16 @@ const providerSummary: ProviderOrderSummaryDto = {
 }
 
 const providerOrder: ProviderOrderDetailDto = {
+  partialPaymentQuote: null,
   ...providerSummary,
   patientDateOfBirth: '1984-03-14',
   patientAddress: '214 Alder St, Portland, OR 97205',
   lines: [
     {
+      payableQuantity: null,
+      shortQuantity: null,
+      lineId: 904,
+      availableQuantity: null,
       productId: 1,
       productName: 'Vitamin D3',
       sku: 'VITD',
@@ -198,6 +205,9 @@ const draftWithLine: ProviderOrderDetailDto = {
 }
 
 const patientOrder: PatientOrderDetailDto = {
+  partialPaymentQuote: null,
+  splitFromOrderId: null,
+  backorderOrderId: null,
   id: 42,
   view: 'patient',
   status: 'pending_payment',
@@ -214,6 +224,10 @@ const patientOrder: PatientOrderDetailDto = {
   totalCents: 12000,
   lines: [
     {
+      payableQuantity: null,
+      shortQuantity: null,
+      lineId: 903,
+      availableQuantity: null,
       productId: 1,
       productName: 'Vitamin D3',
       sku: 'VITD',
@@ -226,6 +240,8 @@ const patientOrder: PatientOrderDetailDto = {
 }
 
 const myOrder: PatientOrderSummaryDto = {
+  splitFromOrderId: null,
+  backorderOrderId: null,
   id: 11,
   view: 'patient',
   status: 'pending_payment',

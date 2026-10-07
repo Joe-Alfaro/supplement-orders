@@ -312,9 +312,17 @@ describe('validation errors', () => {
       field: 'lines.0.productId',
     })
     expect(tooMany.status).toBe(200)
+    // Revision 14: sending above stock needs an acknowledgement, not a 422.
+    expect(sent.status).toBe(409)
     expect(sent.body.error).toMatchObject({
-      code: 'INSUFFICIENT_STOCK',
-      field: 'lines.0.quantity',
+      code: 'LOW_STOCK_UNACKNOWLEDGED',
+      lines: [
+        expect.objectContaining({
+          productId: p.id,
+          quantity: p.stockQuantity + 1,
+          availableQuantity: p.stockQuantity,
+        }),
+      ],
     })
   })
 

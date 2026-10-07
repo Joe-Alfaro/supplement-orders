@@ -1,4 +1,10 @@
 <script setup lang="ts">
+import {
+  ORDER_STATUS_LABELS,
+  ORDER_STATUSES,
+  type OrderStatus,
+  type ProviderOrderListItemDto,
+} from '@supplement-orders/domain'
 import Column from 'primevue/column'
 import DataTable, {
   type DataTablePageEvent,
@@ -9,12 +15,6 @@ import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listProviderOrders } from '../api'
 import { ErrorBanner, MoneyText, PageSummary, StatusBadge } from '../components'
-import {
-  UI_ORDER_STATUSES,
-  UI_STATUS_LABELS,
-  type ProviderListItem,
-  type UiOrderStatus,
-} from '../stock'
 import { formatDate, formatDateOfBirth } from '../format'
 import { accessibleSelectPt } from '../primevue'
 import {
@@ -29,7 +29,7 @@ import {
 const route = useRoute()
 const router = useRouter()
 
-const STATUSES: Record<UiOrderStatus, { dateHeader: string; empty: string }> = {
+const STATUSES: Record<OrderStatus, { dateHeader: string; empty: string }> = {
   draft: { dateHeader: 'Created', empty: 'No draft orders.' },
   pending_payment: { dateHeader: 'Sent', empty: 'No orders awaiting payment.' },
   awaiting_stock: { dateHeader: 'Sent', empty: 'No orders awaiting stock.' },
@@ -38,16 +38,16 @@ const STATUSES: Record<UiOrderStatus, { dateHeader: string; empty: string }> = {
 }
 
 /** Canonical order for options, the URL and the API. */
-const ORDER: UiOrderStatus[] = [...UI_ORDER_STATUSES]
+const ORDER: OrderStatus[] = [...ORDER_STATUSES]
 /** Revision 8d: every status, most recent activity first. */
-const DEFAULT_SELECTION: UiOrderStatus[] = [...ORDER]
+const DEFAULT_SELECTION: OrderStatus[] = [...ORDER]
 
 const statusOptions = ORDER.map((value) => ({
   value,
-  label: UI_STATUS_LABELS[value],
+  label: ORDER_STATUS_LABELS[value],
 }))
 
-function canonical(statuses: readonly UiOrderStatus[]) {
+function canonical(statuses: readonly OrderStatus[]) {
   return ORDER.filter((status) => statuses.includes(status))
 }
 
@@ -56,11 +56,11 @@ function canonical(statuses: readonly UiOrderStatus[]) {
  * `all` is an empty selection, which also means every status. Unknown values
  * are ignored.
  */
-function selectionFromUrl(value: unknown): UiOrderStatus[] {
+function selectionFromUrl(value: unknown): OrderStatus[] {
   if (typeof value !== 'string') return [...DEFAULT_SELECTION]
   if (value === 'all') return []
   const parts = value.split(',')
-  const statuses = UI_ORDER_STATUSES.filter((status) => parts.includes(status))
+  const statuses = ORDER_STATUSES.filter((status) => parts.includes(status))
   return statuses.length ? canonical(statuses) : [...DEFAULT_SELECTION]
 }
 
@@ -96,7 +96,7 @@ const selected = computed(() => selectionFromUrl(route.query.status))
 const pageNumber = computed(() => pageFromQuery(route.query))
 
 /** ?status= for a selection: omitted when every status is checked, `all` for none. */
-function statusParam(statuses: readonly UiOrderStatus[]) {
+function statusParam(statuses: readonly OrderStatus[]) {
   const value = canonical(statuses)
   if (value.length === 0) return 'all'
   if (value.length === ORDER.length) return undefined
@@ -104,7 +104,7 @@ function statusParam(statuses: readonly UiOrderStatus[]) {
 }
 
 /** Every status or none is no filter at all: the API gets status=all. */
-function apiStatuses(statuses: readonly UiOrderStatus[]) {
+function apiStatuses(statuses: readonly OrderStatus[]) {
   const value = canonical(statuses)
   return value.length === ORDER.length ? [] : value
 }
@@ -144,12 +144,12 @@ watch(
 )
 
 /** A new selection starts again from page 1. */
-function selectStatuses(statuses: UiOrderStatus[] | null | undefined) {
+function selectStatuses(statuses: OrderStatus[] | null | undefined) {
   listUrl.pushQuery(listQuery({ status: statusParam(statuses ?? []) }))
 }
 
 /** The date that matters for the order's own status. */
-function relevantDate(order: ProviderListItem) {
+function relevantDate(order: ProviderOrderListItemDto) {
   if (order.status === 'paid') return order.paidAt
   if (order.status === 'cancelled') return order.cancelledAt
   if (order.status === 'pending_payment') return order.sentAt
@@ -157,7 +157,7 @@ function relevantDate(order: ProviderListItem) {
   return order.createdAt
 }
 
-function openOrder(event: DataTableRowClickEvent<ProviderListItem>) {
+function openOrder(event: DataTableRowClickEvent<ProviderOrderListItemDto>) {
   router.push(`/orders/${event.data.id}`)
 }
 

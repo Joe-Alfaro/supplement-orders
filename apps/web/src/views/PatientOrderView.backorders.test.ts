@@ -1,9 +1,9 @@
+import type { PatientOrderDetailDto } from '@supplement-orders/domain'
 import { screen } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
 import { expectNoAxeViolations } from '../a11y/expectNoAxeViolations'
-import type { PatientOrderWithStock } from '../stock'
 import { renderWithRouter } from '../test/renderWithRouter'
 import PatientOrderView from './PatientOrderView.vue'
 
@@ -16,13 +16,35 @@ vi.mock('../api', async (importOriginal) => {
 function quoteOf(payCents: number, backorderCents: number) {
   const side = (totalCents: number) => ({
     subtotalCents: totalCents,
-    platformFeeCents: 0,
     totalCents,
   })
-  return { pay: side(payCents), backorder: side(backorderCents) }
+  return {
+    pay: side(payCents),
+    backorder: side(backorderCents),
+    payable: payCents > 0,
+    hasShortfall: backorderCents > 0,
+  }
 }
 
-const base: PatientOrderWithStock = {
+/** Fills the per-line fields the API adds (lineId, payable and short counts). */
+function withStock(
+  line: Omit<
+    PatientOrderDetailDto['lines'][number],
+    'lineId' | 'payableQuantity' | 'shortQuantity'
+  >,
+  index: number,
+): PatientOrderDetailDto['lines'][number] {
+  const available = line.availableQuantity ?? line.quantity
+  const payable = Math.min(line.quantity, available)
+  return {
+    ...line,
+    lineId: index + 1,
+    payableQuantity: payable,
+    shortQuantity: line.quantity - payable,
+  }
+}
+
+const base: PatientOrderDetailDto = {
   id: 42,
   view: 'patient',
   revision: 3,
@@ -65,7 +87,7 @@ const base: PatientOrderWithStock = {
       lineTotalCents: 1000,
       availableQuantity: 0,
     },
-  ],
+  ].map(withStock),
   payment: null,
   splitFromOrderId: null,
   backorderOrderId: null,
@@ -73,15 +95,17 @@ const base: PatientOrderWithStock = {
 }
 
 const limited = base
-const awaiting: PatientOrderWithStock = {
+const awaiting: PatientOrderDetailDto = {
   ...base,
   status: 'awaiting_stock',
   partialPaymentQuote: quoteOf(0, 18000),
-  lines: base.lines.map((line) => ({ ...line, availableQuantity: 0 })),
+  lines: base.lines.map((line, index) =>
+    withStock({ ...line, availableQuantity: 0 }, index),
+  ),
 }
 
-async function renderOrder(order: PatientOrderWithStock = limited) {
-  vi.mocked(api.getOrder).mockResolvedValue(order as never)
+async function renderOrder(order: PatientOrderDetailDto = limited) {
+  vi.mocked(api.getOrder).mockResolvedValue(order)
   const view = await renderWithRouter(PatientOrderView, {
     path: '/my-orders/42',
     props: { orderId: '42' },
@@ -100,7 +124,9 @@ describe('PatientOrderView with limited stock', () => {
     await renderOrder({
       ...base,
       partialPaymentQuote: quoteOf(18000, 0),
-      lines: base.lines.map((line) => ({ ...line, availableQuantity: 99 })),
+      lines: base.lines.map((line, index) =>
+        withStock({ ...line, availableQuantity: 99 }, index),
+      ),
     })
     expect(screen.queryByText(/limited stock/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Pay $180.00' })).toBeEnabled()
@@ -146,7 +172,7 @@ describe('PatientOrderView with limited stock', () => {
         createdAt: '2026-10-05T12:10:00.000Z',
       },
       backorderOrderId: 77,
-    } as never)
+    })
 
     await user.click(
       screen.getByRole('button', { name: 'Pay $150.00 for in-stock items' }),
@@ -177,11 +203,17 @@ describe('PatientOrderView with limited stock', () => {
       revision: 4,
       totalCents: 18000,
       partialPaymentQuote: quoteOf(13000, 5000),
-      lines: base.lines.map((line) => ({
-        ...line,
-        availableQuantity: line.productId === 2 ? 1 : line.availableQuantity,
-      })),
-    } as never)
+      lines: base.lines.map((line, index) =>
+        withStock(
+          {
+            ...line,
+            availableQuantity:
+              line.productId === 2 ? 1 : line.availableQuantity,
+          },
+          index,
+        ),
+      ),
+    })
 
     await user.click(
       screen.getByRole('button', { name: 'Pay $150.00 for in-stock items' }),

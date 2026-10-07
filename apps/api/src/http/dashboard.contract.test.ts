@@ -37,12 +37,15 @@ const PROVIDER_DETAIL_KEYS = [
   'paidAt',
   'cancelledAt',
   'revision',
+  'splitFromOrderId',
+  'backorderOrderId',
   'view',
   'split',
   'patientDateOfBirth',
   'patientAddress',
   'lines',
   'payment',
+  'partialPaymentQuote',
   'ledger',
 ]
 

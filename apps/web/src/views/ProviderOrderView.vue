@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import type { OrderStatus, ProviderOrderDetailDto } from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import ConfirmDialog from 'primevue/confirmdialog'
 import { useConfirm } from 'primevue/useconfirm'
-import { computed, nextTick, onMounted, ref, useTemplateRef } from 'vue'
+import { computed, nextTick, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   ApiRequestError,
@@ -21,7 +22,6 @@ import {
   StatusBadge,
 } from '../components'
 import { formatDateOfBirth, formatDateTime } from '../format'
-import type { ProviderOrderWithLinks, UiOrderStatus } from '../stock'
 import { useSuccessToast } from '../toast'
 import { useResource } from '../useResource'
 
@@ -36,14 +36,16 @@ const {
   loading,
   error,
   load,
-} = useResource(async (): Promise<ProviderOrderWithLinks> => {
+} = useResource(async (): Promise<ProviderOrderDetailDto> => {
   const detail = await getOrder(Number(props.orderId))
   if (detail.view !== 'provider') {
     throw new ApiRequestError(403, 'FORBIDDEN', 'This is not your order')
   }
-  return detail as ProviderOrderWithLinks
+  return detail
 })
 onMounted(load)
+// A link from an order to its back-order only changes the route param.
+watch(() => props.orderId, load)
 
 const router = useRouter()
 const showSuccess = useSuccessToast()
@@ -55,10 +57,10 @@ const heading = useTemplateRef<HTMLHeadingElement>('heading')
 
 interface OrderAction {
   label: string
-  prompt: (order: ProviderOrderWithLinks) => string
+  prompt: (order: ProviderOrderDetailDto) => string
   keepLabel: string
   destructive: boolean
-  run: (order: ProviderOrderWithLinks) => Promise<void>
+  run: (order: ProviderOrderDetailDto) => Promise<void>
 }
 
 const PENDING_CANCEL: OrderAction = {
@@ -77,7 +79,7 @@ const PENDING_CANCEL: OrderAction = {
 
 // One action per status (FRONTEND_DESIGN §4.5). Paid orders have none:
 // refunds are out of scope.
-const ACTIONS: Partial<Record<UiOrderStatus, OrderAction>> = {
+const ACTIONS: Partial<Record<OrderStatus, OrderAction>> = {
   draft: {
     label: 'Delete draft',
     prompt: (o) =>
@@ -135,7 +137,7 @@ function confirmAction() {
   })
 }
 
-async function perform(chosen: OrderAction, current: ProviderOrderWithLinks) {
+async function perform(chosen: OrderAction, current: ProviderOrderDetailDto) {
   if (acting.value) return
   acting.value = true
   actionError.value = null

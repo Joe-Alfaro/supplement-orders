@@ -39,12 +39,15 @@ const PROVIDER_DETAIL_KEYS = [
   'paidAt',
   'cancelledAt',
   'revision',
+  'splitFromOrderId',
+  'backorderOrderId',
   'view',
   'split',
   'patientDateOfBirth',
   'patientAddress',
   'lines',
   'payment',
+  'partialPaymentQuote',
   'ledger',
 ]
 
@@ -60,11 +63,14 @@ const PATIENT_DETAIL_KEYS = [
   'paidAt',
   'cancelledAt',
   'revision',
+  'splitFromOrderId',
+  'backorderOrderId',
   'view',
   'totalCents',
   'patientAddress',
   'lines',
   'payment',
+  'partialPaymentQuote',
 ]
 
 const SPLIT_KEYS = [
@@ -82,6 +88,10 @@ const PROVIDER_LINE_KEYS = [
   'quantity',
   'unitPriceCents',
   'lineTotalCents',
+  'lineId',
+  'availableQuantity',
+  'payableQuantity',
+  'shortQuantity',
   'unitCogsCents',
   'markupBps',
   'minUnitPriceCents',
@@ -95,6 +105,10 @@ const PATIENT_LINE_KEYS = [
   'quantity',
   'unitPriceCents',
   'lineTotalCents',
+  'lineId',
+  'availableQuantity',
+  'payableQuantity',
+  'shortQuantity',
 ]
 
 const PAYMENT_KEYS = ['id', 'amountCents', 'reference', 'createdAt']

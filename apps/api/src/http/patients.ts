@@ -19,7 +19,7 @@ import {
 } from 'drizzle-orm'
 import { Router } from 'express'
 import type { Db } from '../db/client'
-import { orders, patients, users } from '../db/schema'
+import { ordersWithStatus, patients, users } from '../db/schema'
 import { requireRole } from '../seams'
 import type { AppContext } from '../server'
 import { forbidden, notFound } from './errors'
@@ -62,19 +62,23 @@ async function selectPatients(
     : await query
   if (rows.length === 0) return []
 
+  // Read through the view, so the latest status is the derived one (revision 14.3b).
   const orderRows = await db
-    .select({ patientId: orders.patientId, status: orders.status })
-    .from(orders)
+    .select({
+      patientId: ordersWithStatus.patientId,
+      status: ordersWithStatus.effectiveStatus,
+    })
+    .from(ordersWithStatus)
     .where(
       and(
-        eq(orders.providerId, providerId),
+        eq(ordersWithStatus.providerId, providerId),
         inArray(
-          orders.patientId,
+          ordersWithStatus.patientId,
           rows.map((r) => r.id),
         ),
       ),
     )
-    .orderBy(desc(orders.createdAt), desc(orders.id))
+    .orderBy(desc(ordersWithStatus.createdAt), desc(ordersWithStatus.id))
 
   return rows.map((row): PatientDto => {
     const own = orderRows.filter((o) => o.patientId === row.id)
@@ -97,11 +101,12 @@ function patientSearch(q: string | null): SQL | undefined {
 }
 
 /**
- * Status of the patient's most recent order (created_at desc, id desc, the same
- * order the PatientDto's latestOrderStatus uses), as a correlated subquery
- * served by orders_patient_created_idx (migration 0006). Null with no orders.
+ * Effective status (revision 14.3b, from the orders_with_status view) of the
+ * patient's most recent order (created_at desc, id desc, the same order the
+ * PatientDto's latestOrderStatus uses), as a correlated subquery served by
+ * orders_patient_created_idx (migration 0006). Null with no orders.
  */
-const latestOrderStatus = sql`(select ${orders.status} from ${orders} where ${orders.patientId} = ${patients.id} order by ${orders.createdAt} desc, ${orders.id} desc limit 1)`
+const latestOrderStatus = sql`(select ${ordersWithStatus.effectiveStatus} from ${ordersWithStatus} where ${ordersWithStatus.patientId} = ${patients.id} order by ${ordersWithStatus.createdAt} desc, ${ordersWithStatus.id} desc limit 1)`
 
 function latestStatusFilter(
   latestStatus: LatestOrderStatusFilter | undefined,

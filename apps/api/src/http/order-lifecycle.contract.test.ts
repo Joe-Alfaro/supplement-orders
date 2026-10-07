@@ -99,6 +99,8 @@ const PROVIDER_SUMMARY_KEYS = [
   'paidAt',
   'cancelledAt',
   'revision',
+  'splitFromOrderId',
+  'backorderOrderId',
   'view',
   'split',
 ]
@@ -115,6 +117,8 @@ const PATIENT_SUMMARY_KEYS = [
   'paidAt',
   'cancelledAt',
   'revision',
+  'splitFromOrderId',
+  'backorderOrderId',
   'view',
   'totalCents',
 ]
@@ -125,6 +129,7 @@ const PROVIDER_DETAIL_KEYS = [
   'patientAddress',
   'lines',
   'payment',
+  'partialPaymentQuote',
   'ledger',
 ]
 
@@ -143,6 +148,10 @@ const PROVIDER_LINE_KEYS = [
   'quantity',
   'unitPriceCents',
   'lineTotalCents',
+  'lineId',
+  'availableQuantity',
+  'payableQuantity',
+  'shortQuantity',
   'unitCogsCents',
   'markupBps',
   'minUnitPriceCents',
@@ -177,6 +186,8 @@ const ORDER_LIST_ITEM_KEYS = [
   'sentAt',
   'paidAt',
   'cancelledAt',
+  'splitFromOrderId',
+  'backorderOrderId',
 ]
 
 interface ContextHolder {

@@ -257,6 +257,32 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 - **Audit:** every successful change writes an `inventory_adjustments` row in the same transaction; the table is append-only in the database, like the ledger.
 - **Tradeoff:** a set can be refused by a concurrent sale, and the admin has to review and save again. Bounds are 0 to 1,000,000, enforced by the API (the database still enforces non-negative).
 
+## Low stock, partial payment and back-orders (revision 14)
+
+**Reversed: send requires stock -> send with an acknowledgement**
+
+- **First decision:** send refused a quantity above stock with 422 `INSUFFICIENT_STOCK`, and so did pay.
+- **Why it changed:** the product owner's design. A provider may send more than is in stock (409 `LOW_STOCK_UNACKNOWLEDGED` until they confirm with `acknowledgeLowStock: true`); stock is still reserved only by pay. A `full` pay with a shortfall is now a 409 `INSUFFICIENT_STOCK` with per-line availability and the current quote, since it's a state the patient can act on, not a malformed request.
+
+**Partial pay splits the shortfall into one back-order, inside the prepare transaction**
+
+- **Decision:** `mode: 'available'` plans from current stock with the domain's `planPartialPayment`, under the order lock and with the product rows locked in ascending id, in the same transaction that reserves stock and creates the payment attempt. The back-order is a new sent order (revision 1, original unit prices and cost snapshots); the original keeps the in-stock quantities, re-snapshots its totals and fee, and moves to the next revision, so the attempt's key is a new quote's key.
+- **Why there:** the split, the reservation and the attempt then commit or roll back together. The revision 10 gate (no unresolved attempt) applies unchanged, and the ledger, fee and one-payment-per-order invariants and the migration 0010 triggers don't change.
+- **Replay:** a retried request names the pre-split revision. It's recognised by the back-order's `split_from_revision`, the current revision being exactly one higher, and the current total matching what the patient consented to; it then continues as a pay of the current revision. Concurrent duplicates serialize on the order lock and take the same path.
+- **Fees:** each order is charged its own fee, rounded up, so the two fees together can exceed the unsplit order's by at most 1 cent (tested in the domain). The minimum price is per unit, so both orders still meet it.
+- **Tradeoff:** an order has at most one direct back-order (unique index). If a reduced order is declined and stock then drops further, it can only be paid once restocked: a second split is refused with 409 `INSUFFICIENT_STOCK`. A decline never undoes a split.
+
+**"Awaiting stock" is derived in a view, not stored**
+
+- **Decision (user, 2026-10-07):** migration 0012 creates `orders_with_status`, every `orders` column plus `effective_status`, which is `awaiting_stock` for a `pending_payment` order with no line whose product has stock. All order reads use the view; all writes and locks use the table.
+- **Why:** a stored status would need every stock change (admin edits, reservations, releases, sales) to update every open order containing the product, and would drift if any path missed it. The view is always current and costs one indexed `EXISTS` per order row, in the same query (no N+1). Status filters on stored statuses still compare the stored column, so the existing status indexes apply.
+- **Tradeoff:** while an order's own payment holds its last units, it reads as awaiting stock until the payment finishes; and a list filtered on `pending_payment` or `awaiting_stock` evaluates the `EXISTS` per pending order.
+
+**Back-orders are never edited**
+
+- **Decision:** reopening a back-order is 409 `BACKORDER_NOT_EDITABLE`, before and after cancelling it; cancelling follows the normal rules. Both order DTOs link the two ways with `splitFromOrderId` and `backorderOrderId`.
+- **Why:** a back-order's prices are the ones the patient already agreed to on the original; editing would break that link.
+
 ## What we cut
 
 - Refunds, cancelling paid orders, and reopening paid orders.

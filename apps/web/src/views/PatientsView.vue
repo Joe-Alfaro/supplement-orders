@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   LATEST_ORDER_STATUS_FILTERS,
+  ORDER_STATUS_LABELS,
   type LatestOrderStatusFilter,
   type PatientDto,
 } from '@supplement-orders/domain'
@@ -17,7 +18,6 @@ import Select from 'primevue/select'
 import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { searchPatients } from '../api'
-import { UI_STATUS_LABELS } from '../stock'
 import { ErrorBanner, PageSummary, StatusBadge } from '../components'
 import { formatDateOfBirth } from '../format'
 import { accessibleSelectPt } from '../primevue'
@@ -34,23 +34,19 @@ import {
 const route = useRoute()
 const router = useRouter()
 
-type StatusChoice = LatestOrderStatusFilter | 'awaiting_stock' | 'any'
+type StatusChoice = LatestOrderStatusFilter | 'any'
 
 const STATUS_LABELS: Record<StatusChoice, string> = {
   any: 'Any',
   none: 'No orders',
-  ...UI_STATUS_LABELS,
+  ...ORDER_STATUS_LABELS,
 }
 const statusOptions = (Object.keys(STATUS_LABELS) as StatusChoice[]).map(
   (value) => ({ value, label: STATUS_LABELS[value] }),
 )
 
 function statusFromUrl(value: unknown): StatusChoice {
-  const known: readonly StatusChoice[] = [
-    ...LATEST_ORDER_STATUS_FILTERS,
-    'awaiting_stock',
-  ]
-  return known.find((s) => s === value) ?? 'any'
+  return LATEST_ORDER_STATUS_FILTERS.find((s) => s === value) ?? 'any'
 }
 
 // The URL is the source of truth (§4.6b): ?q=, ?status= and ?page= are read

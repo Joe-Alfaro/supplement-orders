@@ -13,6 +13,8 @@ vi.mock('../api', async (importOriginal) => {
 
 function order(id: number, providerName: string): PatientOrderSummaryDto {
   return {
+    splitFromOrderId: null,
+    backorderOrderId: null,
     id,
     view: 'patient',
     revision: 1,

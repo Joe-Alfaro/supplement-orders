@@ -12,6 +12,9 @@ vi.mock('../api', async (importOriginal) => {
 })
 
 const pending: PatientOrderDetailDto = {
+  partialPaymentQuote: null,
+  splitFromOrderId: null,
+  backorderOrderId: null,
   id: 42,
   view: 'patient',
   revision: 1,
@@ -28,6 +31,10 @@ const pending: PatientOrderDetailDto = {
   totalCents: 12000,
   lines: [
     {
+      payableQuantity: null,
+      shortQuantity: null,
+      lineId: 911,
+      availableQuantity: null,
       productId: 1,
       productName: 'Vitamin D3',
       sku: 'VITD',
@@ -187,6 +194,10 @@ describe('PatientOrderView', () => {
       totalCents: 15000,
       lines: [
         {
+          payableQuantity: null,
+          shortQuantity: null,
+          lineId: 910,
+          availableQuantity: null,
           productId: 1,
           productName: 'Vitamin D3',
           sku: 'VITD',

@@ -1,7 +1,7 @@
+import type { ProviderOrderDetailDto } from '@supplement-orders/domain'
 import { screen } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
-import type { ProviderOrderWithLinks } from '../stock'
 import { renderWithRouter } from '../test/renderWithRouter'
 import ProviderOrderView from './ProviderOrderView.vue'
 
@@ -16,7 +16,7 @@ vi.mock('../api', async (importOriginal) => {
   }
 })
 
-const backorder: ProviderOrderWithLinks = {
+const backorder: ProviderOrderDetailDto = {
   id: 77,
   view: 'provider',
   revision: 1,
@@ -40,6 +40,10 @@ const backorder: ProviderOrderWithLinks = {
   patientAddress: '214 Alder St',
   lines: [
     {
+      lineId: 1,
+      availableQuantity: 0,
+      payableQuantity: 0,
+      shortQuantity: 2,
       productId: 3,
       productName: 'Zinc',
       sku: 'ZINC',
@@ -56,10 +60,11 @@ const backorder: ProviderOrderWithLinks = {
   ledger: [],
   splitFromOrderId: 42,
   backorderOrderId: null,
+  partialPaymentQuote: null,
 }
 
-async function renderOrder(order: ProviderOrderWithLinks) {
-  vi.mocked(api.getOrder).mockResolvedValue(order as never)
+async function renderOrder(order: ProviderOrderDetailDto) {
+  vi.mocked(api.getOrder).mockResolvedValue(order)
   await renderWithRouter(ProviderOrderView, {
     path: `/orders/${order.id}`,
     props: { orderId: String(order.id) },

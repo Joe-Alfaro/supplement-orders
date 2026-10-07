@@ -1,10 +1,14 @@
-import type { DashboardDto, PatientPageDto, ProductDto } from '@supplement-orders/domain'
+import type {
+  DashboardDto,
+  ListPatientsQuery,
+  PatientPageDto,
+  ProductDto,
+} from '@supplement-orders/domain'
 import userEvent from '@testing-library/user-event'
 import { render, screen } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { h } from 'vue'
 import * as api from '../api'
-import type { PatientSearchQuery } from '../api/endpoints'
 import { renderWithRouter } from '../test/renderWithRouter'
 import DashboardView from '../views/DashboardView.vue'
 import PatientsView from '../views/PatientsView.vue'
@@ -32,7 +36,7 @@ function slowChunk() {
   return { load: () => loaded, finish: () => resolve() }
 }
 
-function patientPage(query: PatientSearchQuery): PatientPageDto {
+function patientPage(query: ListPatientsQuery): PatientPageDto {
   return {
     items: [],
     total: query.q ? 0 : 312,

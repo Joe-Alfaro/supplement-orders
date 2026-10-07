@@ -1,5 +1,6 @@
 import type {
   ListOrdersQuery,
+  OrderStatus,
   ProviderOrderListItemDto,
   ProviderOrderListPageDto,
 } from '@supplement-orders/domain'
@@ -9,7 +10,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
 import { expectNoAxeViolations } from '../a11y/expectNoAxeViolations'
 import { renderWithRouter } from '../test/renderWithRouter'
-import type { UiOrderStatus as OrderStatus } from '../stock'
 import OrdersView from './OrdersView.vue'
 
 vi.mock('../api', async (importOriginal) => {
@@ -26,13 +26,11 @@ const base = {
   paidAt: null,
   cancelledAt: null,
   totalCents: null,
+  splitFromOrderId: null,
+  backorderOrderId: null,
 }
 
-type ListItem = Omit<ProviderOrderListItemDto, 'status'> & {
-  status: OrderStatus
-}
-
-const ORDERS: Record<OrderStatus, ListItem> = {
+const ORDERS: Record<OrderStatus, ProviderOrderListItemDto> = {
   awaiting_stock: {
     ...base,
     id: 16,
@@ -81,7 +79,7 @@ function orderPage(
       query.statuses.length === 0 || query.statuses.includes(order.status),
   )
   return {
-    items: items as unknown as ProviderOrderListItemDto[],
+    items,
     total: items.length + 26,
     offset,
     limit,

@@ -34,7 +34,7 @@ defineProps<Props>()
     <Column field="quantity" header="Qty" />
     <Column v-if="showAvailability" header="Availability">
       <template #body="{ data }">
-        <span v-if="data.availableQuantity === undefined">—</span>
+        <span v-if="data.availableQuantity == null">—</span>
         <span v-else-if="data.availableQuantity === 0">Out of stock</span>
         <span v-else-if="data.availableQuantity < data.quantity"
           >Only {{ data.availableQuantity }} of {{ data.quantity }} in

@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import type { PatientOrderDetailDto } from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import Checkbox from 'primevue/checkbox'
 import Message from 'primevue/message'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ApiRequestError, handleApiError, getOrder, payOrder } from '../api'
 import {
   BackorderLinks,
@@ -13,7 +14,6 @@ import {
 } from '../components'
 import { formatDateTime } from '../format'
 import { formatCents } from '../money'
-import type { PatientOrderWithStock } from '../stock'
 import { useResource } from '../useResource'
 
 interface Props {
@@ -30,26 +30,26 @@ const {
   loading,
   error,
   load,
-} = useResource(async (): Promise<PatientOrderWithStock> => {
+} = useResource(async (): Promise<PatientOrderDetailDto> => {
   const detail = await getOrder(Number(props.orderId))
   if (detail.view !== 'patient') {
     throw new ApiRequestError(403, 'FORBIDDEN', 'This is not your order')
   }
-  return detail as PatientOrderWithStock
+  return detail
 })
 onMounted(load)
+// A link from an order to its back-order only changes the route param.
+watch(() => props.orderId, load)
 
 /** The server's quote for the in-stock part (14.5); the UI renders it, never recomputes it. */
 const quote = computed(() => order.value?.partialPaymentQuote ?? null)
-const limited = computed(() => {
-  const current = quote.value
-  return (
+const limited = computed(
+  () =>
     order.value?.status === 'pending_payment' &&
-    current !== null &&
-    current.pay.totalCents > 0 &&
-    current.backorder.totalCents > 0
-  )
-})
+    quote.value !== null &&
+    quote.value.payable &&
+    quote.value.hasShortfall,
+)
 const payableNow = computed(() => order.value?.status === 'pending_payment')
 
 const paying = ref(false)
@@ -76,7 +76,7 @@ const CHANGED_FALLBACK =
 async function reloadChangedOrder(id: number) {
   try {
     const fresh = await getOrder(id)
-    if (fresh.view === 'patient') order.value = fresh as PatientOrderWithStock
+    if (fresh.view === 'patient') order.value = fresh
   } catch (err) {
     payError.value = handleApiError(err)
   }
@@ -100,14 +100,14 @@ async function pay() {
   try {
     // Pay exactly the quote on screen (revision 9); nothing is charged if it changed.
     const partial = limited.value
-    order.value = (await payOrder(shown.id, {
+    order.value = await payOrder(shown.id, {
       ...(partial ? { mode: 'available' as const } : {}),
       expectedRevision: shown.revision,
       expectedTotalCents: partial
         ? (quote.value?.pay.totalCents ?? 0)
         : shown.totalCents,
       ...(isDev && simulateFailure.value ? { simulateFailure: true } : {}),
-    })) as PatientOrderWithStock
+    })
   } catch (err) {
     if (err instanceof ApiRequestError && STOCK_CODES.includes(err.code)) {
       changed.value = {

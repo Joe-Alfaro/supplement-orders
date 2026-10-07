@@ -203,6 +203,7 @@ async function expectEveryStatusChecked(page: Page) {
   await expect(page.getByRole('checkbox', { name: 'Select all' })).toBeChecked()
   await expectStatusSelected(page, 'Draft')
   await expectStatusSelected(page, 'Awaiting payment')
+  await expectStatusSelected(page, 'Awaiting stock')
   await expectStatusSelected(page, 'Paid')
   await expectStatusSelected(page, 'Cancelled')
 }

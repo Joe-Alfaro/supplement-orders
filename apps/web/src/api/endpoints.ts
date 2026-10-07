@@ -11,28 +11,19 @@ import type {
   ListQuery,
   OrderDetailDto,
   OrderLineInput,
+  OrderStatus,
   OrderSummaryDto,
   PatientDto,
   PatientPageDto,
   PatientOrderDetailDto,
   PayOrderRequest,
+  SendOrderRequest,
   ProductPageDto,
   ProviderOrderDetailDto,
   ReplaceOrderLinesRequest,
   UserDto,
 } from '@supplement-orders/domain'
-import type { UiOrderStatus } from '../stock'
 import { request } from './client'
-
-/** Revision 14 (14.5): `available` pays only what is in stock. Default `full`. */
-export interface PayOrderBody extends PayOrderRequest {
-  mode?: 'full' | 'available'
-}
-
-/** Revision 14 (14.6). */
-export interface SendOrderRequest {
-  acknowledgeLowStock?: boolean
-}
 
 // One typed function per endpoint in FRONTEND_DESIGN.md §7.
 
@@ -85,12 +76,7 @@ export function setProductStock(productId: number, body: SetStockRequest) {
   )
 }
 
-/** Revision 14 adds `awaiting_stock` to the latest-status filter. */
-export type PatientSearchQuery = Omit<ListPatientsQuery, 'latestStatus'> & {
-  latestStatus?: ListPatientsQuery['latestStatus'] | 'awaiting_stock'
-}
-
-export function searchPatients(query: PatientSearchQuery = {}) {
+export function searchPatients(query: ListPatientsQuery = {}) {
   const search = listQueryString(query)
   const filter = query.latestStatus
     ? `${search ? '&' : '?'}latestStatus=${query.latestStatus}`
@@ -103,7 +89,7 @@ export function searchPatients(query: PatientSearchQuery = {}) {
  * `statuses` (sent as a comma list). An empty list means every status (`all`).
  */
 export function listProviderOrders(
-  query: { statuses: readonly UiOrderStatus[] } & Pick<
+  query: { statuses: readonly OrderStatus[] } & Pick<
     ListOrdersQuery,
     'offset' | 'limit'
   >,
@@ -174,7 +160,7 @@ export function getOrder(orderId: number) {
  * `expectedTotalCents` come from the displayed order. If it changed since, the
  * server answers 409 ORDER_CHANGED and charges nothing.
  */
-export function payOrder(orderId: number, body: PayOrderBody) {
+export function payOrder(orderId: number, body: PayOrderRequest) {
   return request<PatientOrderDetailDto>('POST', `/orders/${orderId}/pay`, body)
 }
 

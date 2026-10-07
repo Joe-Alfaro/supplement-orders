@@ -198,17 +198,11 @@ function sendNow(acknowledgeLowStock: boolean) {
   })
 }
 
-interface ServerLowStockLine {
-  productName: string
-  quantity: number
-  availableQuantity: number
-}
-
 function lowStockLinesFrom(err: unknown): LowStockLine[] | null {
   if (!(err instanceof ApiRequestError)) return null
   if (err.code !== 'LOW_STOCK_UNACKNOWLEDGED') return null
-  const lines = err.details?.lines as ServerLowStockLine[] | undefined
-  if (!Array.isArray(lines)) return null
+  const lines = err.details?.lines
+  if (!lines) return null
   return lines.map((line) => ({
     name: line.productName,
     quantity: line.quantity,

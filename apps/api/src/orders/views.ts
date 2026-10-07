@@ -2,7 +2,12 @@ import {
   computeSplit,
   markupBpsFromPrice,
   minUnitPriceCents,
+  partialPaymentQuoteDto,
+  planPartialPayment,
   SplitValidationError,
+  STORED_ORDER_STATUSES,
+  type OrderStatus,
+  type PartialPaymentQuoteDto,
   type OrderStatusSelection,
   type ProviderOrderListItemDto,
   type ProviderOrderListPageDto,
@@ -25,6 +30,7 @@ import {
   inArray,
   isNotNull,
   ne,
+  or,
   sql,
   type SQL,
 } from 'drizzle-orm'
@@ -52,6 +58,7 @@ import {
   ledgerEntries,
   orderItems,
   orders,
+  ordersWithStatus,
   patients,
   payments,
   products,
@@ -64,6 +71,39 @@ export type OrderView = 'provider' | 'patient'
 const patientUsers = alias(users, 'patient_users')
 const providerUsers = alias(users, 'provider_users')
 
+/**
+ * Order reads go through the orders_with_status view (revision 14.3b), whose
+ * `effective_status` reports the derived awaiting_stock. `backorders` is the
+ * order's direct child (at most one, by a unique index), for the link back.
+ */
+const view = ordersWithStatus
+const backorders = alias(orders, 'backorders')
+
+/**
+ * A status filter on the view. Stored statuses compare the stored column, so
+ * the status indexes still apply; pending_payment and awaiting_stock split
+ * stored pending_payment by the derived status.
+ */
+export function effectiveStatusIn(statuses: readonly OrderStatus[]): SQL {
+  const stored = STORED_ORDER_STATUSES.filter(
+    (s) => s !== 'pending_payment' && statuses.includes(s),
+  )
+  const pending = statuses.filter(
+    (s) => s === 'pending_payment' || s === 'awaiting_stock',
+  )
+  return (
+    or(
+      stored.length === 0 ? undefined : inArray(view.status, stored),
+      pending.length === 0
+        ? undefined
+        : and(
+            eq(view.status, 'pending_payment'),
+            inArray(view.effectiveStatus, pending),
+          ),
+    ) ?? sql`false`
+  )
+}
+
 function iso(date: Date | null) {
   return date === null ? null : date.toISOString()
 }
@@ -71,30 +111,34 @@ function iso(date: Date | null) {
 async function selectOrders(db: Reader, where: SQL | undefined) {
   return db
     .select({
-      id: orders.id,
-      status: orders.status,
-      patientId: orders.patientId,
+      id: view.id,
+      status: view.effectiveStatus,
+      storedStatus: view.status,
+      patientId: view.patientId,
       patientName: patientUsers.name,
       patientAddress: patients.address,
       patientDateOfBirth: patients.dateOfBirth,
-      providerId: orders.providerId,
+      providerId: view.providerId,
       providerName: providerUsers.name,
-      subtotalCents: orders.subtotalCents,
-      platformFeeCents: orders.platformFeeCents,
-      totalCents: orders.totalCents,
-      createdAt: orders.createdAt,
-      sentAt: orders.sentAt,
-      paidAt: orders.paidAt,
-      cancelledAt: orders.cancelledAt,
-      revision: orders.revision,
+      subtotalCents: view.subtotalCents,
+      platformFeeCents: view.platformFeeCents,
+      totalCents: view.totalCents,
+      createdAt: view.createdAt,
+      sentAt: view.sentAt,
+      paidAt: view.paidAt,
+      cancelledAt: view.cancelledAt,
+      revision: view.revision,
+      splitFromOrderId: view.splitFromOrderId,
+      backorderOrderId: backorders.id,
     })
-    .from(orders)
-    .innerJoin(patients, eq(patients.id, orders.patientId))
+    .from(view)
+    .innerJoin(patients, eq(patients.id, view.patientId))
     .innerJoin(patientUsers, eq(patientUsers.id, patients.userId))
-    .innerJoin(providers, eq(providers.id, orders.providerId))
+    .innerJoin(providers, eq(providers.id, view.providerId))
     .innerJoin(providerUsers, eq(providerUsers.id, providers.userId))
+    .leftJoin(backorders, eq(backorders.splitFromOrderId, view.id))
     .where(where)
-    .orderBy(desc(orders.createdAt), desc(orders.id))
+    .orderBy(desc(view.createdAt), desc(view.id))
 }
 
 type OrderRow = Awaited<ReturnType<typeof selectOrders>>[number]
@@ -103,6 +147,7 @@ async function selectLines(db: Reader, orderIds: number[]) {
   if (orderIds.length === 0) return []
   return db
     .select({
+      lineId: orderItems.id,
       orderId: orderItems.orderId,
       productId: orderItems.productId,
       productName: products.name,
@@ -173,7 +218,55 @@ function summaryBase(order: OrderRow) {
     paidAt: iso(order.paidAt),
     cancelledAt: iso(order.cancelledAt),
     revision: order.revision,
+    splitFromOrderId: order.splitFromOrderId,
+    backorderOrderId: order.backorderOrderId,
   }
+}
+
+/**
+ * Revision 14: what a pay can charge now, from live stock, while the order
+ * awaits payment or stock; null otherwise. The same plan the pay makes, minus
+ * the stock lock, so a pay with this quote succeeds unless stock moves first.
+ */
+function quoteFor(
+  order: OrderRow,
+  lines: LineRow[],
+  view: OrderView,
+): PartialPaymentQuoteDto | null {
+  if (order.storedStatus !== 'pending_payment' || order.totalCents === null) {
+    return null
+  }
+  const complete = lines.flatMap((l) =>
+    l.productId === null ||
+    l.unitPriceCents === null ||
+    l.unitCogsCents === null
+      ? []
+      : [
+          {
+            productId: l.productId,
+            quantity: l.quantity,
+            unitPriceCents: l.unitPriceCents,
+            unitCogsCents: l.unitCogsCents,
+          },
+        ],
+  )
+  const stock = new Map(
+    lines.flatMap((l) =>
+      l.productId === null || l.stockQuantity === null
+        ? []
+        : [[l.productId, l.stockQuantity] as const],
+    ),
+  )
+  return partialPaymentQuoteDto(planPartialPayment(complete, stock), view)
+}
+
+/** Per-line availability (revision 14.3), null when stock no longer matters. */
+function lineAvailability(l: LineRow, open: boolean) {
+  if (!open || l.stockQuantity === null) {
+    return { payableQuantity: null, shortQuantity: null }
+  }
+  const payableQuantity = Math.min(l.quantity, Math.max(l.stockQuantity, 0))
+  return { payableQuantity, shortQuantity: l.quantity - payableQuantity }
 }
 
 function providerSummary(
@@ -219,6 +312,7 @@ function derived(compute: () => number | null): number | null {
 function providerLine(l: LineRow): ProviderOrderLineDto {
   const { unitCogsCents, unitPriceCents } = l
   return {
+    lineId: l.lineId,
     productId: l.productId,
     productName: l.productName,
     sku: l.sku,
@@ -234,6 +328,8 @@ function providerLine(l: LineRow): ProviderOrderLineDto {
         ? null
         : derived(() => markupBpsFromPrice(unitCogsCents, unitPriceCents)),
     stockQuantity: l.stockQuantity,
+    availableQuantity: l.stockQuantity,
+    ...lineAvailability(l, true),
     minUnitPriceCents:
       unitCogsCents === null
         ? null
@@ -241,7 +337,7 @@ function providerLine(l: LineRow): ProviderOrderLineDto {
   }
 }
 
-function patientLine(l: LineRow): OrderLineDto {
+function patientLine(order: OrderRow, l: LineRow): OrderLineDto {
   if (
     l.productId === null ||
     l.productName === null ||
@@ -253,12 +349,16 @@ function patientLine(l: LineRow): OrderLineDto {
     )
   }
   return {
+    lineId: l.lineId,
     productId: l.productId,
     productName: l.productName,
     sku: l.sku,
     quantity: l.quantity,
     unitPriceCents: l.unitPriceCents,
     lineTotalCents: l.quantity * l.unitPriceCents,
+    availableQuantity:
+      order.storedStatus === 'pending_payment' ? l.stockQuantity : null,
+    ...lineAvailability(l, order.storedStatus === 'pending_payment'),
   }
 }
 
@@ -277,8 +377,8 @@ export async function listProviderOrders(
   const rows = await selectOrders(
     db,
     and(
-      eq(orders.providerId, providerId),
-      patientId === undefined ? undefined : eq(orders.patientId, patientId),
+      eq(view.providerId, providerId),
+      patientId === undefined ? undefined : eq(view.patientId, patientId),
     ),
   )
   const lines = groupLines(
@@ -295,9 +395,9 @@ export async function listPatientOrders(db: Db, patientId: number) {
   const rows = await selectOrders(
     db,
     and(
-      eq(orders.patientId, patientId),
-      ne(orders.status, 'draft'),
-      isNotNull(orders.sentAt),
+      eq(view.patientId, patientId),
+      ne(view.status, 'draft'),
+      isNotNull(view.sentAt),
     ),
   )
   return rows.map(patientSummary)
@@ -334,7 +434,7 @@ async function loadPayment(db: Reader, orderId: number) {
 }
 
 async function loadOne(db: Reader, orderId: number, hooks: ReadHooks = {}) {
-  const [order] = await selectOrders(db, eq(orders.id, orderId))
+  const [order] = await selectOrders(db, eq(view.id, orderId))
   if (!order) throw new Error(`Order ${orderId} disappeared`)
   await hooks.afterOrderHeader?.()
   const lines = await selectLines(db, [orderId])
@@ -368,6 +468,7 @@ async function readProviderOrderDetail(
     lines: lines.map(providerLine),
     payment,
     ledger,
+    partialPaymentQuote: quoteFor(order, lines, 'provider'),
   }
 }
 
@@ -380,8 +481,9 @@ async function readPatientOrderDetail(
   return {
     ...patientSummary(order),
     patientAddress: order.patientAddress,
-    lines: lines.map(patientLine),
+    lines: lines.map((line) => patientLine(order, line)),
     payment,
+    partialPaymentQuote: quoteFor(order, lines, 'patient'),
   }
 }
 
@@ -436,7 +538,7 @@ export function loadOrderDetailFor(
  * is later than sentAt, so this equals the latest activity. Mirrors the
  * expression index orders_provider_status_activity_idx (migration 0006).
  */
-export const orderActivityAt = sql<Date>`coalesce(${orders.paidAt}, ${orders.cancelledAt}, ${orders.sentAt}, ${orders.createdAt})`
+export const orderActivityAt = sql<Date>`coalesce(${view.paidAt}, ${view.cancelledAt}, ${view.sentAt}, ${view.createdAt})`
 
 /**
  * Provider order list (Orders tab, dashboard Awaiting payment). Exactly
@@ -461,37 +563,40 @@ export async function listProviderOrderPage(
   },
 ): Promise<ProviderOrderListPageDto> {
   const where = and(
-    eq(orders.providerId, providerId),
-    status === 'all' ? undefined : inArray(orders.status, status),
-    patientId === undefined ? undefined : eq(orders.patientId, patientId),
+    eq(view.providerId, providerId),
+    status === 'all' ? undefined : effectiveStatusIn(status),
+    patientId === undefined ? undefined : eq(view.patientId, patientId),
   )
   const awaitingOnly =
     status !== 'all' && status.length === 1 && status[0] === 'pending_payment'
   const ordering = awaitingOnly
-    ? [asc(orders.sentAt), asc(orders.id)]
-    : [desc(orderActivityAt), desc(orders.id)]
+    ? [asc(view.sentAt), asc(view.id)]
+    : [desc(orderActivityAt), desc(view.id)]
   const [rows, [counted]] = await Promise.all([
     db
       .select({
-        id: orders.id,
-        patientId: orders.patientId,
+        id: view.id,
+        patientId: view.patientId,
         patientName: patientUsers.name,
         patientDateOfBirth: patients.dateOfBirth,
-        status: orders.status,
-        totalCents: orders.totalCents,
-        createdAt: orders.createdAt,
-        sentAt: orders.sentAt,
-        paidAt: orders.paidAt,
-        cancelledAt: orders.cancelledAt,
+        status: view.effectiveStatus,
+        totalCents: view.totalCents,
+        createdAt: view.createdAt,
+        sentAt: view.sentAt,
+        paidAt: view.paidAt,
+        cancelledAt: view.cancelledAt,
+        splitFromOrderId: view.splitFromOrderId,
+        backorderOrderId: backorders.id,
       })
-      .from(orders)
-      .innerJoin(patients, eq(patients.id, orders.patientId))
+      .from(view)
+      .innerJoin(patients, eq(patients.id, view.patientId))
       .innerJoin(patientUsers, eq(patientUsers.id, patients.userId))
+      .leftJoin(backorders, eq(backorders.splitFromOrderId, view.id))
       .where(where)
       .orderBy(...ordering)
       .limit(limit)
       .offset(offset),
-    db.select({ total: count() }).from(orders).where(where),
+    db.select({ total: count() }).from(view).where(where),
   ])
   const items = rows.map((row): ProviderOrderListItemDto => ({
     ...row,

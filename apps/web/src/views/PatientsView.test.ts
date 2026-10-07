@@ -1,4 +1,5 @@
 import {
+  type ListPatientsQuery,
   parseDateOfBirthQuery,
   type PatientDto,
   type PatientPageDto,
@@ -7,7 +8,6 @@ import { screen } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
-import type { PatientSearchQuery } from '../api/endpoints'
 import { renderWithRouter } from '../test/renderWithRouter'
 import PatientsView from './PatientsView.vue'
 
@@ -34,7 +34,7 @@ function patient(
 }
 
 /** A fake GET /api/patients with 312 patients in total. */
-function patientPage(query: PatientSearchQuery): PatientPageDto {
+function patientPage(query: ListPatientsQuery): PatientPageDto {
   const offset = query.offset ?? 0
   const limit = query.limit ?? 25
   if (query.q === 'nobody' || query.latestStatus === 'cancelled') {

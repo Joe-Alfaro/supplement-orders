@@ -273,11 +273,6 @@ function lineProduct(line: ProviderOrderLineDto): LineProduct | null {
     cogsCents: line.unitCogsCents,
     // Live stock, so a reloaded line warns like a freshly added one. The
     // revision 14 draft DTO calls it availableQuantity.
-    stockQuantity: availableQuantity(line) ?? line.stockQuantity,
+    stockQuantity: line.availableQuantity ?? line.stockQuantity,
   }
-}
-
-function availableQuantity(line: ProviderOrderLineDto) {
-  const { availableQuantity } = line as { availableQuantity?: number }
-  return availableQuantity
 }

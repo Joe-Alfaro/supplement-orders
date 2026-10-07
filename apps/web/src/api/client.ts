@@ -1,25 +1,22 @@
 import {
   apiErrorResponseSchema,
   USER_ID_HEADER,
+  type ApiErrorBody,
   type ApiErrorCode,
 } from '@supplement-orders/domain'
 import { readStoredUserId } from '../user/storage'
-
-/** Revision 14 codes the domain package does not carry yet (DOMAIN_CONTRACT 14.5 to 14.7). */
-export type BackorderErrorCode =
-  'LOW_STOCK_UNACKNOWLEDGED' | 'AWAITING_STOCK' | 'BACKORDER_NOT_EDITABLE'
 
 /** A non-2xx response, carrying the server's `{ error: { code, message, field? } }`. */
 export class ApiRequestError extends Error {
   constructor(
     readonly status: number,
-    readonly code: ApiErrorCode | BackorderErrorCode | 'NETWORK',
+    readonly code: ApiErrorCode | 'NETWORK',
     message: string,
     readonly field?: string,
     /** Set on 409 STOCK_CHANGED: the stock the server holds now. */
     readonly currentStockQuantity?: number,
     /** The rest of the error body, e.g. `lines` on 409 LOW_STOCK_UNACKNOWLEDGED. */
-    readonly details?: Record<string, unknown>,
+    readonly details?: Partial<ApiErrorBody>,
   ) {
     super(message)
     this.name = 'ApiRequestError'
@@ -61,7 +58,7 @@ async function toError(response: Response) {
     message,
     known?.field,
     known?.currentStockQuantity,
-    raw ?? undefined,
+    (raw ?? undefined) as Partial<ApiErrorBody> | undefined,
   )
 }
 
