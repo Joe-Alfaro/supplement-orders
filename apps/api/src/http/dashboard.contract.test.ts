@@ -18,7 +18,12 @@ import type { TestContext } from '../testing/harness'
 // GET /api/orders?status=paid. Revision 2: the patient pays the subtotal, so
 // GMV is that subtotal. Margin is subtotal - wholesale cost - fee.
 
-const DASHBOARD_KEYS = ['gmvCents', 'providerMarginCents', 'platformFeeCents']
+const DASHBOARD_KEYS = [
+  'gmvCents',
+  'providerMarginCents',
+  'platformFeeCents',
+  'range',
+]
 
 const PROVIDER_DETAIL_KEYS = [
   'id',

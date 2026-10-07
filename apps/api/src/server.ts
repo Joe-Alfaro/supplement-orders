@@ -34,6 +34,8 @@ export interface AppDeps {
   nodeEnv?: string
   payHooks?: PayHooks
   readHooks?: ReadHooks
+  /** The clock for date-range resolution; defaults to the system clock. */
+  now?: () => Date
   /** Built web app to serve outside /api (production); omitted in dev and tests. */
   webDist?: string
 }
@@ -46,6 +48,7 @@ export interface AppContext {
   allowSimulatedFailure: boolean
   payHooks: PayHooks
   readHooks: ReadHooks
+  now: () => Date
 }
 
 export function createApp(deps: AppDeps) {
@@ -57,6 +60,7 @@ export function createApp(deps: AppDeps) {
     allowSimulatedFailure: deps.nodeEnv !== 'production',
     payHooks: deps.payHooks ?? {},
     readHooks: deps.readHooks ?? {},
+    now: deps.now ?? (() => new Date()),
   }
 
   const app = express()

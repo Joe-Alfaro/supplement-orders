@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  calendarDayInZone,
   dashboardQuerySchema,
   idParamSchema,
   POSTGRES_INTEGER_MAX,
+  resolveDashboardRange,
   payOrderRequestSchema,
   replaceOrderLinesRequestSchema,
 } from './requests'
@@ -144,62 +146,168 @@ describe('API request schemas', () => {
 })
 
 describe('dashboardQuerySchema', () => {
-  it('parses no params as lifetime (both bounds null)', () => {
-    expect(dashboardQuerySchema.parse({})).toEqual({ from: null, to: null })
-  })
-
-  it('parses instants with Z or an explicit offset', () => {
-    const parsed = dashboardQuerySchema.parse({
-      from: '2026-10-01T00:00:00Z',
-      to: '2026-10-08T00:00:00-07:00',
+  it('defaults to month in UTC with no days', () => {
+    expect(dashboardQuerySchema.parse({})).toEqual({
+      preset: 'month',
+      from: null,
+      to: null,
+      timeZone: 'UTC',
     })
-    expect(parsed.from?.toISOString()).toBe('2026-10-01T00:00:00.000Z')
-    expect(parsed.to?.toISOString()).toBe('2026-10-08T07:00:00.000Z')
   })
 
-  it('accepts only one bound', () => {
+  it.each(['month', 'last30', 'all'] as const)('accepts preset %s', (range) => {
     expect(
-      dashboardQuerySchema.parse({ from: '2026-10-01T00:00:00Z' }).to,
-    ).toBeNull()
+      dashboardQuerySchema.parse({ range, tz: 'America/Chicago' }),
+    ).toEqual({
+      preset: range,
+      from: null,
+      to: null,
+      timeZone: 'America/Chicago',
+    })
+  })
+
+  it('accepts custom with inclusive days, including a single day', () => {
     expect(
-      dashboardQuerySchema.parse({ to: '2026-10-01T00:00:00Z' }).from,
-    ).toBeNull()
+      dashboardQuerySchema.parse({
+        range: 'custom',
+        from: '2026-10-01',
+        to: '2026-10-01',
+      }),
+    ).toMatchObject({ preset: 'custom', from: '2026-10-01', to: '2026-10-01' })
+  })
+
+  it('accepts exactly 366 days and rejects 367', () => {
+    const ok = dashboardQuerySchema.safeParse({
+      range: 'custom',
+      from: '2025-10-07',
+      to: '2026-10-07',
+    })
+    const tooLong = dashboardQuerySchema.safeParse({
+      range: 'custom',
+      from: '2025-10-06',
+      to: '2026-10-07',
+    })
+    expect(ok.success).toBe(true)
+    expect(tooLong.success).toBe(false)
+    expect(tooLong.error?.issues[0]?.path).toEqual(['to'])
   })
 
   it.each([
-    ['no offset', '2026-10-01T00:00:00'],
-    ['date only', '2026-10-01'],
-    ['garbage', 'yesterday'],
-    ['empty', ''],
-    ['impossible date', '2026-02-30T00:00:00Z'],
-  ])('rejects %s on from and to', (_label, value) => {
-    const from = dashboardQuerySchema.safeParse({ from: value })
-    const to = dashboardQuerySchema.safeParse({ to: value })
-    expect(from.success).toBe(false)
-    expect(to.success).toBe(false)
-    expect(from.error?.issues[0]?.path).toEqual(['from'])
-    expect(to.error?.issues[0]?.path).toEqual(['to'])
+    ['unknown preset', { range: 'week' }, 'range'],
+    ['unknown time zone', { tz: 'Mars/Olympus' }, 'tz'],
+    ['empty time zone', { tz: '' }, 'tz'],
+    ['custom without days', { range: 'custom' }, 'from'],
+    ['custom without to', { range: 'custom', from: '2026-10-01' }, 'to'],
+    ['custom without from', { range: 'custom', to: '2026-10-01' }, 'from'],
+    ['days on the default preset', { from: '2026-10-01' }, 'from'],
+    ['to on month', { range: 'month', to: '2026-10-01' }, 'to'],
+    ['days on last30', { range: 'last30', from: '2026-10-01' }, 'from'],
+    ['days on all', { range: 'all', to: '2026-10-01' }, 'to'],
+    [
+      'reversed days',
+      { range: 'custom', from: '2026-10-02', to: '2026-10-01' },
+      'to',
+    ],
+    [
+      'an instant instead of a day',
+      { range: 'custom', from: '2026-10-01T00:00:00Z', to: '2026-10-02' },
+      'from',
+    ],
+    [
+      'an impossible day',
+      { range: 'custom', from: '2026-02-30', to: '2026-03-01' },
+      'from',
+    ],
+    [
+      'an unpadded day',
+      { range: 'custom', from: '2026-1-1', to: '2026-10-01' },
+      'from',
+    ],
+  ])('rejects %s', (_label, query, field) => {
+    const result = dashboardQuerySchema.safeParse(query)
+    expect(result.success).toBe(false)
+    expect(result.error?.issues[0]?.path).toEqual([field])
   })
 
   it('rejects repeated params', () => {
     expect(
-      dashboardQuerySchema.safeParse({
-        from: ['2026-10-01T00:00:00Z', '2026-10-02T00:00:00Z'],
-      }).success,
+      dashboardQuerySchema.safeParse({ range: ['month', 'all'] }).success,
     ).toBe(false)
   })
+})
 
-  it('requires from strictly before to, reporting the error on to', () => {
-    const same = dashboardQuerySchema.safeParse({
-      from: '2026-10-01T00:00:00Z',
-      to: '2026-10-01T00:00:00Z',
+describe('calendarDayInZone', () => {
+  it('reads the local day, which can differ from the UTC day', () => {
+    const instant = new Date('2026-10-01T03:30:00Z')
+    expect(calendarDayInZone(instant, 'UTC')).toBe('2026-10-01')
+    expect(calendarDayInZone(instant, 'America/Chicago')).toBe('2026-09-30')
+    expect(calendarDayInZone(instant, 'Pacific/Auckland')).toBe('2026-10-01')
+  })
+})
+
+describe('resolveDashboardRange', () => {
+  const base = { timeZone: 'America/Chicago' }
+
+  it('month runs from the 1st through today', () => {
+    expect(
+      resolveDashboardRange(
+        { preset: 'month', from: null, to: null, ...base },
+        '2026-10-07',
+      ),
+    ).toEqual({
+      preset: 'month',
+      from: '2026-10-01',
+      to: '2026-10-07',
+      ...base,
     })
-    const reversed = dashboardQuerySchema.safeParse({
-      from: '2026-10-02T00:00:00Z',
-      to: '2026-10-01T00:00:00Z',
+    expect(
+      resolveDashboardRange(
+        { preset: 'month', from: null, to: null, ...base },
+        '2026-10-01',
+      ),
+    ).toMatchObject({ from: '2026-10-01', to: '2026-10-01' })
+  })
+
+  it('last30 is today and the 29 days before it, across month and year ends', () => {
+    const resolve = (today: string) =>
+      resolveDashboardRange(
+        { preset: 'last30', from: null, to: null, ...base },
+        today,
+      )
+    expect(resolve('2026-10-07')).toMatchObject({
+      from: '2026-09-08',
+      to: '2026-10-07',
     })
-    expect(same.success).toBe(false)
-    expect(reversed.success).toBe(false)
-    expect(reversed.error?.issues[0]?.path).toEqual(['to'])
+    expect(resolve('2026-01-15')).toMatchObject({
+      from: '2025-12-17',
+      to: '2026-01-15',
+    })
+    expect(resolve('2028-03-01')).toMatchObject({
+      from: '2028-02-01',
+      to: '2028-03-01',
+    })
+  })
+
+  it('all has no days', () => {
+    expect(
+      resolveDashboardRange(
+        { preset: 'all', from: null, to: null, ...base },
+        '2026-10-07',
+      ),
+    ).toEqual({ preset: 'all', from: null, to: null, ...base })
+  })
+
+  it('custom echoes the given days', () => {
+    expect(
+      resolveDashboardRange(
+        { preset: 'custom', from: '2026-01-01', to: '2026-01-31', ...base },
+        '2026-10-07',
+      ),
+    ).toEqual({
+      preset: 'custom',
+      from: '2026-01-01',
+      to: '2026-01-31',
+      ...base,
+    })
   })
 })

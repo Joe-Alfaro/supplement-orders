@@ -1,5 +1,9 @@
 import { z } from 'zod'
-import { ORDER_STATUSES, type OrderStatus } from './responses'
+import {
+  ORDER_STATUSES,
+  type DashboardRangeDto,
+  type OrderStatus,
+} from './responses'
 
 /** Every request except GET /api/users and GET /api/health carries this header. */
 export const USER_ID_HEADER = 'X-User-Id'
@@ -263,53 +267,167 @@ export const payOrderRequestSchema: z.ZodType<PayOrderRequest> = z.strictObject(
   },
 )
 
+export const DASHBOARD_RANGE_PRESETS = [
+  'month',
+  'last30',
+  'all',
+  'custom',
+] as const
+export type DashboardRangePreset = (typeof DASHBOARD_RANGE_PRESETS)[number]
+
+/** The most days a custom range may span, both ends inclusive. */
+export const DASHBOARD_CUSTOM_MAX_DAYS = 366
+
 /** Raw query-string values for GET /api/dashboard as Express delivers them. */
 export interface DashboardQueryParams {
+  range?: unknown
   from?: unknown
   to?: unknown
+  tz?: unknown
 }
 
-/** GET /api/dashboard window on orders.paid_at; a null bound is open. */
+/** A validated GET /api/dashboard query, before "today" is known. */
 export interface DashboardQuery {
-  /** Inclusive. */
-  from: Date | null
-  /** Exclusive. */
-  to: Date | null
+  preset: DashboardRangePreset
+  /** Inclusive YYYY-MM-DD; set only for `custom`. */
+  from: string | null
+  /** Inclusive YYYY-MM-DD; set only for `custom`. */
+  to: string | null
+  /** IANA zone the days are read in. */
+  timeZone: string
 }
 
-/** ISO 8601 date-time with an explicit offset or `Z`, parsed to an instant. */
-const instantParam = z
+const MS_PER_DAY = 86_400_000
+
+function dayToMs(day: string): number {
+  return Date.parse(`${day}T00:00:00Z`)
+}
+
+function shiftDay(day: string, days: number): string {
+  return new Date(dayToMs(day) + days * MS_PER_DAY).toISOString().slice(0, 10)
+}
+
+/** A real calendar day as YYYY-MM-DD (revision 11a-v2). */
+const dayParam = z
   .string()
-  .regex(
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/,
-    'Must be an ISO 8601 date-time with an explicit offset, such as 2026-10-01T00:00:00Z',
-  )
-  .transform((raw, ctx) => {
-    const instant = new Date(raw)
-    const calendarDay = raw.slice(0, 10)
-    const isRealDay =
-      !Number.isNaN(instant.getTime()) &&
-      new Date(`${calendarDay}T00:00:00Z`).toISOString().startsWith(calendarDay)
-    if (!isRealDay) {
-      ctx.addIssue({ code: 'custom', message: 'Must be a real date and time' })
-      return z.NEVER
-    }
-    return instant
-  })
-  .nullish()
-  .transform((v) => v ?? null)
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be a day as YYYY-MM-DD')
+  .refine((raw) => {
+    const ms = dayToMs(raw)
+    return !Number.isNaN(ms) && new Date(ms).toISOString().startsWith(raw)
+  }, 'Must be a real calendar day')
 
 /**
- * Query schema for GET /api/dashboard (revision 11a). Both bounds are optional;
- * with neither, totals are lifetime. When both are present `from` must be
- * strictly before `to`, and the error is reported on `to`.
+ * An IANA zone name. The shape check keeps Intl-only forms (numeric offsets)
+ * out, since the same name is later handed to Postgres.
+ */
+const timeZoneParam = z
+  .string()
+  .regex(
+    /^[A-Za-z][A-Za-z0-9_+-]*(\/[A-Za-z0-9_+-]+)*$/,
+    'Must be an IANA zone',
+  )
+  .refine((zone) => {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: zone })
+      return true
+    } catch {
+      return false
+    }
+  }, 'Unknown time zone, expected an IANA zone such as America/Chicago')
+
+/** Today's calendar day (YYYY-MM-DD) in `timeZone`. */
+export function calendarDayInZone(now: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now)
+  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? ''
+  return `${part('year').padStart(4, '0')}-${part('month')}-${part('day')}`
+}
+
+/**
+ * Query schema for GET /api/dashboard (revision 11a-v2). `range` defaults to
+ * `month` and `tz` to UTC. `from` and `to` are inclusive days, required for
+ * `custom` and rejected for every other preset; `from` <= `to` and the span is
+ * at most 366 days.
  */
 export const dashboardQuerySchema: z.ZodType<
   DashboardQuery,
   DashboardQueryParams
 > = z
-  .object({ from: instantParam, to: instantParam })
-  .refine(({ from, to }) => !from || !to || from.getTime() < to.getTime(), {
-    path: ['to'],
-    message: '`to` must be after `from`',
+  .object({
+    range: z.enum(DASHBOARD_RANGE_PRESETS).default('month'),
+    from: dayParam.optional(),
+    to: dayParam.optional(),
+    tz: timeZoneParam.default('UTC'),
   })
+  .superRefine(({ range, from, to }, ctx) => {
+    const given = { from, to }
+    const keys = ['from', 'to'] as const
+    if (range !== 'custom') {
+      keys
+        .filter((key) => given[key] !== undefined)
+        .forEach((key) =>
+          ctx.addIssue({
+            code: 'custom',
+            path: [key],
+            message: `\`${key}\` is only allowed with range=custom`,
+          }),
+        )
+      return
+    }
+    if (from === undefined || to === undefined) {
+      keys
+        .filter((key) => given[key] === undefined)
+        .forEach((key) =>
+          ctx.addIssue({
+            code: 'custom',
+            path: [key],
+            message: `\`${key}\` is required with range=custom`,
+          }),
+        )
+      return
+    }
+    const span = (dayToMs(to) - dayToMs(from)) / MS_PER_DAY + 1
+    if (span < 1) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['to'],
+        message: '`to` must be on or after `from`',
+      })
+    } else if (span > DASHBOARD_CUSTOM_MAX_DAYS) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['to'],
+        message: `The range may span at most ${DASHBOARD_CUSTOM_MAX_DAYS} days`,
+      })
+    }
+  })
+  .transform(({ range, from, to, tz }) => ({
+    preset: range,
+    from: from ?? null,
+    to: to ?? null,
+    timeZone: tz,
+  }))
+
+/**
+ * Turns a validated query into the days it covers, given today's day in the
+ * query's zone: `month` is the 1st through today, `last30` is today minus 29
+ * days through today, `all` has no days, `custom` echoes its own.
+ */
+export function resolveDashboardRange(
+  query: DashboardQuery,
+  today: string,
+): DashboardRangeDto {
+  const { preset, timeZone } = query
+  if (preset === 'all') return { preset, from: null, to: null, timeZone }
+  if (preset === 'month') {
+    return { preset, from: `${today.slice(0, 8)}01`, to: today, timeZone }
+  }
+  if (preset === 'last30') {
+    return { preset, from: shiftDay(today, -29), to: today, timeZone }
+  }
+  return { preset, from: query.from, to: query.to, timeZone }
+}
