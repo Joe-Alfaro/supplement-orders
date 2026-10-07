@@ -30,7 +30,7 @@ Captured from the live demo at 1440x900, signed in as Dr. Maya Rivera.
   - **Patients:** search by name or date of birth (`MM/DD/YYYY` or `YYYY-MM-DD`), filter by latest order status, paginated.
   - **Order builder:** add products through a searchable Add-product dialog, then set Markup % or Patient price (linked both ways). The line's processing fee is shown read-only and rounds up to the cent. The price starts at the product's minimum. Drafts can be saved incomplete; Send requires every line complete and at or above its minimum.
   - **Order detail:** lines, split and, once paid, the three ledger entries with a "Total of entries" check. Actions depend on status: **Delete draft**, **Cancel order** (awaiting payment), **Reopen as draft** (cancelled). Paid orders have no actions.
-  - **Orders:** all of the provider's orders, filtered by a multi-select Status (Draft, Awaiting payment, Paid, Cancelled; all statuses by default).
+  - **Orders:** all of the provider's orders, filtered by a multi-select Status (Draft, Awaiting payment, Awaiting stock, Paid, Cancelled; all statuses by default).
   - **Dashboard:** GMV, margin earned and processing fee tiles, "See paid orders →" and "See orders awaiting payment →" links into the Orders tab, and a searchable, read-only inventory.
   - List filters, searches and pages are kept in the URL, so reload, Back and shared links restore the same view.
 - **Patient** (nav: My Orders): sees sent orders and pays them. Never sees wholesale cost, margin or the fee.
@@ -45,7 +45,7 @@ Prerequisites: Node 22 LTS, 22.13 or later (`engines` in `package.json` is `>=22
 ```sh
 npm install
 npm run db:up        # Postgres 16 in Docker on localhost:54329; waits until healthy
-npm run db:migrate   # applies migrations 0000-0011 (includes the pg_trgm extension)
+npm run db:migrate   # applies migrations 0000-0012 (includes the pg_trgm extension)
 npm run db:seed      # wipes the dev database and loads the demo seed
 npm run dev          # API on http://localhost:3000, web on http://localhost:5173
 ```
@@ -118,6 +118,15 @@ Pay is bound to the quote the patient saw: the request carries the order's `revi
 
 An admin (Ada Admin) manages stock (revision 13, at the product owner's request; this reverses the earlier reading that stock is never edited by hand). Providers and patients can't change it, and the provider dashboard's inventory stays read-only. The admin can add to a product's stock (an atomic increment, so concurrent additions never conflict) or set it to an exact value. Setting is a compare-and-set against the value the admin loaded: if a payment reserved stock or another admin changed it in the meantime, the API answers 409 `STOCK_CHANGED` with the current value and changes nothing. Stock stays between 0 and 1,000,000, and every admin change is recorded in an append-only `inventory_adjustments` table. The admin edits available stock, the same number the dashboard shows. A pay attempt reserves the order's quantities before charging, a decline gives them back, and a recorded payment keeps them as the sale. So an order whose payment is in progress, or waiting for reconciliation, already counts against the stock shown.
 
+### Low stock and back-orders
+
+Revision 14 lets a provider send quantities above the stock available now: the builder warns, saving is never blocked, and send asks for an explicit acknowledgement (`acknowledgeLowStock`). Stock is still reserved only when the patient pays.
+
+- **Awaiting stock.** An order awaiting payment none of whose lines is in stock shows as **Awaiting stock**. This status is derived, not stored: the `orders_with_status` view computes it from current stock on every read, so restocking or a sale is reflected immediately.
+- **Paying for what's in stock.** The patient sees what is payable now. Paying in full with any shortfall is refused (409 `INSUFFICIENT_STOCK`). Choosing to pay for the in-stock items (`mode: 'available'`) charges exactly the in-stock total the patient saw, and in the same locked transaction moves the shortfall to one new **back-order** at the original unit prices. The paid order and its back-order link to each other. If stock moved in the meantime, the patient gets 409 `ORDER_CHANGED` with the refreshed amounts and nothing is charged.
+- **Chains.** A back-order is paid like any order, and partially paying it creates the next back-order. Retrying the same request, even after a restart, never splits or charges twice.
+- **Lifecycle.** A back-order can be cancelled but never edited or reopened (409 `BACKORDER_NOT_EDITABLE`). Each order is charged its own processing fee, so a split can cost the provider at most one cent more in fees than the unsplit order.
+
 ## Deployment
 
 Public demo: <https://web-production-b7c8c.up.railway.app>
@@ -181,7 +190,7 @@ apps/api              Express REST API
   src/orders/         order service (send, pay, cancel, delete, reopen) and read views
   src/seams/          Auth, PaymentGateway, Notifier interfaces and fakes
   src/db/             Drizzle schema, migration runner, seed, test/e2e database helpers
-  drizzle/            SQL migrations 0000-0011
+  drizzle/            SQL migrations 0000-0012
   scripts/            explain-search.ts
 apps/web              Vue 3 + Vite + PrimeVue SPA (views, components, api client, a11y and state tests)
 e2e/                  Playwright specs
