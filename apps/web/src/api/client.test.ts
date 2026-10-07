@@ -42,4 +42,41 @@ describe('request', () => {
       expect.objectContaining({ method: 'DELETE' }),
     )
   })
+
+  it.each([
+    [
+      'inside error',
+      {
+        error: {
+          code: 'STOCK_CHANGED',
+          message: 'Changed',
+          currentStockQuantity: 12,
+        },
+      },
+    ],
+    [
+      'beside error',
+      {
+        error: { code: 'STOCK_CHANGED', message: 'Changed' },
+        currentStockQuantity: 12,
+      },
+    ],
+  ])(
+    'keeps currentStockQuantity from a 409 STOCK_CHANGED (%s)',
+    async (_label, body) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(JSON.stringify(body), { status: 409 })),
+      )
+
+      await expect(
+        request('PUT', '/admin/products/1/stock', {}),
+      ).rejects.toMatchObject({
+        status: 409,
+        code: 'STOCK_CHANGED',
+        message: 'Changed',
+        currentStockQuantity: 12,
+      })
+    },
+  )
 })

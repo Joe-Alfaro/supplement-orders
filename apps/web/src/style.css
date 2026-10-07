@@ -308,3 +308,15 @@ input.price {
   display: flex;
   gap: 1.5rem;
 }
+
+.stock-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.stock-message {
+  margin: 0.5rem 0 0;
+  color: var(--p-red-700);
+}

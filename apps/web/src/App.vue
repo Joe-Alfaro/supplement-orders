@@ -30,6 +30,11 @@ async function onSignOut() {
           <RouterLink to="/orders">Orders</RouterLink>
           <RouterLink to="/dashboard">Dashboard</RouterLink>
         </template>
+        <RouterLink
+          v-else-if="currentUser.role === 'admin'"
+          to="/admin/inventory"
+          >Inventory</RouterLink
+        >
         <RouterLink v-else to="/my-orders">My Orders</RouterLink>
       </nav>
       <span class="signed-in">

@@ -1,11 +1,15 @@
-import type { Role, UserDto } from '@supplement-orders/domain'
+import type { UserDto } from '@supplement-orders/domain'
 import { computed, ref } from 'vue'
+import type { AppRole } from '../admin/types'
 import { handleApiError, listUsers, onUnauthenticated } from '../api'
 import { showNotice } from './notice'
 import { readStoredUserId, writeStoredUserId } from './storage'
 
+/** UserDto with the admin role (the shared Role lacks it until the API merges). */
+export type AppUser = Omit<UserDto, 'role'> & { role: AppRole }
+
 // Module-level state: the current user is the app's only cross-screen client state.
-const users = ref<UserDto[]>([])
+const users = ref<AppUser[]>([])
 const selectedUserId = ref<number | null>(readStoredUserId())
 const loadError = ref<string | null>(null)
 let pendingLoad: Promise<void> | null = null
@@ -50,19 +54,31 @@ onUnauthenticated(() => {
   showNotice('Your session has ended. Please sign in again.', '/login')
 })
 
-export function homePathFor(role: Role) {
-  return role === 'provider' ? '/patients' : '/my-orders'
+const HOME_PATHS: Record<AppRole, string> = {
+  provider: '/patients',
+  patient: '/my-orders',
+  admin: '/admin/inventory',
 }
 
-export function roleLabel(role: Role) {
-  return role === 'provider' ? 'Provider' : 'Patient'
+const ROLE_LABELS: Record<AppRole, string> = {
+  provider: 'Provider',
+  patient: 'Patient',
+  admin: 'Admin',
+}
+
+export function homePathFor(role: AppRole) {
+  return HOME_PATHS[role]
+}
+
+export function roleLabel(role: AppRole) {
+  return ROLE_LABELS[role]
 }
 
 /**
  * Login picker options. Seeded users can share a name, so the user id is added
  * to tell them apart.
  */
-export function userOptions(users: readonly UserDto[]) {
+export function userOptions(users: readonly AppUser[]) {
   return users.map((user) => {
     const label = `${user.name} (${roleLabel(user.role)})`
     const shared = users.some(

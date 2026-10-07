@@ -1,4 +1,4 @@
-import type { Role } from '@supplement-orders/domain'
+import type { AppRole } from './admin/types'
 import {
   createRouter,
   createWebHistory,
@@ -16,12 +16,13 @@ import LoginView from './views/LoginView.vue'
 
 declare module 'vue-router' {
   interface RouteMeta {
-    persona?: Role
+    persona?: AppRole
   }
 }
 
 const provider = { persona: 'provider' as const }
 const patient = { persona: 'patient' as const }
+const admin = { persona: 'admin' as const }
 
 // Views load on demand so the login screen doesn't pay for every table.
 export const routes: RouteRecordRaw[] = [
@@ -73,6 +74,11 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('./views/PatientOrderView.vue'),
     meta: patient,
     props: true,
+  },
+  {
+    path: '/admin/inventory',
+    component: () => import('./views/AdminInventoryView.vue'),
+    meta: admin,
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]

@@ -18,6 +18,7 @@ import type {
   ReplaceOrderLinesRequest,
   UserDto,
 } from '@supplement-orders/domain'
+import type { AdminProductDto, AdminProductPageDto } from '../admin/types'
 import { request } from './client'
 
 // One typed function per endpoint in FRONTEND_DESIGN.md §7.
@@ -38,6 +39,35 @@ function listQueryString(query: ListQuery) {
 
 export function searchProducts(query: ListQuery = {}) {
   return request<ProductPageDto>('GET', `/products${listQueryString(query)}`)
+}
+
+/** GET /api/admin/products (admin only): the catalog with editable stock. */
+export function searchAdminProducts(query: ListQuery = {}) {
+  return request<AdminProductPageDto>(
+    'GET',
+    `/admin/products${listQueryString(query)}`,
+  )
+}
+
+/** POST .../stock/increment: an atomic add; returns the updated row. */
+export function incrementProductStock(productId: number, by: number) {
+  return request<AdminProductDto>(
+    'POST',
+    `/admin/products/${productId}/stock/increment`,
+    { by },
+  )
+}
+
+/** PUT .../stock: compare-and-set; 409 STOCK_CHANGED when `expected` is stale. */
+export function setProductStock(
+  productId: number,
+  body: { stockQuantity: number; expectedStockQuantity: number },
+) {
+  return request<AdminProductDto>(
+    'PUT',
+    `/admin/products/${productId}/stock`,
+    body,
+  )
 }
 
 export function searchPatients(query: ListPatientsQuery = {}) {

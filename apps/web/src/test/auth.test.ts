@@ -1,4 +1,5 @@
 import type { UserDto } from '@supplement-orders/domain'
+import type { AppRole } from '../admin/types'
 import userEvent from '@testing-library/user-event'
 import { render, screen, within } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -17,10 +18,13 @@ vi.mock('../api', async (importOriginal) => {
     listUsers: vi.fn(),
     searchPatients: vi.fn(),
     listOrders: vi.fn(),
+    searchAdminProducts: vi.fn(),
   }
 })
 
-const users: UserDto[] = [
+type TestUser = Omit<UserDto, 'role'> & { role: AppRole }
+
+const users: TestUser[] = [
   {
     id: 1,
     name: 'Dr. Maya Rivera',
@@ -35,6 +39,13 @@ const users: UserDto[] = [
     providerId: null,
     patientId: 1,
   },
+  {
+    id: 3,
+    name: 'Ada Admin',
+    role: 'admin',
+    providerId: null,
+    patientId: null,
+  },
 ]
 
 /** Mounts the whole app at `path` with the real router guards; returns the router. */
@@ -47,7 +58,7 @@ async function startApp(path: string) {
 }
 
 beforeEach(() => {
-  vi.mocked(api.listUsers).mockResolvedValue(users)
+  vi.mocked(api.listUsers).mockResolvedValue(users as UserDto[])
   vi.mocked(api.searchPatients).mockResolvedValue({
     items: [],
     total: 0,
@@ -55,6 +66,12 @@ beforeEach(() => {
     limit: 25,
   })
   vi.mocked(api.listOrders).mockResolvedValue([])
+  vi.mocked(api.searchAdminProducts).mockResolvedValue({
+    items: [],
+    total: 0,
+    offset: 0,
+    limit: 25,
+  })
   useCurrentUser().signOut()
 })
 
@@ -114,5 +131,65 @@ describe('stub login', () => {
         .getAllByRole('link')
         .map((link) => link.textContent),
     ).toEqual(['Patients', 'Orders', 'Dashboard'])
+  })
+})
+
+describe('admin persona', () => {
+  it('lists the admin on the login screen and lands on /admin/inventory', async () => {
+    const user = userEvent.setup()
+    const router = await startApp('/login')
+
+    await user.click(await screen.findByRole('combobox', { name: 'User' }))
+    await user.click(
+      await screen.findByRole('option', { name: 'Ada Admin (Admin)' }),
+    )
+    await user.click(screen.getByRole('button', { name: 'Sign in' }))
+
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.path).toBe('/admin/inventory'),
+    )
+    expect(localStorage.getItem('supplementOrders.userId')).toBe('3')
+  })
+
+  it('shows only the Inventory tab, her name and Sign out', async () => {
+    useCurrentUser().signIn(3)
+    await startApp('/')
+
+    const nav = await screen.findByRole('navigation', { name: 'Main' })
+    expect(
+      within(nav)
+        .getAllByRole('link')
+        .map((link) => link.textContent),
+    ).toEqual(['Inventory'])
+    expect(screen.getByText(/Signed in as Ada Admin/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
+  })
+
+  it.each(['/patients', '/patients/1', '/orders', '/dashboard', '/my-orders'])(
+    'sends an admin visiting %s to her home',
+    async (path) => {
+      useCurrentUser().signIn(3)
+      const router = await startApp(path)
+
+      expect(router.currentRoute.value.path).toBe('/admin/inventory')
+    },
+  )
+
+  it.each([1, 2])(
+    'sends user %i away from /admin/inventory to their home',
+    async (id) => {
+      useCurrentUser().signIn(id)
+      const router = await startApp('/admin/inventory')
+
+      expect(router.currentRoute.value.path).toBe(
+        id === 1 ? '/patients' : '/my-orders',
+      )
+    },
+  )
+
+  it('sends a signed-out visitor of /admin/inventory to login', async () => {
+    const router = await startApp('/admin/inventory')
+
+    expect(router.currentRoute.value.path).toBe('/login')
   })
 })

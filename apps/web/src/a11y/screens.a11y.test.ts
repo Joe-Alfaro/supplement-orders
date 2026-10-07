@@ -18,6 +18,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
 import { useCurrentUser } from '../user'
+import AdminInventoryView from '../views/AdminInventoryView.vue'
 import DashboardView from '../views/DashboardView.vue'
 import LoginView from '../views/LoginView.vue'
 import MyOrdersView from '../views/MyOrdersView.vue'
@@ -43,6 +44,8 @@ vi.mock('../api', async (importOriginal) => {
     sendOrder: vi.fn(),
     payOrder: vi.fn(),
     getDashboard: vi.fn(),
+    searchAdminProducts: vi.fn(),
+    setProductStock: vi.fn(),
   }
 })
 
@@ -271,6 +274,14 @@ beforeEach(async () => {
   vi.mocked(api.sendOrder).mockResolvedValue(paidProviderOrder)
   vi.mocked(api.payOrder).mockResolvedValue(paidPatientOrder)
   vi.mocked(api.getDashboard).mockResolvedValue(dashboard)
+  vi.mocked(api.searchAdminProducts).mockResolvedValue({
+    items: [
+      { id: 1, name: 'Vitamin D3', wholesaleCostCents: 850, stockQuantity: 40 },
+    ],
+    total: 1,
+    offset: 0,
+    limit: 25,
+  })
   useCurrentUser().signOut()
   await useCurrentUser().ensureUsersLoaded()
 })
@@ -336,6 +347,32 @@ async function expectAccessible(container: Element) {
 }
 
 describe('accessibility', () => {
+  it('admin inventory', async () => {
+    const { container } = await renderWithRouter(AdminInventoryView, {
+      path: '/admin/inventory',
+    })
+    await screen.findByRole('spinbutton', { name: 'Stock for Vitamin D3' })
+    await expectAccessible(container)
+  })
+
+  it('admin inventory with an unsaved edit and a conflict', async () => {
+    vi.mocked(api.setProductStock).mockRejectedValue(
+      new api.ApiRequestError(409, 'STOCK_CHANGED', 'Changed', undefined, 33),
+    )
+    const { container } = await renderWithRouter(AdminInventoryView, {
+      path: '/admin/inventory',
+    })
+    const user = userEvent.setup()
+    const input = await screen.findByRole('spinbutton', {
+      name: 'Stock for Vitamin D3',
+    })
+    await user.click(input)
+    ;(input as HTMLInputElement).select()
+    await user.keyboard('55{Enter}')
+    await screen.findByRole('alert')
+    await expectAccessible(container)
+  })
+
   it('login', async () => {
     const user = userEvent.setup()
     const { container } = await renderWithRouter(LoginView, { path: '/login' })

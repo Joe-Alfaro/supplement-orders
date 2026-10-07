@@ -4,8 +4,11 @@ import {
   cancelOrder,
   deleteOrder,
   getDashboard,
+  incrementProductStock,
   reopenOrder,
+  searchAdminProducts,
   searchPatients,
+  setProductStock,
 } from './endpoints'
 
 vi.mock('./client', () => ({ request: vi.fn() }))
@@ -88,5 +91,39 @@ describe('getDashboard', () => {
       'GET',
       '/dashboard?range=custom&from=2026-10-01&to=2026-10-07&tz=UTC',
     )
+  })
+})
+
+describe('admin inventory endpoints', () => {
+  beforeEach(() => {
+    vi.mocked(request).mockReset()
+  })
+
+  it('searches the admin catalog', async () => {
+    await searchAdminProducts({ q: 'vit', offset: 25, limit: 25 })
+
+    expect(request).toHaveBeenCalledWith(
+      'GET',
+      '/admin/products?q=vit&offset=25&limit=25',
+    )
+  })
+
+  it('increments stock by an amount', async () => {
+    await incrementProductStock(3, 10)
+
+    expect(request).toHaveBeenCalledWith(
+      'POST',
+      '/admin/products/3/stock/increment',
+      { by: 10 },
+    )
+  })
+
+  it('sets stock with the expected value', async () => {
+    await setProductStock(3, { stockQuantity: 5, expectedStockQuantity: 9 })
+
+    expect(request).toHaveBeenCalledWith('PUT', '/admin/products/3/stock', {
+      stockQuantity: 5,
+      expectedStockQuantity: 9,
+    })
   })
 })
