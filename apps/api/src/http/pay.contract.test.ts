@@ -12,6 +12,7 @@ import type {
   ApiErrorResponse,
   OrderLineInput,
   PatientOrderDetailDto,
+  PayOrderRequest,
   ProductDto,
   ProviderOrderDetailDto,
 } from '@supplement-orders/domain'
@@ -37,6 +38,7 @@ const PROVIDER_DETAIL_KEYS = [
   'sentAt',
   'paidAt',
   'cancelledAt',
+  'revision',
   'view',
   'split',
   'patientDateOfBirth',
@@ -57,6 +59,7 @@ const PATIENT_DETAIL_KEYS = [
   'sentAt',
   'paidAt',
   'cancelledAt',
+  'revision',
   'view',
   'totalCents',
   'patientAddress',
@@ -366,9 +369,17 @@ function requireSplit(
   return detail.split
 }
 
-function pay(orderId: number, body: { simulateFailure?: boolean }) {
+function pay(
+  order: ProviderOrderDetailDto,
+  extra: { simulateFailure?: boolean } = {},
+) {
+  const body: PayOrderRequest = {
+    expectedRevision: order.revision,
+    expectedTotalCents: requireSplit(order).totalCents,
+    ...extra,
+  }
   return context()
-    .request.post(`/api/orders/${orderId}/pay`)
+    .request.post(`/api/orders/${order.id}/pay`)
     .set(USER_ID_HEADER, String(context().seed.patientUserId))
     .send(body)
 }
@@ -429,7 +440,7 @@ describe('POST /api/orders/:id/pay', () => {
   it('records three ledger entries and decrements stock by quantity', async () => {
     const placed = await placePayableOrder()
     const before = stockPairs(await listProducts())
-    const response = await pay(placed.detail.id, {})
+    const response = await pay(placed.detail)
     expect(response.status).toBe(200)
     const patientOrder = expectPatientDetail(response.body)
 
@@ -464,7 +475,7 @@ describe('POST /api/orders/:id/pay', () => {
   it('persists nothing when the gateway fails, then accepts a normal pay', async () => {
     const placed = await placePayableOrder()
     const before = stockPairs(await listProducts())
-    const failed = await pay(placed.detail.id, { simulateFailure: true })
+    const failed = await pay(placed.detail, { simulateFailure: true })
 
     expectError(failed, 402, 'PAYMENT_FAILED')
     const providerAfterFailure = await getProviderOrder(placed.detail.id)
@@ -478,7 +489,7 @@ describe('POST /api/orders/:id/pay', () => {
     expect(patientAfterFailure.payment).toBeNull()
     expect(stockPairs(await listProducts())).toEqual(before)
 
-    const paid = await pay(placed.detail.id, {})
+    const paid = await pay(placed.detail)
     expect(paid.status).toBe(200)
     const providerPaid = await getProviderOrder(placed.detail.id)
     expectPaidLedger(providerPaid)
@@ -493,14 +504,14 @@ describe('POST /api/orders/:id/pay', () => {
   it('returns the same payment when the patient pays twice', async () => {
     const placed = await placePayableOrder()
     const before = stockPairs(await listProducts())
-    const first = await pay(placed.detail.id, {})
+    const first = await pay(placed.detail)
     expect(first.status).toBe(200)
     const firstPatient = expectPatientDetail(first.body)
     const firstProvider = await getProviderOrder(placed.detail.id)
     expectPaidLedger(firstProvider)
     const afterFirst = stockPairs(await listProducts())
 
-    const second = await pay(placed.detail.id, {})
+    const second = await pay(placed.detail)
     expect(second.status).toBe(200)
     const secondPatient = expectPatientDetail(second.body)
     const secondProvider = await getProviderOrder(placed.detail.id)

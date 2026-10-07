@@ -118,6 +118,7 @@ const draft: ProviderOrderDetailDto = {
   ...pending,
   status: 'draft',
   sentAt: null,
+  revision: 0,
 }
 
 const cancelled: ProviderOrderDetailDto = {

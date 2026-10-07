@@ -184,6 +184,7 @@ const emptyDraft: ProviderOrderDetailDto = {
   status: 'draft',
   sentAt: null,
   paidAt: null,
+  revision: 0,
   split: null,
   lines: [],
   payment: null,

@@ -19,6 +19,7 @@ import type {
   PatientDto,
   PatientOrderSummaryDto,
   PatientPageDto,
+  PayOrderRequest,
   ProductDto,
   ProviderOrderDetailDto,
   ProviderOrderListItemDto,
@@ -97,6 +98,7 @@ const PROVIDER_SUMMARY_KEYS = [
   'sentAt',
   'paidAt',
   'cancelledAt',
+  'revision',
   'view',
   'split',
 ]
@@ -112,6 +114,7 @@ const PATIENT_SUMMARY_KEYS = [
   'sentAt',
   'paidAt',
   'cancelledAt',
+  'revision',
   'view',
   'totalCents',
 ]
@@ -617,11 +620,18 @@ async function cancelOrder(orderId: number): Promise<ProviderOrderDetailDto> {
   return expectProviderDetail(response.body)
 }
 
-function pay(orderId: number, userId: number = context().seed.patientUserId) {
+function pay(
+  order: ProviderOrderDetailDto,
+  userId: number = context().seed.patientUserId,
+) {
+  const body: PayOrderRequest = {
+    expectedRevision: order.revision,
+    expectedTotalCents: requireSplit(order).totalCents,
+  }
   return context()
-    .request.post(`/api/orders/${orderId}/pay`)
+    .request.post(`/api/orders/${order.id}/pay`)
     .set(USER_ID_HEADER, String(userId))
-    .send({})
+    .send(body)
 }
 
 async function placePayableOrder(
@@ -672,7 +682,7 @@ async function placePaid(
   patientUserId: number = context().seed.patientUserId,
 ): Promise<PlacedOrder> {
   const placed = await placePayableOrder(userId, patientId)
-  const response = await pay(placed.detail.id, patientUserId)
+  const response = await pay(placed.detail, patientUserId)
   expect(response.status).toBe(200)
   const detail = await getProviderOrder(placed.detail.id)
   expect(detail.status).toBe('paid')
@@ -1010,7 +1020,7 @@ describe('POST /api/orders/:id/reopen', () => {
       'pending_payment',
     )
 
-    const paid = await pay(sent.id)
+    const paid = await pay(sent)
     expect(paid.status).toBe(200)
     const patientBody = asRecord(paid.body)
     expect(patientBody.status).toBe('paid')
