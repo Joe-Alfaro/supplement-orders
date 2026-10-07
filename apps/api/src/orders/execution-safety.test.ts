@@ -234,10 +234,16 @@ async function loadAttempt(orderId: number) {
   })
 }
 
-function installHold(gateway: FakePaymentGateway, held: HeldCharge[]) {
+function installHold(
+  gateway: FakePaymentGateway,
+  held: HeldCharge[],
+  holdCount: number,
+) {
   const original = gateway.charge.bind(gateway)
   gateway.charge = async (request, options) => {
     const outcome = await original(request, options)
+    // Later charges (the reprice pay, the competing order) must not wait.
+    if (held.length >= holdCount) return outcome
     let release = () => {}
     const released = new Promise<void>((resolve) => {
       release = resolve
@@ -248,6 +254,7 @@ function installHold(gateway: FakePaymentGateway, held: HeldCharge[]) {
   }
   restoreGateway = () => {
     gateway.charge = original
+    held.forEach((charge) => charge.release())
   }
 }
 
@@ -289,32 +296,40 @@ async function waitForHeld(held: readonly HeldCharge[], count: number) {
 }
 
 function restarted(ctx: InternalTestContext): InternalTestContext {
-  const gateway = new FakePaymentGateway()
   const notifier = new RecordingNotifier()
   const payHooks: PayHooks = {}
-  const app = createApp({
-    db: ctx.db,
-    gateway,
-    notifier,
-    pingDb: async () => {},
-    nodeEnv: 'test',
-    payHooks,
-  })
-  return {
-    request: supertest(app),
+  const gateway = new FakePaymentGateway(ctx.db)
+  function appFor(next: FakePaymentGateway) {
+    return createApp({
+      db: ctx.db,
+      gateway: next,
+      notifier,
+      pingDb: async () => {},
+      nodeEnv: 'test',
+      payHooks,
+    })
+  }
+  const copy: InternalTestContext = {
     seed: ctx.seed,
     db: ctx.db,
-    gateway,
     notifier,
     payHooks,
+    gateway,
+    request: supertest(appFor(gateway)),
+    restart() {
+      copy.gateway = new FakePaymentGateway(ctx.db)
+      copy.request = supertest(appFor(copy.gateway))
+      delete payHooks.afterLedgerInsert
+    },
     reset: () => Promise.reject(new Error('the restarted app must not reseed')),
     close: () => Promise.resolve(),
   }
+  return copy
 }
 
 async function beginDeclineOverlap(ctx: InternalTestContext, orderId: number) {
   const held: HeldCharge[] = []
-  installHold(ctx.gateway, held)
+  installHold(ctx.gateway, held, 2)
   const firstPay = pay(ctx, orderId, { simulateFailure: true })
   await waitForHeld(held, 1)
   const secondPay = pay(ctx, orderId)
@@ -439,9 +454,7 @@ describe('revision 10 execution-safe payments', () => {
     expectSameDecline(held, orderId)
 
     const decline = await deliver(heldAt(held, 0), firstPay)
-    const second = await deliver(heldAt(held, 1), secondPay)
     expectApiError(decline, 402, 'PAYMENT_FAILED')
-    expectApiError(second, 402, 'PAYMENT_FAILED')
     const attempts = await loadAttempt(orderId)
     expect(attempts).toEqual([
       expect.objectContaining({
@@ -457,7 +470,15 @@ describe('revision 10 execution-safe payments', () => {
     expect(released.stock).toEqual(before.stock)
     expect(released.payments).toHaveLength(0)
 
+    // Reproduce the audit window: mutate the quote before delivering B.
+    // B must be the durable decline too; fabricating a success would bypass
+    // the gateway behavior this regression is intended to exercise.
     await repriceAndResend(ctx, orderId, productId, 3_000)
+    expectApiError(
+      await deliver(heldAt(held, 1), secondPay),
+      402,
+      'PAYMENT_FAILED',
+    )
     const paid = result(await pay(ctx, orderId))
     expect(paid.status).toBe(200)
     const detail = patientOrderDetailDtoSchema.parse(paid.body)
@@ -480,7 +501,7 @@ describe('revision 10 execution-safe payments', () => {
     )
   })
 
-  it('N1 delete: an overlapping pay cannot be deleted, and resolving the decline leaves no success behind', async () => {
+  it('N1 delete: deleting after the authoritative decline leaves no late success behind', async () => {
     const ctx = context()
     const productId = productIdOf(ctx)
     const orderId = await createSentOrder(ctx, lineAt(ctx, 2_000))
@@ -508,11 +529,6 @@ describe('revision 10 execution-safe payments', () => {
       402,
       'PAYMENT_FAILED',
     )
-    expectApiError(
-      await deliver(heldAt(held, 1), secondPay),
-      402,
-      'PAYMENT_FAILED',
-    )
 
     const provider = as(ctx.seed.providerUserId)
     expect(
@@ -527,6 +543,9 @@ describe('revision 10 execution-safe payments', () => {
       .delete(`/api/orders/${orderId}`)
       .set(provider)
     expect(removed.status).toBe(204)
+    const late = await deliver(heldAt(held, 1), secondPay)
+    expectApiError(late, 404, 'NOT_FOUND')
+    expect(await loadAttempt(orderId)).toEqual([])
 
     const recorded = await expectRecordedSuccesses(ctx)
     expect(recorded.payments).toEqual([])
@@ -537,7 +556,7 @@ describe('revision 10 execution-safe payments', () => {
     ).toBe(true)
   })
 
-  it('N1 last unit: the overlapping pay does not release the reserved unit to another order', async () => {
+  it('N1 last unit: a late decline cannot release stock consumed by a competing order', async () => {
     const ctx = context()
     const productId = productIdOf(ctx)
     const lines = lineAt(ctx, 2_000)
@@ -558,11 +577,6 @@ describe('revision 10 execution-safe payments', () => {
       402,
       'PAYMENT_FAILED',
     )
-    expectApiError(
-      await deliver(heldAt(held, 1), secondPay),
-      402,
-      'PAYMENT_FAILED',
-    )
     const released = await moneyState(ctx, orderId)
     expect(
       released.stock.find((row) => row.id === productId)?.stockQuantity,
@@ -571,6 +585,11 @@ describe('revision 10 execution-safe payments', () => {
 
     const taken = result(await pay(ctx, competingId))
     expect(taken.status).toBe(200)
+    expectApiError(
+      await deliver(heldAt(held, 1), secondPay),
+      402,
+      'PAYMENT_FAILED',
+    )
     const detail = patientOrderDetailDtoSchema.parse(taken.body)
     expect(detail.status).toBe('paid')
     expect(detail.payment?.amountCents).toBe(2_000)
@@ -588,6 +607,61 @@ describe('revision 10 execution-safe payments', () => {
       0,
     )
     expect((await moneyState(ctx, orderId)).payments).toHaveLength(0)
+  })
+
+  it('a stale decline cannot release execution 2 while its success is held', async () => {
+    const ctx = context()
+    const productId = productIdOf(ctx)
+    const orderId = await createSentOrder(ctx, lineAt(ctx, 2_000))
+    const competingId = await createSentOrder(ctx, lineAt(ctx, 2_000))
+    await setStock(ctx, productId, 1)
+    const held: HeldCharge[] = []
+    installHold(ctx.gateway, held, 3)
+    const first = pay(ctx, orderId, { simulateFailure: true })
+    await waitForHeld(held, 1)
+    const duplicate = pay(ctx, orderId)
+    await waitForHeld(held, 2)
+    expectSameDecline(held, orderId)
+    expectApiError(await deliver(heldAt(held, 0), first), 402, 'PAYMENT_FAILED')
+
+    const next = pay(ctx, orderId)
+    await waitForHeld(held, 3)
+    expect(heldAt(held, 2).request.idempotencyKey).toBe(
+      executionKey(orderId, 1, 2),
+    )
+    expect(heldAt(held, 2).result.status).toBe('succeeded')
+    expectApiError(
+      await deliver(heldAt(held, 1), duplicate),
+      402,
+      'PAYMENT_FAILED',
+    )
+    await expectBlocked(ctx, orderId, productId)
+    expectApiError(
+      result(await pay(ctx, competingId)),
+      422,
+      'INSUFFICIENT_STOCK',
+    )
+    expect(await loadAttempt(orderId)).toEqual([
+      expect.objectContaining({
+        execution: 1,
+        status: 'declined',
+        stockHeld: false,
+      }),
+      expect.objectContaining({
+        execution: 2,
+        status: 'pending',
+        stockHeld: true,
+      }),
+    ])
+
+    expect((await deliver(heldAt(held, 2), next)).status).toBe(200)
+    const recorded = await expectRecordedSuccesses(ctx)
+    expect(recorded.payments).toEqual([heldAt(held, 2).result.reference])
+    const state = await moneyState(ctx, orderId)
+    expect(state.stock.find((row) => row.id === productId)?.stockQuantity).toBe(
+      0,
+    )
+    expect(state.ledger).toHaveLength(3)
   })
 
   it('N2: a fresh gateway completes a persisted success without a second charge', async () => {
@@ -610,7 +684,9 @@ describe('revision 10 execution-safe payments', () => {
         1,
     )
 
-    const retry = result(await pay(restarted(ctx), orderId))
+    const fresh = restarted(ctx)
+    const retry = result(await pay(fresh, orderId))
+    expect(fresh.gateway.charges).toEqual([])
     expect(retry.status).toBe(200)
     const detail = patientOrderDetailDtoSchema.parse(retry.body)
     expect(detail.status).toBe('paid')
@@ -666,6 +742,47 @@ describe('revision 10 execution-safe payments', () => {
         .map((row) => row.reference),
     ).toEqual([reference])
   })
+
+  it.each(['missing', 'declined', 'amount', 'reference'] as const)(
+    'a succeeded retry refuses lookup inconsistency (%s) without charging',
+    async (mismatch) => {
+      const ctx = context()
+      const orderId = await createSentOrder(ctx, lineAt(ctx, 2_000))
+      ctx.payHooks.afterLedgerInsert = async () => {
+        throw new Error('rollback before payment commit')
+      }
+      expectApiError(result(await pay(ctx, orderId)), 500, 'INTERNAL')
+      const before = await moneyState(ctx, orderId)
+      const key = executionKey(orderId, 1)
+      if (mismatch === 'missing') {
+        await ctx.db.execute(
+          sql`delete from fake_gateway_charges where idempotency_key = ${key}`,
+        )
+      } else if (mismatch === 'declined') {
+        await ctx.db.execute(
+          sql`update fake_gateway_charges set status = 'declined', reference = null where idempotency_key = ${key}`,
+        )
+      } else if (mismatch === 'amount') {
+        await ctx.db.execute(
+          sql`update fake_gateway_charges set amount_cents = 1999 where idempotency_key = ${key}`,
+        )
+      } else {
+        await ctx.db.execute(
+          sql`update fake_gateway_charges set reference = 'different-reference' where idempotency_key = ${key}`,
+        )
+      }
+      const fresh = restarted(ctx)
+      expectApiError(
+        result(await pay(fresh, orderId)),
+        409,
+        'PAYMENT_NEEDS_RECONCILIATION',
+        RECONCILIATION,
+      )
+      expect(fresh.gateway.charges).toEqual([])
+      expect(await moneyState(ctx, orderId)).toEqual(before)
+      await expectBlocked(fresh, orderId, productIdOf(ctx))
+    },
+  )
 
   it('N3: a key conflict keeps the reservation and blocks cancel, reopen and delete', async () => {
     const ctx = context()
@@ -779,6 +896,34 @@ describe('revision 10 execution-safe payments', () => {
       ])
     })
 
+    it('atomically binds one outcome across freshly constructed gateways', async () => {
+      const ctx = context()
+      const gateways = Array.from(
+        { length: 8 },
+        () => new FakePaymentGateway(ctx.db),
+      )
+      const request = {
+        idempotencyKey: 'order-8-r1-e1',
+        amountCents: 2_000,
+        description: 'Concurrent gateway instances',
+      }
+      const outcomes = await Promise.all(
+        gateways.map((gateway, index) =>
+          gateway.charge({ ...request, simulateFailure: index % 2 === 0 }),
+        ),
+      )
+      outcomes.forEach((outcome) => expect(outcome).toEqual(outcomes[0]))
+      const rows = await loadGatewayCharges(ctx)
+      expect(rows).toHaveLength(1)
+      expect(rows[0]?.status).toBe(
+        outcomes[0]?.status === 'succeeded' ? 'succeeded' : 'declined',
+      )
+      expect(rows[0]?.reference).toBe(outcomes[0]?.reference || null)
+      const fresh = new FakePaymentGateway(ctx.db)
+      expect(await fresh.charge(request)).toEqual(outcomes[0])
+      expect(await loadGatewayCharges(ctx)).toEqual(rows)
+    })
+
     it('looks up a charge without charging, and misses an unknown key', async () => {
       const ctx = context()
       const key = 'order-6-r1-e1'
@@ -788,6 +933,14 @@ describe('revision 10 execution-safe payments', () => {
         description: 'Supplement order 6 (revision 1)',
       })
       expect(first.status).toBe('succeeded')
+      const declinedKey = 'order-7-r1-e1'
+      await ctx.gateway.charge({
+        idempotencyKey: declinedKey,
+        amountCents: 2_000,
+        description: 'Declined lookup',
+        simulateFailure: true,
+      })
+      const rowsBefore = await loadGatewayCharges(ctx)
       const callsBefore = ctx.gateway.charges.length
 
       const found = await lookupCharge(ctx.gateway, key)
@@ -799,9 +952,15 @@ describe('revision 10 execution-safe payments', () => {
         reference: first.reference,
       })
       expect(missing).toBeNull()
+      expect(await ctx.gateway.lookup(declinedKey)).toEqual({
+        status: 'declined',
+        amountCents: 2_000,
+        reference: null,
+      })
       expect(ctx.gateway.charges).toHaveLength(callsBefore)
       const rows = await loadGatewayCharges(ctx)
-      expect(rows).toHaveLength(1)
+      expect(rows).toEqual(rowsBefore)
+      expect(rows).toHaveLength(2)
       expect(rows[0]?.reference).toBe(first.reference)
     })
   })
