@@ -10,6 +10,8 @@ import MoneyText from './MoneyText.vue'
 interface Props {
   lines: (OrderLineDto | ProviderOrderLineDto)[]
   showCosts?: boolean
+  /** Patient view of a pending order: "Only N of Q in stock" per line (revision 14). */
+  showAvailability?: boolean
 }
 
 defineProps<Props>()
@@ -30,6 +32,17 @@ defineProps<Props>()
       </template>
     </Column>
     <Column field="quantity" header="Qty" />
+    <Column v-if="showAvailability" header="Availability">
+      <template #body="{ data }">
+        <span v-if="data.availableQuantity === undefined">—</span>
+        <span v-else-if="data.availableQuantity === 0">Out of stock</span>
+        <span v-else-if="data.availableQuantity < data.quantity"
+          >Only {{ data.availableQuantity }} of {{ data.quantity }} in
+          stock</span
+        >
+        <span v-else>In stock</span>
+      </template>
+    </Column>
     <Column header="Price each">
       <template #body="{ data }">
         <MoneyText

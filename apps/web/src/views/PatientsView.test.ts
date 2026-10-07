@@ -1,6 +1,5 @@
 import {
   parseDateOfBirthQuery,
-  type ListPatientsQuery,
   type PatientDto,
   type PatientPageDto,
 } from '@supplement-orders/domain'
@@ -8,6 +7,7 @@ import { screen } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
+import type { PatientSearchQuery } from '../api/endpoints'
 import { renderWithRouter } from '../test/renderWithRouter'
 import PatientsView from './PatientsView.vue'
 
@@ -34,7 +34,7 @@ function patient(
 }
 
 /** A fake GET /api/patients with 312 patients in total. */
-function patientPage(query: ListPatientsQuery): PatientPageDto {
+function patientPage(query: PatientSearchQuery): PatientPageDto {
   const offset = query.offset ?? 0
   const limit = query.limit ?? 25
   if (query.q === 'nobody' || query.latestStatus === 'cancelled') {
@@ -350,5 +350,34 @@ describe('PatientsView', () => {
     router.back()
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(router.currentRoute.value.fullPath).toBe('/patients?q=lee')
+  })
+
+  it('offers Awaiting stock in the latest order status filter', async () => {
+    const user = userEvent.setup()
+    const { router } = await renderWithRouter(PatientsView, {
+      path: '/patients',
+    })
+    await screen.findByText('Showing 1–25 of 312')
+
+    await user.click(
+      screen.getByRole('combobox', { name: 'Latest order status' }),
+    )
+    await user.click(
+      await screen.findByRole('option', { name: 'Awaiting stock' }),
+    )
+
+    await vi.waitFor(() =>
+      expect(api.searchPatients).toHaveBeenLastCalledWith({
+        q: '',
+        offset: 0,
+        limit: 25,
+        latestStatus: 'awaiting_stock',
+      }),
+    )
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.query).toEqual({
+        status: 'awaiting_stock',
+      }),
+    )
   })
 })

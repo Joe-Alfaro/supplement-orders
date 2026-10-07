@@ -109,6 +109,13 @@ const errorItems = computed<DialogError[]>(() => {
   return candidates.filter((item): item is DialogError => item !== null)
 })
 
+/** The error wins; otherwise a stock warning describes the field. */
+const qtyDescribedBy = computed(() => {
+  if (pricing.value.errors.quantity) return 'add-product-qty-error'
+  if (pricing.value.stockWarning) return 'add-product-qty-warning'
+  return undefined
+})
+
 const title = computed(() => {
   if (step.value !== 2 || !chosen.value) return 'Add product: choose a product'
   return `${props.editing ? 'Edit' : 'Add'} ${chosen.value.name}`
@@ -345,9 +352,7 @@ function addToOrder() {
             inputmode="numeric"
             :model-value="quantityInput"
             :invalid="Boolean(pricing.errors.quantity)"
-            :aria-describedby="
-              pricing.errors.quantity ? 'add-product-qty-error' : undefined
-            "
+            :aria-describedby="qtyDescribedBy"
             @update:model-value="quantityInput = $event ?? ''"
           />
         </div>
@@ -415,6 +420,11 @@ function addToOrder() {
           <li v-for="item in errorItems" :id="item.id" :key="item.id">
             {{ item.label }} - {{ item.text }}
           </li>
+        </ul>
+      </div>
+      <div aria-live="polite" data-testid="add-product-warnings">
+        <ul v-if="pricing.stockWarning" class="warnings" aria-label="Warnings">
+          <li id="add-product-qty-warning">Qty - {{ pricing.stockWarning }}</li>
         </ul>
       </div>
       <p>

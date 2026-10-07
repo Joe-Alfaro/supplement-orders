@@ -66,3 +66,38 @@ describe('request', () => {
     })
   })
 })
+
+describe('request with revision 14 error codes', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps the whole error body as details, even for codes the domain does not know yet', async () => {
+    const body = {
+      error: {
+        code: 'LOW_STOCK_UNACKNOWLEDGED',
+        message: 'Low stock',
+        lines: [
+          {
+            lineId: 1,
+            productId: 2,
+            productName: 'Zinc',
+            quantity: 5,
+            availableQuantity: 3,
+          },
+        ],
+      },
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(body), { status: 409 })),
+    )
+
+    await expect(request('POST', '/orders/1/send', {})).rejects.toMatchObject({
+      status: 409,
+      code: 'LOW_STOCK_UNACKNOWLEDGED',
+      message: 'Low stock',
+      details: { lines: body.error.lines },
+    })
+  })
+})

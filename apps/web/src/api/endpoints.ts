@@ -7,7 +7,6 @@ import type {
   DashboardDto,
   ListOrdersQuery,
   ListPatientsQuery,
-  OrderStatus,
   ProviderOrderListPageDto,
   ListQuery,
   OrderDetailDto,
@@ -22,7 +21,18 @@ import type {
   ReplaceOrderLinesRequest,
   UserDto,
 } from '@supplement-orders/domain'
+import type { UiOrderStatus } from '../stock'
 import { request } from './client'
+
+/** Revision 14 (14.5): `available` pays only what is in stock. Default `full`. */
+export interface PayOrderBody extends PayOrderRequest {
+  mode?: 'full' | 'available'
+}
+
+/** Revision 14 (14.6). */
+export interface SendOrderRequest {
+  acknowledgeLowStock?: boolean
+}
 
 // One typed function per endpoint in FRONTEND_DESIGN.md §7.
 
@@ -75,7 +85,12 @@ export function setProductStock(productId: number, body: SetStockRequest) {
   )
 }
 
-export function searchPatients(query: ListPatientsQuery = {}) {
+/** Revision 14 adds `awaiting_stock` to the latest-status filter. */
+export type PatientSearchQuery = Omit<ListPatientsQuery, 'latestStatus'> & {
+  latestStatus?: ListPatientsQuery['latestStatus'] | 'awaiting_stock'
+}
+
+export function searchPatients(query: PatientSearchQuery = {}) {
   const search = listQueryString(query)
   const filter = query.latestStatus
     ? `${search ? '&' : '?'}latestStatus=${query.latestStatus}`
@@ -88,7 +103,7 @@ export function searchPatients(query: ListPatientsQuery = {}) {
  * `statuses` (sent as a comma list). An empty list means every status (`all`).
  */
 export function listProviderOrders(
-  query: { statuses: readonly OrderStatus[] } & Pick<
+  query: { statuses: readonly UiOrderStatus[] } & Pick<
     ListOrdersQuery,
     'offset' | 'limit'
   >,
@@ -126,8 +141,13 @@ export function replaceOrderLines(orderId: number, lines: OrderLineInput[]) {
   )
 }
 
-export function sendOrder(orderId: number) {
-  return request<ProviderOrderDetailDto>('POST', `/orders/${orderId}/send`)
+/** `acknowledgeLowStock` confirms a send with lines over stock (revision 14). */
+export function sendOrder(orderId: number, body?: SendOrderRequest) {
+  return request<ProviderOrderDetailDto>(
+    'POST',
+    `/orders/${orderId}/send`,
+    body,
+  )
 }
 
 /** Draft or pending_payment only; 409 ORDER_NOT_CANCELLABLE otherwise. */
@@ -154,7 +174,7 @@ export function getOrder(orderId: number) {
  * `expectedTotalCents` come from the displayed order. If it changed since, the
  * server answers 409 ORDER_CHANGED and charges nothing.
  */
-export function payOrder(orderId: number, body: PayOrderRequest) {
+export function payOrder(orderId: number, body: PayOrderBody) {
   return request<PatientOrderDetailDto>('POST', `/orders/${orderId}/pay`, body)
 }
 

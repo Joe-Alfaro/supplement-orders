@@ -5,15 +5,21 @@ import {
 } from '@supplement-orders/domain'
 import { readStoredUserId } from '../user/storage'
 
+/** Revision 14 codes the domain package does not carry yet (DOMAIN_CONTRACT 14.5 to 14.7). */
+export type BackorderErrorCode =
+  'LOW_STOCK_UNACKNOWLEDGED' | 'AWAITING_STOCK' | 'BACKORDER_NOT_EDITABLE'
+
 /** A non-2xx response, carrying the server's `{ error: { code, message, field? } }`. */
 export class ApiRequestError extends Error {
   constructor(
     readonly status: number,
-    readonly code: ApiErrorCode | 'NETWORK',
+    readonly code: ApiErrorCode | BackorderErrorCode | 'NETWORK',
     message: string,
     readonly field?: string,
     /** Set on 409 STOCK_CHANGED: the stock the server holds now. */
     readonly currentStockQuantity?: number,
+    /** The rest of the error body, e.g. `lines` on 409 LOW_STOCK_UNACKNOWLEDGED. */
+    readonly details?: Record<string, unknown>,
   ) {
     super(message)
     this.name = 'ApiRequestError'
@@ -22,23 +28,40 @@ export class ApiRequestError extends Error {
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
 async function toError(response: Response) {
   const body: unknown = await response.json().catch(() => null)
   const parsed = apiErrorResponseSchema.safeParse(body)
-  if (!parsed.success) {
+  const raw = isRecord(body) && isRecord(body.error) ? body.error : null
+  if (!parsed.success && !raw) {
     return new ApiRequestError(
       response.status,
       'INTERNAL',
       `Request failed (${response.status})`,
     )
   }
-  const { code, message, field, currentStockQuantity } = parsed.data.error
+  // The strict schema drops extra body fields (and rejects codes it does not
+  // know), so revision 14 reads the raw body for those.
+  const known = parsed.success ? parsed.data.error : null
+  const code = known?.code ?? raw?.code
+  const message = known?.message ?? raw?.message
+  if (typeof code !== 'string' || typeof message !== 'string') {
+    return new ApiRequestError(
+      response.status,
+      'INTERNAL',
+      `Request failed (${response.status})`,
+    )
+  }
   return new ApiRequestError(
     response.status,
-    code,
+    code as ApiRequestError['code'],
     message,
-    field,
-    currentStockQuantity,
+    known?.field,
+    known?.currentStockQuantity,
+    raw ?? undefined,
   )
 }
 

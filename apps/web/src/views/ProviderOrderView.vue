@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import type { OrderStatus, ProviderOrderDetailDto } from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import ConfirmDialog from 'primevue/confirmdialog'
 import { useConfirm } from 'primevue/useconfirm'
@@ -14,6 +13,7 @@ import {
   reopenOrder,
 } from '../api'
 import {
+  BackorderLinks,
   ErrorBanner,
   LedgerTable,
   LinesTable,
@@ -21,6 +21,7 @@ import {
   StatusBadge,
 } from '../components'
 import { formatDateOfBirth, formatDateTime } from '../format'
+import type { ProviderOrderWithLinks, UiOrderStatus } from '../stock'
 import { useSuccessToast } from '../toast'
 import { useResource } from '../useResource'
 
@@ -35,12 +36,12 @@ const {
   loading,
   error,
   load,
-} = useResource(async (): Promise<ProviderOrderDetailDto> => {
+} = useResource(async (): Promise<ProviderOrderWithLinks> => {
   const detail = await getOrder(Number(props.orderId))
   if (detail.view !== 'provider') {
     throw new ApiRequestError(403, 'FORBIDDEN', 'This is not your order')
   }
-  return detail
+  return detail as ProviderOrderWithLinks
 })
 onMounted(load)
 
@@ -54,15 +55,29 @@ const heading = useTemplateRef<HTMLHeadingElement>('heading')
 
 interface OrderAction {
   label: string
-  prompt: (order: ProviderOrderDetailDto) => string
+  prompt: (order: ProviderOrderWithLinks) => string
   keepLabel: string
   destructive: boolean
-  run: (order: ProviderOrderDetailDto) => Promise<void>
+  run: (order: ProviderOrderWithLinks) => Promise<void>
+}
+
+const PENDING_CANCEL: OrderAction = {
+  label: 'Cancel order',
+  prompt: (o) =>
+    `Cancel order #${o.id} for ${o.patientName}? The patient will no longer be able to pay it.`,
+  keepLabel: 'Keep order',
+  destructive: true,
+  run: async (o) => {
+    order.value = await cancelOrder(o.id)
+    // The Cancel button is gone; keep keyboard focus on the page.
+    await nextTick()
+    heading.value?.focus()
+  },
 }
 
 // One action per status (FRONTEND_DESIGN §4.5). Paid orders have none:
 // refunds are out of scope.
-const ACTIONS: Partial<Record<OrderStatus, OrderAction>> = {
+const ACTIONS: Partial<Record<UiOrderStatus, OrderAction>> = {
   draft: {
     label: 'Delete draft',
     prompt: (o) =>
@@ -76,19 +91,9 @@ const ACTIONS: Partial<Record<OrderStatus, OrderAction>> = {
       await router.push(patientPath)
     },
   },
-  pending_payment: {
-    label: 'Cancel order',
-    prompt: (o) =>
-      `Cancel order #${o.id} for ${o.patientName}? The patient will no longer be able to pay it.`,
-    keepLabel: 'Keep order',
-    destructive: true,
-    run: async (o) => {
-      order.value = await cancelOrder(o.id)
-      // The Cancel button is gone; keep keyboard focus on the page.
-      await nextTick()
-      heading.value?.focus()
-    },
-  },
+  pending_payment: PENDING_CANCEL,
+  // Out of stock is still sent and cancellable, exactly like Awaiting payment.
+  awaiting_stock: PENDING_CANCEL,
   cancelled: {
     label: 'Reopen as draft',
     prompt: (o) =>
@@ -102,9 +107,15 @@ const ACTIONS: Partial<Record<OrderStatus, OrderAction>> = {
   },
 }
 
-const action = computed(() =>
-  order.value ? ACTIONS[order.value.status] : undefined,
-)
+// A back-order is never editable and never reopens (14.7): Cancel only.
+const action = computed(() => {
+  const current = order.value
+  if (!current) return undefined
+  if (current.splitFromOrderId && current.status === 'cancelled') {
+    return undefined
+  }
+  return ACTIONS[current.status]
+})
 
 function confirmAction() {
   const current = order.value
@@ -124,7 +135,7 @@ function confirmAction() {
   })
 }
 
-async function perform(chosen: OrderAction, current: ProviderOrderDetailDto) {
+async function perform(chosen: OrderAction, current: ProviderOrderWithLinks) {
   if (acting.value) return
   acting.value = true
   actionError.value = null
@@ -191,6 +202,14 @@ async function perform(chosen: OrderAction, current: ProviderOrderDetailDto) {
     <p v-if="order.status === 'pending_payment'" class="banner" role="status">
       Waiting for patient payment.
     </p>
+    <p v-if="order.status === 'awaiting_stock'" class="banner" role="status">
+      Waiting for stock before the patient can pay.
+    </p>
+    <BackorderLinks
+      :split-from-order-id="order.splitFromOrderId"
+      :backorder-order-id="order.backorderOrderId"
+      base-path="/orders"
+    />
     <p v-if="action">
       <Button
         :label="action.label"

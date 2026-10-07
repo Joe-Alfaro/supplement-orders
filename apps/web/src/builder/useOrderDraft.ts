@@ -118,6 +118,22 @@ export function useOrderDraft() {
     }
   })
 
+  /** Lines whose quantity is over available stock (revision 14). */
+  const lowStock = computed(() =>
+    evaluated.value.flatMap((row) =>
+      row.stockWarning && row.product && row.quantity !== null
+        ? [
+            {
+              name: row.product.name,
+              quantity: row.quantity,
+              available: row.product.stockQuantity ?? 0,
+              key: row.line.key,
+            },
+          ]
+        : [],
+    ),
+  )
+
   const canSave = computed(() => evaluated.value.every((row) => row.saveable))
   const canSend = computed(() => split.value !== null)
 
@@ -223,6 +239,7 @@ export function useOrderDraft() {
     lines,
     evaluated,
     split,
+    lowStock,
     canSave,
     canSend,
     productIds,
@@ -254,7 +271,13 @@ function lineProduct(line: ProviderOrderLineDto): LineProduct | null {
     name: line.productName,
     sku: line.sku,
     cogsCents: line.unitCogsCents,
-    // Live stock, so Qty on a reloaded line is capped like a freshly added one.
-    stockQuantity: line.stockQuantity,
+    // Live stock, so a reloaded line warns like a freshly added one. The
+    // revision 14 draft DTO calls it availableQuantity.
+    stockQuantity: availableQuantity(line) ?? line.stockQuantity,
   }
+}
+
+function availableQuantity(line: ProviderOrderLineDto) {
+  const { availableQuantity } = line as { availableQuantity?: number }
+  return availableQuantity
 }

@@ -56,3 +56,35 @@ describe('evaluatePricing lineMarginCents', () => {
     ).toBeNull()
   })
 })
+
+describe('evaluatePricing stock (revision 14)', () => {
+  it('warns, without an error, when the quantity is above available stock', () => {
+    const result = evaluatePricing(
+      inputs({ quantityInput: '11', priceInput: '20' }),
+    )
+    expect(result.stockWarning).toBe('Only 10 in stock')
+    expect(result.errors.quantity).toBeUndefined()
+    expect(result.saveable).toBe(true)
+    expect(result.quantity).toBe(11)
+  })
+
+  it('does not warn at or below stock, or when stock is unknown', () => {
+    expect(
+      evaluatePricing(inputs({ quantityInput: '10' })).stockWarning,
+    ).toBeNull()
+    expect(
+      evaluatePricing(
+        inputs({
+          quantityInput: '99',
+          product: { ...product, stockQuantity: null },
+        }),
+      ).stockWarning,
+    ).toBeNull()
+  })
+
+  it('still rejects a quantity above the hard bound of 1000', () => {
+    const result = evaluatePricing(inputs({ quantityInput: '1001' }))
+    expect(result.errors.quantity).toBe('Enter a quantity of at most 1000')
+    expect(result.stockWarning).toBeNull()
+  })
+})

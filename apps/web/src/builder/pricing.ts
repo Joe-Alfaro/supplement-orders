@@ -51,6 +51,8 @@ export interface PricingResult {
    */
   lineMarginCents: number | null
   errors: Partial<Record<PricingField, string>>
+  /** "Only N in stock" when the quantity is over stock: a warning, not an error. */
+  stockWarning: string | null
   /** Every typed value parses, so it can be saved (possibly incomplete). */
   saveable: boolean
 }
@@ -77,7 +79,7 @@ export function parsePrice(input: string): {
   return { cents: parsed.cents }
 }
 
-function parseQuantity(input: string, stock: number | null) {
+function parseQuantity(input: string) {
   const trimmed = input.trim()
   if (!/^\d+$/.test(trimmed) || Number(trimmed) < 1) {
     return { error: 'Enter a whole number of 1 or more' }
@@ -86,9 +88,6 @@ function parseQuantity(input: string, stock: number | null) {
   // Revision 9 draft bound, checked before stock so huge values read clearly.
   if (quantity > MAX_LINE_QUANTITY) {
     return { error: `Enter a quantity of at most ${MAX_LINE_QUANTITY}` }
-  }
-  if (stock !== null && quantity > stock) {
-    return { error: `Only ${stock} in stock` }
   }
   return { quantity }
 }
@@ -164,12 +163,15 @@ export function evaluatePricing(inputs: PricingInputs): PricingResult {
   const { product } = inputs
   const errors: Partial<Record<PricingField, string>> = {}
 
-  const parsedQuantity = parseQuantity(
-    inputs.quantityInput,
-    product?.stockQuantity ?? null,
-  )
+  const parsedQuantity = parseQuantity(inputs.quantityInput)
   if (parsedQuantity.error) errors.quantity = parsedQuantity.error
   const quantity = parsedQuantity.quantity ?? null
+  // Revision 14: more than the stock is allowed; the provider is warned instead.
+  const stock = product?.stockQuantity ?? null
+  const stockWarning =
+    quantity !== null && stock !== null && quantity > stock
+      ? `Only ${stock} in stock`
+      : null
 
   const price = parsePrice(inputs.priceInput)
   if (price.error) errors.unitPriceCents = price.error
@@ -205,6 +207,7 @@ export function evaluatePricing(inputs: PricingInputs): PricingResult {
     belowMinimum,
     lineTotalCents,
     errors,
+    stockWarning,
     saveable: !errors.quantity && !price.error && !markupError,
   }
 }

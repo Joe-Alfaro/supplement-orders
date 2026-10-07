@@ -396,15 +396,20 @@ describe('OrderBuilderView', () => {
     const items = within(list).getAllByRole('listitem')
     expect(items.map((item) => item.textContent)).toEqual([
       'Qty (Omega-3) - Enter a quantity of at most 1000',
-      'Qty (Magnesium) - Only 5 in stock',
     ])
+    // Over stock is a warning in its own list (revision 14), not an error.
+    expect(
+      within(
+        screen.getByRole('list', { name: 'Order line warnings' }),
+      ).getByText('Qty (Magnesium) - Only 5 in stock'),
+    ).toBeInTheDocument()
     expect(screen.getByTestId('order-line-errors')).toHaveAttribute(
       'aria-live',
       'polite',
     )
     const table = screen.getByRole('table', { name: 'Order lines' })
     expect(table).not.toContainElement(list)
-    ;['Qty Omega-3', 'Qty Magnesium'].forEach((name, index) => {
+    ;['Qty Omega-3'].forEach((name, index) => {
       const input = screen.getByRole('textbox', { name })
       expect(input).toHaveAttribute('aria-invalid', 'true')
       expect(input.getAttribute('aria-describedby')).toBe(items[index]?.id)
@@ -774,7 +779,7 @@ describe('OrderBuilderView patient and stock', () => {
     ).toBeInTheDocument()
   })
 
-  it('caps Qty on a reloaded line by the live stock from the API', async () => {
+  it('warns on Qty over the live stock of a reloaded line, without blocking', async () => {
     const user = userEvent.setup()
     vi.mocked(api.getOrder).mockResolvedValue(
       draftDetail([
@@ -802,7 +807,7 @@ describe('OrderBuilderView patient and stock', () => {
     expect(
       screen.getByText('Qty (Vitamin D3) - Only 3 in stock'),
     ).toBeInTheDocument()
-    expect(sendButton()).toBeDisabled()
+    expect(sendButton()).toBeEnabled()
   })
 
   it('keeps price and markup as text inputs holding integer cents (no InputNumber)', async () => {

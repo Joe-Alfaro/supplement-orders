@@ -87,4 +87,20 @@ describe('MyOrdersView', () => {
       ),
     ).toBeInTheDocument()
   })
+
+  it('shows the Awaiting stock tag for an order with nothing in stock', async () => {
+    vi.mocked(api.listOrders).mockResolvedValue([
+      { ...order(11, 'Dr. Maya Rivera'), status: 'awaiting_stock' },
+      { ...order(12, 'Dr. Owen Brooks'), status: 'paid' },
+    ] as never)
+    await renderWithRouter(MyOrdersView)
+
+    const row = await screen.findByRole('row', { name: /Dr. Maya Rivera/ })
+    expect(within(row).getByText('Awaiting stock')).toBeInTheDocument()
+    expect(
+      within(
+        await screen.findByRole('row', { name: /Dr. Owen Brooks/ }),
+      ).getByText('Paid'),
+    ).toBeInTheDocument()
+  })
 })

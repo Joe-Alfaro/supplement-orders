@@ -4,6 +4,7 @@ import Button from 'primevue/button'
 import Column from 'primevue/column'
 import ConfirmDialog from 'primevue/confirmdialog'
 import DataTable from 'primevue/datatable'
+import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
 import { useConfirm } from 'primevue/useconfirm'
@@ -64,7 +65,7 @@ const banner = ref<string | null>(null)
 
 const showSuccess = useSuccessToast()
 const draft = useOrderDraft()
-const { lines, evaluated, split, canSend } = draft
+const { lines, evaluated, split, canSend, lowStock } = draft
 const feePercent = `${PLATFORM_FEE_BPS / 100}%`
 
 async function load() {
@@ -157,12 +158,62 @@ function saveDraft() {
   })
 }
 
+interface LowStockLine {
+  name: string
+  quantity: number
+  available: number
+}
+
+/** Over-stock lines shown in the confirmation; null while it is closed. */
+const lowStockPrompt = ref<LowStockLine[] | null>(null)
+
+/** Over-stock lines need an explicit OK before sending (§4.10). */
 function sendToPatient() {
+  if (lowStock.value.length === 0) return sendNow(false)
+  lowStockPrompt.value = lowStock.value
+  return Promise.resolve()
+}
+
+function sendAnyway() {
+  lowStockPrompt.value = null
+  return sendNow(true)
+}
+
+function sendNow(acknowledgeLowStock: boolean) {
   return run(async () => {
     const saved = await persist()
-    await sendOrder(saved.id)
+    try {
+      await sendOrder(
+        saved.id,
+        acknowledgeLowStock ? { acknowledgeLowStock } : undefined,
+      )
+    } catch (err) {
+      // Stock changed since the page loaded: ask again with the server's lines.
+      const serverLines = lowStockLinesFrom(err)
+      if (!serverLines) throw err
+      lowStockPrompt.value = serverLines
+      return
+    }
     await router.push(`/orders/${saved.id}`)
   })
+}
+
+interface ServerLowStockLine {
+  productName: string
+  quantity: number
+  availableQuantity: number
+}
+
+function lowStockLinesFrom(err: unknown): LowStockLine[] | null {
+  if (!(err instanceof ApiRequestError)) return null
+  if (err.code !== 'LOW_STOCK_UNACKNOWLEDGED') return null
+  const lines = err.details?.lines as ServerLowStockLine[] | undefined
+  if (!Array.isArray(lines)) return null
+  return lines.map((line) => ({
+    name: line.productName,
+    quantity: line.quantity,
+    available: line.availableQuantity,
+  }))
 }
 
 const confirm = useConfirm()
@@ -271,6 +322,19 @@ interface TableError {
 }
 
 /** One entry per problem across the lines, in line order; each id is its input's aria-describedby target. */
+const tableWarnings = computed<TableError[]>(() =>
+  evaluated.value.flatMap((row) =>
+    row.stockWarning
+      ? [
+          {
+            id: fieldId(row.line.key, 'qty-warning'),
+            text: `Qty (${row.product?.name ?? 'No product'}) - ${row.stockWarning}`,
+          },
+        ]
+      : [],
+  ),
+)
+
 const tableErrors = computed<TableError[]>(() =>
   evaluated.value.flatMap((row) => {
     const name = row.product?.name ?? 'No product'
@@ -301,6 +365,13 @@ const tableErrors = computed<TableError[]>(() =>
 function markupText(row: EvaluatedLine) {
   if (row.priceCents === null) return '—'
   return normalizedMarkupInput(row.line.markupInput) || '—'
+}
+
+/** The error wins; otherwise a stock warning describes the Qty input. */
+function qtyDescribedBy(row: EvaluatedLine) {
+  if (row.errors.quantity) return fieldId(row.line.key, 'qty-error')
+  if (row.stockWarning) return fieldId(row.line.key, 'qty-warning')
+  return undefined
 }
 
 function rowIndex(row: EvaluatedLine) {
@@ -380,11 +451,7 @@ function rowIndex(row: EvaluatedLine) {
             inputmode="numeric"
             :model-value="row.line.quantityInput"
             :invalid="Boolean(row.errors.quantity)"
-            :aria-describedby="
-              row.errors.quantity
-                ? fieldId(row.line.key, 'qty-error')
-                : undefined
-            "
+            :aria-describedby="qtyDescribedBy(row)"
             @update:model-value="draft.setQuantity(row.line.key, $event ?? '')"
           />
         </template>
@@ -459,6 +526,17 @@ function rowIndex(row: EvaluatedLine) {
         </li>
       </ul>
     </div>
+    <div aria-live="polite" data-testid="order-line-warnings">
+      <ul
+        v-if="tableWarnings.length"
+        class="warnings"
+        aria-label="Order line warnings"
+      >
+        <li v-for="item in tableWarnings" :id="item.id" :key="item.id">
+          {{ item.text }}
+        </li>
+      </ul>
+    </div>
     <p>
       <Button
         id="add-line"
@@ -506,6 +584,34 @@ function rowIndex(row: EvaluatedLine) {
         @click="confirmDelete"
       />
     </div>
+    <Dialog
+      :visible="lowStockPrompt !== null"
+      modal
+      header="Send with limited stock?"
+      :draggable="false"
+      :style="{ width: 'min(36rem, 95vw)' }"
+      :pt="{ title: { role: 'heading', 'aria-level': 2 } }"
+      @update:visible="lowStockPrompt = null"
+    >
+      <ul>
+        <li v-for="item in lowStockPrompt" :key="item.name">
+          {{ item.name }}: {{ item.quantity }} requested,
+          {{ item.available }} in stock
+        </li>
+      </ul>
+      <p>
+        The patient can pay for what's in stock now. The rest will become a
+        separate back-order they can pay when stock returns.
+      </p>
+      <div class="actions">
+        <Button label="Send anyway" :disabled="saving" @click="sendAnyway" />
+        <Button
+          label="Back to order"
+          severity="secondary"
+          @click="lowStockPrompt = null"
+        />
+      </div>
+    </Dialog>
     <p aria-live="polite" class="status">
       {{ status }}
     </p>
