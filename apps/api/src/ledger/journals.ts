@@ -286,29 +286,28 @@ const providerUsers = alias(users, 'provider_users')
 export async function listJournals(db: Db, offset: number, limit: number) {
   return db.transaction(
     async (tx) => {
-      const [heads, [counted]] = await Promise.all([
-        tx
-          .select({
-            id: journals.id,
-            kind: journals.kind,
-            postedAt: journals.postedAt,
-            memo: journals.memo,
-            paymentId: journals.paymentId,
-            orderId: journals.orderId,
-            patientName: patientUsers.name,
-            providerName: providerUsers.name,
-          })
-          .from(journals)
-          .leftJoin(orders, eq(orders.id, journals.orderId))
-          .leftJoin(patients, eq(patients.id, orders.patientId))
-          .leftJoin(patientUsers, eq(patientUsers.id, patients.userId))
-          .leftJoin(providers, eq(providers.id, orders.providerId))
-          .leftJoin(providerUsers, eq(providerUsers.id, providers.userId))
-          .orderBy(desc(journals.postedAt), desc(journals.id))
-          .limit(limit)
-          .offset(offset),
-        tx.select({ total: count() }).from(journals),
-      ])
+      // One query at a time: the transaction holds a single connection.
+      const heads = await tx
+        .select({
+          id: journals.id,
+          kind: journals.kind,
+          postedAt: journals.postedAt,
+          memo: journals.memo,
+          paymentId: journals.paymentId,
+          orderId: journals.orderId,
+          patientName: patientUsers.name,
+          providerName: providerUsers.name,
+        })
+        .from(journals)
+        .leftJoin(orders, eq(orders.id, journals.orderId))
+        .leftJoin(patients, eq(patients.id, orders.patientId))
+        .leftJoin(patientUsers, eq(patientUsers.id, patients.userId))
+        .leftJoin(providers, eq(providers.id, orders.providerId))
+        .leftJoin(providerUsers, eq(providerUsers.id, providers.userId))
+        .orderBy(desc(journals.postedAt), desc(journals.id))
+        .limit(limit)
+        .offset(offset)
+      const [counted] = await tx.select({ total: count() }).from(journals)
       const byJournal = groupByJournal(
         await selectPostings(
           tx,
