@@ -236,7 +236,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 **Reversed: manual end-to-end checks -> Playwright**
 
 - **First decision:** the end-to-end flow was checked by hand in a browser, to keep the suite small.
-- **Final decision:** six Playwright specs at first (happy path, gateway failure, cancel, order lifecycle, a stale patient page, and URL-state navigation), now ten spec files with 25 tests after admin stock, dashboard range, back-order and revision 15 specs were added, on a dedicated `supplement_orders_e2e` database, run with `npm run test:e2e` and kept out of `npm test`.
+- **Final decision:** six Playwright specs at first (happy path, gateway failure, cancel, order lifecycle, a stale patient page, and URL-state navigation), now eleven spec files with 27 tests after admin stock, dashboard range, back-order, revision 15 and revision 18 specs were added, on a dedicated `supplement_orders_e2e` database, run with `npm run test:e2e` and kept out of `npm test`.
 - **Why it changed:** the product owner asked whether there was an end-to-end test. After half a dozen revisions to pricing rules, manual checks clearly weren't catching regressions. The happy path asserts exact dashboard and stock deltas, not just "something changed".
 - **Tradeoff:** a browser download and about 30 seconds per run.
 
