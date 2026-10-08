@@ -168,14 +168,21 @@ onMounted(() => {
         </Column>
         <Column field="memo" header="Memo" />
         <Column header="Order">
-          <template #body="{ data }"
-            ><RouterLink :to="`/orders/${data.orderId}`"
+          <template #body="{ data }">
+            <RouterLink
+              v-if="data.orderId !== null"
+              :to="`/orders/${data.orderId}`"
               >#{{ data.orderId }}</RouterLink
-            ></template
-          >
+            >
+            <span v-else>—</span>
+          </template>
         </Column>
-        <Column field="patientName" header="Patient" />
-        <Column field="providerName" header="Provider" />
+        <Column header="Patient">
+          <template #body="{ data }">{{ data.patientName ?? '—' }}</template>
+        </Column>
+        <Column header="Provider">
+          <template #body="{ data }">{{ data.providerName ?? '—' }}</template>
+        </Column>
         <template #expansion="{ data }">
           <JournalTable
             :postings="data.postings"

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { OrderStatus } from '@supplement-orders/domain'
+import type { OrderStatus, ProviderOrderDetailDto } from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import ConfirmDialog from 'primevue/confirmdialog'
 import { useConfirm } from 'primevue/useconfirm'
@@ -7,7 +7,6 @@ import { computed, nextTick, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   ApiRequestError,
-  type ProviderOrderJournalDto,
   cancelOrder,
   deleteOrder,
   getOrder,
@@ -37,7 +36,7 @@ const {
   loading,
   error,
   load,
-} = useResource(async (): Promise<ProviderOrderJournalDto> => {
+} = useResource(async (): Promise<ProviderOrderDetailDto> => {
   const detail = await getOrder(Number(props.orderId))
   if (detail.view !== 'provider') {
     throw new ApiRequestError(403, 'FORBIDDEN', 'This is not your order')
@@ -58,10 +57,10 @@ const heading = useTemplateRef<HTMLHeadingElement>('heading')
 
 interface OrderAction {
   label: string
-  prompt: (order: ProviderOrderJournalDto) => string
+  prompt: (order: ProviderOrderDetailDto) => string
   keepLabel: string
   destructive: boolean
-  run: (order: ProviderOrderJournalDto) => Promise<void>
+  run: (order: ProviderOrderDetailDto) => Promise<void>
 }
 
 const PENDING_CANCEL: OrderAction = {
@@ -142,7 +141,7 @@ function confirmAction() {
   })
 }
 
-async function perform(chosen: OrderAction, current: ProviderOrderJournalDto) {
+async function perform(chosen: OrderAction, current: ProviderOrderDetailDto) {
   if (acting.value) return
   acting.value = true
   actionError.value = null

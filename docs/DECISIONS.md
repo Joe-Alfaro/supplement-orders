@@ -17,6 +17,18 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 - **Why:** auditability is a requirement. A ledger makes "where did every cent go" a query, makes GMV and fees a `SUM`, and leaves room for refunds as new entries.
 - **Alternative:** split columns on `orders`.
 - **Tradeoff:** a little more schema. Originally immutability was enforced only by the application; since revision 11b (migration `0010`), database triggers make `payments` and `ledger_entries` append-only and check at commit that each payment has exactly three entries, on its order, summing to its amount.
+- **Superseded by revision 16** (below): the three typed rows became a double-entry journal per payment.
+
+**A double-entry ledger (revision 16)**
+
+- **Decision:** migration 0014 replaces `ledger_entries` with `accounts`, `journals` and `postings`. Postings are signed integer cents (positive debit, negative credit). The system accounts are `1000` Cash (asset), `4000` Product sales at wholesale cost and `4100` Platform fee revenue (revenue), plus one `2100-<providerId>` payable (liability) per provider. Each payment gets one `patient_payment` journal: Cash debit of the amount paid; credits of the cost of goods, the margin to the order's provider payable, and the fee. Zero amounts are omitted, so a zero-margin order has three postings. The journal is posted in the existing finalize transaction, so revision 10's execution safety is unchanged.
+- **Why:** the user asked for it, and it makes the money self-auditing: total debits equal total credits in a trial balance, what each provider is owed is an account balance (`owedToYouCents` on the dashboard), and future refunds and payouts are balanced journals against the same accounts rather than new entry types.
+- **Database enforcement:** append-only triggers on `journals` and `postings` (and `payments`, kept from 0010); `accounts` allow only a rename. Deferred constraint triggers check at commit that every journal has at least two non-zero postings summing to 0, and that every payment has exactly one journal on its order whose Cash debit equals the payment and whose credits go only to Product sales, Platform fee revenue and that order's provider payable. The 0010 balance trigger and `ledger_entries` are dropped. The linkage trigger checks accounts and signs, not that the cogs credit equals the lines' cost: the backfill copies historical rows as they were, and the application computes the split.
+- **Payable accounts by trigger:** an `AFTER INSERT` trigger on `providers` creates the payable in the same statement, so every create path (seed, tests, a future admin screen) gets one; a trigger on `users` renames it with the provider. The alternative, creating it in application code, would miss providers inserted any other way and make a pay fail at commit.
+- **Backfill:** in the same migration transaction, each existing payment and its three ledger rows become one journal (posted at the payment's time, zero amounts omitted). The migration then fires the deferred checks immediately (`SET CONSTRAINTS ALL IMMEDIATE`) so a bad historical row fails the migration before `ledger_entries` is dropped. A test migrates a scratch database to 0013, writes pre-revision-16 payments (including a zero-margin one and a back-order chain), applies 0014 and checks the journals, the trial balance and that the dashboard figures are unchanged.
+- **Domain:** `paymentJournal`, `assertJournalBalances` and `splitFromPostings` in `packages/domain/src/money/journal.ts`, with seeded property tests that every journal balances and round-trips its split. `assertJournalBalances` throws the existing `LedgerImbalanceError` (expected 0). `toLedgerEntries` and `assertLedgerBalances` are removed.
+- **API:** the provider order detail's `ledger` array is replaced by `journal` (null until paid), and a paid split is read from its postings. The dashboard reads postings for GMV, margin and fees, still filtered on `orders.paid_at` in one statement, and adds the all-time `owedToYouCents`. Admins get `GET /api/admin/accounts` (trial balance) and `GET /api/admin/journals` (paged, newest first).
+- **Tradeoff:** a zero-total payment can no longer be recorded (it would have no non-zero postings). No seeded or creatable product has a zero cost in the demo, and every paid order so far has a positive total. Test and seed resets must restore the system accounts after `TRUNCATE`, which they do, keeping their ids at 1-3.
 
 **The fee is computed once, on the order subtotal**
 
@@ -95,7 +107,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 **Idempotent pay**
 
-- **Decision:** paying a paid order returns the existing result, with no new charge or ledger rows, as long as the request names the paid revision and total. Uniqueness on `payments.order_id`, `payments.payment_attempt_id` and `ledger_entries(payment_id, type)` backs this up.
+- **Decision:** paying a paid order returns the existing result, with no new charge or ledger rows, as long as the request names the paid revision and total. Uniqueness on `payments.order_id`, `payments.payment_attempt_id` and (revision 16) `journals.payment_id` backs this up.
 
 **Cancel shares pay's row lock**
 
@@ -108,7 +120,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 - **First decision (revision 6):** a provider could cancel a `draft` or a `pending_payment` order.
 - **Final decision:** a draft is deleted outright (`DELETE /api/orders/:id`, behind a confirmation), and Cancel applies only to orders awaiting payment.
-- **Why it changed:** product owner feedback after using the app. A hard delete is safe for a draft: a draft has no `sentAt`, so it has no payment, no ledger rows, and the patient can't see it. A draft created by reopen was sent earlier, but reopen already cleared that history.
+- **Why it changed:** product owner feedback after using the app. A hard delete is safe for a draft: a draft has no `sentAt`, so it has no payment, no journal, and the patient can't see it. A draft created by reopen was sent earlier, but reopen already cleared that history.
 - **Alternative:** a soft delete with a `deleted_at` column, which keeps more audit history. A draft has no financial or patient-facing history worth keeping.
 - **Tradeoff:** deleting can't be undone. Delete takes the order row lock, so it can't race a send: whichever commits first wins, and the other gets a 409 or 404.
 
@@ -236,7 +248,12 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 **Full demo seed, loaded only into an empty database**
 
-- **Decision:** the pre-deploy step runs migrations, then `db:seed:if-empty`, which loads the full demo seed (named users plus 300 products and 250 patients) only when there are no users. `db:seed` stays the destructive local reset.
+- **Decision:** the pre-deploy step runs migrations, then `db:seed:if-empty`, which loads the full demo seed (named users, 12 products and 250 patients) only when there are no users. `db:seed` stays the destructive local reset.
+
+**A 12-product demo catalog with small stock (revision 16.6)**
+
+- **Decision:** the demo seed (`db:seed`, `db:seed:if-empty`) has 12 products instead of 300 generated ones: the five named products (same ids, SKUs and costs as the test and e2e seed) plus seven more, with stock 0 (one), 1-3 (three) and 5-25 (the rest). The test and e2e seed keep the named five with stock 25-120, so their tests are unchanged. The 250 generated patients stay.
+- **Why:** the user asked for stock small enough to check partial payments, back-orders and restocks by hand. Product search pagination now has little to page through in the demo; the explain-search script still loads its own large catalog.
 - **Why:** the demo needs enough data for search and pagination to mean something, and redeploying must never wipe what visitors or the demo created.
 - **Tradeoff:** the live data drifts as people use the demo; resetting it is a deliberate manual step.
 
@@ -308,15 +325,15 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 **Paid order records are frozen in the database (L1)**
 
-- **Decision:** migration 0013 adds `order_items.product_name` and `product_sku`, snapshotted on save and refreshed on send (backfilled from the products), and triggers that reject any change to a paid order except `updated_at`, any delete of it, and any write to its lines. Sent and paid orders show the snapshot; drafts show the live product. The paid split shown to the provider is read from the ledger.
+- **Decision:** migration 0013 adds `order_items.product_name` and `product_sku`, snapshotted on save and refreshed on send (backfilled from the products), and triggers that reject any change to a paid order except `updated_at`, any delete of it, and any write to its lines. Sent and paid orders show the snapshot; drafts show the live product. The paid split shown to the provider is read from the ledger (since revision 16, the journal's postings).
 - **Why:** the ledger was already append-only, but the order rows it describes weren't, and a renamed product changed what a paid order said was sold. Test fixtures that pin a paid order's timestamps switch the trigger off inside their own transaction (`withPaidOrdersUnfrozen`); resets use `TRUNCATE`, as before.
 
 ## What we cut
 
 - Refunds, cancelling paid orders, and reopening paid orders.
-- Provider payouts. The ledger records what's owed; nothing moves money to providers.
+- Provider payouts. Each provider's payable balance records what's owed; nothing moves money to providers.
 - Real payments, auth, email, shipping, tax.
-- CSV export and charts on the dashboard. A platform-wide (admin) revenue view.
+- CSV export and charts on the dashboard. A platform-wide revenue report (the admin trial balance shows the fee revenue balance, but not by period).
 - Warehouses, purchase orders and receiving. Revision 13 added admin stock editing (see Inventory above), but there's still no model of where stock comes from, and the adjustment audit isn't shown in the UI.
 - Automated deploys. Deploys run `railway up` by hand because Railway's auto-deploy supports only GitHub.
 - Order status history. Reopen overwrites the earlier send and cancel times.
@@ -326,7 +343,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 1. Deploy from CI (a GitHub mirror or a CI job with a Railway token) instead of `railway up` by hand.
 2. A reconciliation job or support tool for unresolved payment attempts (including `conflict`), backed by a real processor's lookup and webhooks.
-3. Refunds as negative ledger entries, and a payout report per provider.
+3. Refunds as reversing journals, and payouts as journals debiting the provider payable.
 4. Real authentication and role-based access behind the existing `Auth` interface, with audit logging on PHI reads.
 5. Rate limiting, structured logging with order and payment ids, and alerting on ledger imbalance or post-charge rollback.
 6. A platform-level GMV and fee report.

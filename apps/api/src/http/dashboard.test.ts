@@ -39,7 +39,7 @@ describe('GET /api/dashboard', () => {
     })
   })
 
-  it('totals GMV from payments and margin/fees from the ledger', async () => {
+  it('totals GMV, margin and fees from the journal postings', async () => {
     const [a, b] = ctx.seed.products
     const first = await createSentOrder(ctx, [
       { productId: a!.id, quantity: 1, unitPriceCents: 12000 },
@@ -65,14 +65,17 @@ describe('GET /api/dashboard', () => {
     expect(res.body.providerMarginCents).toBe(
       12000 - a!.cogsCents - fees[0]! + (3 * 500 - fees[1]!),
     )
+    // Revision 16: owed to you is the payable balance; no payouts exist yet.
+    expect(res.body.owedToYouCents).toBe(res.body.providerMarginCents)
     // Revision 9 (M4): the paid-order list moved to GET /api/orders?status=paid.
     expect(Object.keys(res.body).sort()).toEqual([
       'gmvCents',
+      'owedToYouCents',
       'platformFeeCents',
       'providerMarginCents',
       'range',
     ])
-    expect(other.body.gmvCents).toBe(0)
+    expect(other.body).toMatchObject({ gmvCents: 0, owedToYouCents: 0 })
   })
 })
 
@@ -140,6 +143,18 @@ describe('GET /api/dashboard range (revision 11a-v2)', () => {
     })
     expect(res.body.gmvCents).toBe(unit)
     expect(res.body).toEqual((await dashboard({ range: 'month' })).body)
+  })
+
+  it('reports owed to you for all time, whatever the range', async () => {
+    setNow('2026-10-15T12:00:00Z')
+    await paidOrderAt('2025-01-10T00:00:00Z')
+    await paidOrderAt('2026-10-02T00:00:00Z')
+    const all = (await dashboard({ range: 'all' })).body
+    const month = (await dashboard({ range: 'month' })).body
+
+    expect(month.providerMarginCents * 2).toBe(all.providerMarginCents)
+    expect(month.owedToYouCents).toBe(all.providerMarginCents)
+    expect(all.owedToYouCents).toBe(all.providerMarginCents)
   })
 
   it('month covers the 1st through today, inclusive of both edges', async () => {

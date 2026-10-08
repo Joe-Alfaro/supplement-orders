@@ -3,7 +3,6 @@ import { screen, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
-import type { OwedToYouDto } from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
 import DashboardView from './DashboardView.vue'
 
@@ -12,7 +11,7 @@ vi.mock('../api', async (importOriginal) => {
   return { ...actual, getDashboard: vi.fn(), searchProducts: vi.fn() }
 })
 
-const dashboard: DashboardDto & OwedToYouDto = {
+const dashboard: DashboardDto = {
   owedToYouCents: 4910,
   gmvCents: 6951,
   providerMarginCents: 3499,

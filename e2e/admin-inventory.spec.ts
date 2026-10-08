@@ -27,7 +27,7 @@ test('admin adds stock, edits it directly, and the change survives a reload', as
   await signIn(page, ADMIN)
   await expect(
     page.getByRole('navigation', { name: 'Main' }).getByRole('link'),
-  ).toHaveText(['Inventory'])
+  ).toHaveText(['Inventory', 'Accounts'])
   await openInventory(page)
 
   const before = Number(await stockInput(page).inputValue())

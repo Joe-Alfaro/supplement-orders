@@ -3,10 +3,10 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
 import type {
-  AdminAccountsDto,
   AdminJournalDto,
   AdminJournalPageDto,
-} from '../api'
+  AdminTrialBalanceDto,
+} from '@supplement-orders/domain'
 import { renderWithRouter } from '../test/renderWithRouter'
 import AdminAccountsView from './AdminAccountsView.vue'
 
@@ -15,13 +15,15 @@ vi.mock('../api', async (importOriginal) => {
   return { ...actual, getAdminAccounts: vi.fn(), listAdminJournals: vi.fn() }
 })
 
-const trialBalance: AdminAccountsDto = {
+const trialBalance: AdminTrialBalanceDto = {
   accounts: [
     {
       id: 1,
       code: '1000',
       name: 'Cash',
       type: 'asset',
+      normalBalance: 'debit',
+      providerId: null,
       debitsCents: 12000,
       creditsCents: 0,
       balanceCents: 12000,
@@ -31,6 +33,8 @@ const trialBalance: AdminAccountsDto = {
       code: '2100-1',
       name: 'Payable to Dr. Maya Rivera',
       type: 'liability',
+      normalBalance: 'credit',
+      providerId: 1,
       debitsCents: 0,
       creditsCents: 4910,
       balanceCents: 4910,
@@ -40,6 +44,8 @@ const trialBalance: AdminAccountsDto = {
       code: '4000',
       name: 'Product sales at wholesale cost',
       type: 'revenue',
+      normalBalance: 'credit',
+      providerId: null,
       debitsCents: 0,
       creditsCents: 7000,
       balanceCents: 7000,
@@ -49,6 +55,8 @@ const trialBalance: AdminAccountsDto = {
       code: '4100',
       name: 'Platform fee revenue',
       type: 'revenue',
+      normalBalance: 'credit',
+      providerId: null,
       debitsCents: 0,
       creditsCents: 90,
       balanceCents: 90,
@@ -61,6 +69,8 @@ function journal(id: number): AdminJournalDto {
   return {
     id,
     orderId: 40 + id,
+    kind: 'patient_payment',
+    paymentId: id,
     memo: `Payment for order #${40 + id}`,
     postedAt: '2026-10-05T12:10:00.000Z',
     patientName: 'Jordan Lee',

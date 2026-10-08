@@ -99,6 +99,13 @@
       "when": 1791417040922,
       "tag": "0013_rev15_frozen_paid_orders",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791478740962,
+      "tag": "0014_rev16_double_entry",
+      "breakpoints": true
     }
   ]
 }

@@ -112,7 +112,7 @@ function draftDetail(
     patientAddress: '214 Alder St',
     lines,
     payment: null,
-    ledger: [],
+    journal: null,
   }
 }
 

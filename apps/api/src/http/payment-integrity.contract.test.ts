@@ -68,7 +68,7 @@ const PROVIDER_DETAIL_KEYS = [
   'partialPaymentQuote',
   'paymentInProgress',
   'backorderStatus',
-  'ledger',
+  'journal',
 ]
 
 const PATIENT_DETAIL_KEYS = [
@@ -85,6 +85,7 @@ const DASHBOARD_KEYS = [
   'gmvCents',
   'providerMarginCents',
   'platformFeeCents',
+  'owedToYouCents',
   'range',
 ]
 
@@ -232,7 +233,7 @@ function expectExactKeys(value: unknown, keys: readonly string[]): void {
 
 function parsedRevision(body: unknown): number {
   const record = asRecord(body)
-  if (record.view === 'provider' && 'ledger' in record) {
+  if (record.view === 'provider' && 'journal' in record) {
     return providerOrderDetailDtoSchema.parse(body).revision
   }
   if (record.view === 'provider') {

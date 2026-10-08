@@ -1,7 +1,8 @@
+import { SYSTEM_ACCOUNTS } from '@supplement-orders/domain'
 import { sql } from 'drizzle-orm'
 import type { Db } from './client'
-import { patients, products, providers, users } from './schema'
-import { generatePatients, generateProducts } from './seed-bulk'
+import { accounts, patients, products, providers, users } from './schema'
+import { generatePatients } from './seed-bulk'
 
 /*
  * Named seed: what the API test harness and `npm run e2e:db` load (no bulk rows).
@@ -24,7 +25,12 @@ import { generatePatients, generateProducts } from './seed-bulk'
  *   4  PROBIO-50B   Probiotic 50 Billion CFU (30 caps)       $21.99   40  $22.16
  *   5  B-COMPLEX    Methylated B-Complex (60 caps)           $9.90    25  $9.98
  * Listed by name (the API's order): Magnesium, Methylated B-Complex, Omega-3,
- * Probiotic, Vitamin D3. No orders, payments or ledger rows are seeded.
+ * Probiotic, Vitamin D3. No orders, payments or journals are seeded.
+ *
+ * Accounts (revision 16): 1 = 1000 Cash, 2 = 4000 Product sales at wholesale
+ * cost, 3 = 4100 Platform fee revenue (restored by truncateAll), then each
+ * provider's payable, created by a database trigger with the provider:
+ * 4 = 2100-1 Payable to Dr. Maya Rivera, 5 = 2100-2 Payable to Dr. Owen Brooks.
  */
 
 interface SeedProvider {
@@ -101,6 +107,73 @@ const SEED_PRODUCTS = [
   },
 ]
 
+/**
+ * Revision 16.6: the demo seed (`db:seed`, `db:seed:if-empty`) has 12 products
+ * with small stock, so stock changes can be checked by hand: one at 0, three at
+ * 1-3 and the rest at 5-25. The first five are the named products above with
+ * the same ids, SKUs and costs; only their stock differs.
+ */
+const DEMO_STOCK_BY_SKU: Record<string, number> = {
+  'VITD3-5000': 12,
+  'MAG-GLY-400': 8,
+  'OMEGA3-1000': 2,
+  'PROBIO-50B': 0,
+  'B-COMPLEX': 15,
+}
+
+const DEMO_EXTRA_PRODUCTS = [
+  {
+    sku: 'ZINC-PIC-30',
+    name: 'Zinc Picolinate 30 mg (60 caps)',
+    cogsCents: 540,
+    stockQuantity: 25,
+  },
+  {
+    sku: 'COQ10-200',
+    name: 'CoQ10 200 mg (60 softgels)',
+    cogsCents: 2850,
+    stockQuantity: 1,
+  },
+  {
+    sku: 'CURC-500',
+    name: 'Curcumin Phytosome 500 mg (60 caps)',
+    cogsCents: 1960,
+    stockQuantity: 6,
+  },
+  {
+    sku: 'ASHW-600',
+    name: 'Ashwagandha 600 mg (60 caps)',
+    cogsCents: 1390,
+    stockQuantity: 20,
+  },
+  {
+    sku: 'NAC-600',
+    name: 'N-Acetyl Cysteine 600 mg (90 caps)',
+    cogsCents: 1240,
+    stockQuantity: 3,
+  },
+  {
+    sku: 'MELA-3',
+    name: 'Melatonin 3 mg (120 tablets)',
+    cogsCents: 420,
+    stockQuantity: 18,
+  },
+  {
+    sku: 'COLL-PEP',
+    name: 'Collagen Peptides (30 servings)',
+    cogsCents: 2480,
+    stockQuantity: 10,
+  },
+]
+
+export const DEMO_PRODUCTS = [
+  ...SEED_PRODUCTS.map((product) => ({
+    ...product,
+    stockQuantity: DEMO_STOCK_BY_SKU[product.sku] ?? product.stockQuantity,
+  })),
+  ...DEMO_EXTRA_PRODUCTS,
+]
+
 export interface SeededProvider {
   userId: number
   providerId: number
@@ -114,16 +187,36 @@ export interface SeedResult {
 }
 
 /** Every table, in an order TRUNCATE ... CASCADE accepts. */
-const ALL_TABLES = sql`inventory_adjustments, ledger_entries, payments, payment_attempts, fake_gateway_charges, order_items, orders, products, patients, providers, users`
+const ALL_TABLES = sql`inventory_adjustments, postings, journals, accounts, payments, payment_attempts, fake_gateway_charges, order_items, orders, products, patients, providers, users`
 
-/** Removes all data and restarts ids so a reseed produces the same ids every time. */
-export async function truncateAll(db: Db) {
-  await db.execute(sql`truncate table ${ALL_TABLES} restart identity cascade`)
+/** The database or a transaction on it; seeding only inserts (and reads). */
+type Inserter = Pick<Db, 'insert' | 'select'>
+
+/**
+ * Revision 16: the system accounts migration 0014 creates. Restored after
+ * every truncate, so they always exist and keep ids 1-3; a no-op when present.
+ */
+export async function ensureSystemAccounts(db: Inserter) {
+  // Only the missing ones: ON CONFLICT would still use up serial ids, and the
+  // provider payables' ids must stay the same on every reseed.
+  const existing = await db.select({ code: accounts.code }).from(accounts)
+  const missing = Object.values(SYSTEM_ACCOUNTS).filter(
+    (account) => !existing.some((row) => row.code === account.code),
+  )
+  if (missing.length === 0) return
+  await db.insert(accounts).values(missing)
 }
 
-/** The database or a transaction on it; seeding only inserts. */
-type Inserter = Pick<Db, 'insert'>
+/**
+ * Removes all data and restarts ids so a reseed produces the same ids every
+ * time. The ledger's system accounts are put back straight away.
+ */
+export async function truncateAll(db: Db) {
+  await db.execute(sql`truncate table ${ALL_TABLES} restart identity cascade`)
+  await ensureSystemAccounts(db)
+}
 
+/** A trigger (migration 0014) gives each new provider its payable account. */
 async function seedProvider(db: Inserter, seed: SeedProvider) {
   const [user] = await db
     .insert(users)
@@ -161,12 +254,14 @@ async function seedProvider(db: Inserter, seed: SeedProvider) {
   }
 }
 
-/** Generated rows on top of the named ones, for a demo-sized catalog and patient list. */
-const BULK_PRODUCT_COUNT = 295
+/** Generated patients on top of the named ones, for a demo-sized patient list. */
 const BULK_PATIENT_COUNT = 246
 
 export interface SeedOptions {
-  /** Add ~300 products and ~250 patients. Off for tests, on for `db:seed`. */
+  /**
+   * The demo seed: the 12 small-stock DEMO_PRODUCTS instead of the named five,
+   * and ~250 patients. Off for tests and e2e, on for `db:seed`.
+   */
   bulk?: boolean
 }
 
@@ -197,6 +292,7 @@ export async function seedDatabase(
   db: Inserter,
   options: SeedOptions = {},
 ): Promise<SeedResult> {
+  await ensureSystemAccounts(db)
   const seededProviders = await SEED_PROVIDERS.reduce<
     Promise<SeededProvider[]>
   >(
@@ -211,7 +307,7 @@ export async function seedDatabase(
 
   const seededProducts = await db
     .insert(products)
-    .values(SEED_PRODUCTS)
+    .values(options.bulk ? DEMO_PRODUCTS : SEED_PRODUCTS)
     .returning({
       id: products.id,
       cogsCents: products.cogsCents,
@@ -219,7 +315,6 @@ export async function seedDatabase(
     })
 
   if (options.bulk) {
-    await db.insert(products).values(generateProducts(BULK_PRODUCT_COUNT))
     await seedBulkPatients(
       db,
       seededProviders.map((p) => p.providerId),

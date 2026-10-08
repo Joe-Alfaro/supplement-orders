@@ -1,5 +1,7 @@
 import type {
+  AdminJournalPageDto,
   AdminProductDto,
+  AdminTrialBalanceDto,
   AdminProductPageDto,
   CreateOrderRequest,
   IncrementStockRequest,
@@ -23,7 +25,6 @@ import type {
   ReplaceOrderLinesRequest,
   UserDto,
 } from '@supplement-orders/domain'
-import type { AdminAccountsDto, AdminJournalPageDto } from './accounting'
 import { request } from './client'
 
 // One typed function per endpoint in FRONTEND_DESIGN.md §7.
@@ -189,7 +190,7 @@ export function getDashboard(params: DashboardParams = {}) {
 
 /** GET /api/admin/accounts (admin only): the trial balance. */
 export function getAdminAccounts() {
-  return request<AdminAccountsDto>('GET', '/admin/accounts')
+  return request<AdminTrialBalanceDto>('GET', '/admin/accounts')
 }
 
 /** GET /api/admin/journals (admin only): newest first, with postings. */

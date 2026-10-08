@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/vue'
 import PrimeVue from 'primevue/config'
 import { describe, expect, it } from 'vitest'
-import type { JournalPostingDto } from '../api'
+import type { JournalPostingDto } from '@supplement-orders/domain'
 import { primeVueOptions } from '../primevue'
 import JournalTable from './JournalTable.vue'
 

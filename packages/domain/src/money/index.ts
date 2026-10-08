@@ -1,6 +1,6 @@
 export * from './errors'
 export * from './format'
-export * from './ledger'
+export * from './journal'
 export * from './markup'
 export * from './split'
 export * from './partial'

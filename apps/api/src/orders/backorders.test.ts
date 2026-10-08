@@ -4,11 +4,17 @@ import {
   orders,
   orderItems,
   payments,
-  ledgerEntries,
   fakeGatewayCharges,
   paymentAttempts,
 } from '../db/schema'
-import { as, createSentOrder, moneyState, setStock } from '../testing/flows'
+import {
+  as,
+  createSentOrder,
+  journalSplitOf,
+  moneyState,
+  postingRole,
+  setStock,
+} from '../testing/flows'
 import {
   createInternalTestContext,
   type InternalTestContext,
@@ -75,25 +81,17 @@ describe('revision 14 back-order payment integrity', () => {
     ).rows
   }
   async function assertBalanced(id: number) {
-    const payment = await ctx.db
-      .select()
-      .from(payments)
-      .where(eq(payments.orderId, id))
-    const ledger = await ctx.db
-      .select()
-      .from(ledgerEntries)
-      .where(eq(ledgerEntries.orderId, id))
+    const { payments: payment, journals, postings } = await moneyState(ctx, id)
     expect(payment).toHaveLength(1)
-    expect(ledger).toHaveLength(3)
-    expect(ledger.map((entry) => entry.type).sort()).toEqual([
-      'cogs',
+    expect(journals).toHaveLength(1)
+    expect(postings.map(postingRole)).toEqual([
+      'cash',
+      'product_sales',
+      'provider_payable',
       'platform_fee',
-      'provider_margin',
     ])
-    expect(ledger.reduce((sum, entry) => sum + entry.amountCents, 0)).toBe(
-      payment[0]!.amountCents,
-    )
-    ledger.forEach((entry) => expect(entry.paymentId).toBe(payment[0]!.id))
+    expect(journalSplitOf(postings).totalCents).toBe(payment[0]!.amountCents)
+    postings.forEach((p) => expect(p.paymentId).toBe(payment[0]!.id))
   }
   async function assertOneSplit(id: number, revision: number, child: number) {
     expect(await children(id)).toEqual([{ id: child, revision }])
@@ -289,7 +287,7 @@ describe('revision 14 back-order payment integrity', () => {
     )
   })
 
-  it('chains another partial payment and balances the ledger on both paid orders', async () => {
+  it('chains another partial payment and balances the journal on both paid orders', async () => {
     const f = await fixture()
     const first = await pay(f.id, f.body)
     expect(first.status).toBe(200)
@@ -349,6 +347,6 @@ describe('revision 14 back-order payment integrity', () => {
     const after = await moneyState(ctx, child)
     expect(after.stock).toEqual(before.stock)
     expect(after.payments).toEqual([])
-    expect(after.ledger).toEqual([])
+    expect(after.postings).toEqual([])
   })
 })

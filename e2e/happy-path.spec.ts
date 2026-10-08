@@ -5,6 +5,7 @@ import {
   openOrdersViaDashboard,
   openPatient,
   PAID_ORDERS_LINK,
+  readOwedToYou,
   readSalesTiles,
   readSplit,
   readStock,
@@ -13,13 +14,14 @@ import {
   type OrderSplit,
   type SalesTiles,
 } from './flow'
-import { moneyIn } from './money'
+import { formatCents, moneyIn } from './money'
 
 // Small supplement_orders_e2e seed: the first provider, their first patient, and two products
 // chosen by SKU fragment. Vitamin D3 gets Markup % 300, which is read back
 // from the field rather than computed. That label is not on this UI yet, so
 // the happy path stays red there. Magnesium stays at its prefilled price
 // with quantity 2.
+const ADMIN = 'Ada Admin (Admin)'
 const PROVIDER = 'Dr. Maya Rivera (Provider)'
 const PATIENT = 'Jordan Lee'
 const PATIENT_USER = 'Jordan Lee (Patient)'
@@ -33,11 +35,13 @@ test('provider sends an order, the patient pays, and the dashboard matches', asy
 }) => {
   const recorded: {
     baseline: SalesTiles
+    owedBefore: number
     firstStock: number
     secondStock: number
     split: OrderSplit
   } = {
     baseline: { gmvCents: 0, marginCents: 0, feeCents: 0 },
+    owedBefore: 0,
     firstStock: 0,
     secondStock: 0,
     split: {
@@ -52,6 +56,7 @@ test('provider sends an order, the patient pays, and the dashboard matches', asy
     await signIn(page, PROVIDER)
     await openDashboard(page)
     recorded.baseline = await readSalesTiles(page)
+    recorded.owedBefore = await readOwedToYou(page)
     recorded.firstStock = await readStock(page, FIRST_SKU)
     recorded.secondStock = await readStock(page, SECOND_SKU)
   })
@@ -133,22 +138,23 @@ test('provider sends an order, the patient pays, and the dashboard matches', asy
     )
     await order.click()
 
-    const ledger = page.getByRole('table', { name: 'Ledger' })
-    const entryNames = ['Wholesale cost', 'Provider margin', 'Processing fee']
-    const entryAmounts = await Promise.all(
-      entryNames.map(async (name) => {
-        const row = ledger.getByRole('row', { name })
-        await expect(row).toHaveCount(1)
-        return moneyIn(await row.innerText())
-      }),
-    )
-    const entryTotal = entryAmounts.reduce((sum, cents) => sum + cents, 0)
-    expect(entryTotal).toBe(recorded.split.patientPaysCents)
-    const check = ledger.getByText(/Equals amount paid/)
-    await expect(check).toBeVisible()
-    expect(moneyIn(await check.innerText())).toBe(
+    const journal = page.getByRole('table', { name: 'Journal' })
+    await expect(journal).toBeVisible()
+    const cashRow = journal.getByRole('row', { name: /1000 Cash/ })
+    await expect(cashRow).toHaveCount(1)
+    expect(moneyIn(await cashRow.innerText())).toBe(
       recorded.split.patientPaysCents,
     )
+    const payableRow = journal.getByRole('row', { name: /Payable to/ })
+    await expect(payableRow).toHaveCount(1)
+    expect(moneyIn(await payableRow.innerText())).toBe(
+      recorded.split.marginCents,
+    )
+    const totals = journal.getByRole('row', { name: /Totals/ })
+    await expect(totals.getByText(/Debits = Credits/)).toBeVisible()
+    await expect(
+      totals.getByText(formatCents(recorded.split.patientPaysCents)),
+    ).toHaveCount(2)
 
     await openDashboard(page)
     const after = await readSalesTiles(page)
@@ -160,6 +166,9 @@ test('provider sends an order, the patient pays, and the dashboard matches', asy
     )
     expect(after.feeCents - recorded.baseline.feeCents).toBe(
       recorded.split.feeCents,
+    )
+    expect((await readOwedToYou(page)) - recorded.owedBefore).toBe(
+      recorded.split.marginCents,
     )
     expect(await readStock(page, FIRST_SKU)).toBe(
       recorded.firstStock - FIRST_QUANTITY,
@@ -177,5 +186,31 @@ test('provider sends an order, the patient pays, and the dashboard matches', asy
     expect(moneyIn(await paidOrder.innerText())).toBe(
       recorded.split.patientPaysCents,
     )
+  })
+  await test.step('admin sees the journal and a balanced trial balance', async () => {
+    await signOut(page)
+    await signIn(page, ADMIN)
+    await page.getByRole('link', { name: 'Accounts' }).click()
+    await expect(
+      page.getByRole('heading', { name: 'Accounts', level: 1 }),
+    ).toBeVisible()
+    const trial = page.getByRole('table', { name: 'Trial balance' })
+    await expect(trial).toBeVisible()
+    const totals = trial.getByRole('row', { name: /Totals/ })
+    await expect(totals.getByText(/Debits = Credits/)).toBeVisible()
+    const payable = trial.getByRole('row', {
+      name: /Payable to Dr\. Maya Rivera/,
+    })
+    await expect(payable).toHaveCount(1)
+    expect(moneyIn(await payable.getByRole('cell').last().innerText())).toBe(
+      recorded.owedBefore + recorded.split.marginCents,
+    )
+
+    const journals = page.getByRole('table', { name: 'Journals' })
+    const newest = journals.getByRole('row').nth(1)
+    await expect(newest).toContainText(PATIENT)
+    await newest.getByRole('button', { name: /Show postings/ }).click()
+    const postings = page.getByRole('table', { name: /postings$/ })
+    await expect(postings.getByText(/Debits = Credits/)).toBeVisible()
   })
 })

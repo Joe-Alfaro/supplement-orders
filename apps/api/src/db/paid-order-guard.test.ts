@@ -1,6 +1,13 @@
 import { eq, sql } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { as, createSentOrder, moneyState, pay } from '../testing/flows'
+import {
+  as,
+  createSentOrder,
+  insertPaymentJournal,
+  journalSplitOf,
+  moneyState,
+  pay,
+} from '../testing/flows'
 import {
   createInternalTestContext,
   type InternalTestContext,
@@ -112,10 +119,10 @@ describe('revision 15 frozen paid records', () => {
       }),
     )
   })
-  it('L1 paid split equals the immutable ledger, including legacy fee rounding', async () => {
+  it('L1 paid split equals the immutable journal, including legacy fee rounding', async () => {
     const id = await createSentOrder(ctx)
     // Construct a balanced historical payment with a different fee from the
-    // current formula and a historical cost adjustment BEFORE paid freezes it. This distinguishes a ledger read
+    // current formula and a historical cost adjustment BEFORE paid freezes it. This distinguishes a journal read
     // from recomputation without disabling any production integrity trigger.
     const before = await detail(id)
     const total: number = before.body.split.totalCents
@@ -126,21 +133,27 @@ describe('revision 15 frozen paid records', () => {
         sql`insert into payments (order_id, amount_cents, idempotency_key, gateway_reference) values (${id}, ${total}, ${`legacy-${id}`}, ${`legacy-ref-${id}`}) returning id`,
       )
       const paymentId = payment.rows[0]!.id
-      await tx.execute(
-        sql`insert into ledger_entries (order_id, payment_id, type, amount_cents) values (${id}, ${paymentId}, 'cogs', ${cogs}), (${id}, ${paymentId}, 'platform_fee', ${fee}), (${id}, ${paymentId}, 'provider_margin', ${total - cogs - fee})`,
-      )
+      await insertPaymentJournal(tx, {
+        paymentId,
+        orderId: id,
+        cogsCents: cogs,
+        marginCents: total - cogs - fee,
+        feeCents: fee,
+      })
       await tx.execute(
         sql`update orders set status = 'paid', paid_at = now(), platform_fee_cents = ${fee} where id = ${id}`,
       )
     })
-    const ledger = (await moneyState(ctx, id)).ledger
-    const amount = (type: string) =>
-      ledger.find((entry) => entry.type === type)!.amountCents
-    expect((await detail(id)).body.split).toMatchObject({
+    const recorded = journalSplitOf((await moneyState(ctx, id)).postings)
+    expect(recorded).toEqual({
       totalCents: total,
-      cogsCents: amount('cogs'),
-      platformFeeCents: amount('platform_fee'),
-      providerMarginCents: amount('provider_margin'),
+      cogsCents: cogs,
+      platformFeeCents: fee,
+      providerMarginCents: total - cogs - fee,
+    })
+    expect((await detail(id)).body.split).toEqual({
+      subtotalCents: total,
+      ...recorded,
     })
   })
 })

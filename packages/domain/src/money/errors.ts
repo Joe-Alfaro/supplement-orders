@@ -27,7 +27,7 @@ export class LedgerImbalanceError extends Error {
 
   constructor(expectedCents: number, actualCents: number) {
     super(
-      `Ledger entries total ${actualCents} cents but ${expectedCents} cents were paid`,
+      `Ledger amounts total ${actualCents} cents but must total ${expectedCents} cents`,
     )
     this.expectedCents = expectedCents
     this.actualCents = actualCents

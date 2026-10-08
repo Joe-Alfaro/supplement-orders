@@ -135,7 +135,7 @@ const PROVIDER_DETAIL_KEYS = [
   'partialPaymentQuote',
   'paymentInProgress',
   'backorderStatus',
-  'ledger',
+  'journal',
 ]
 
 const SPLIT_KEYS = [
@@ -165,7 +165,9 @@ const PROVIDER_LINE_KEYS = [
 
 const PAYMENT_KEYS = ['id', 'amountCents', 'reference', 'createdAt']
 
-const LEDGER_KEYS = ['id', 'type', 'amountCents', 'createdAt']
+const JOURNAL_KEYS = ['id', 'postedAt', 'memo', 'postings']
+
+const POSTING_KEYS = ['accountCode', 'accountName', 'debitCents', 'creditCents']
 
 const PRODUCT_KEYS = ['id', 'sku', 'name', 'cogsCents', 'stockQuantity']
 
@@ -297,15 +299,22 @@ function expectProviderDetail(body: unknown): ProviderOrderDetailDto {
   if (record.split !== null) {
     expectExactKeys(record.split, SPLIT_KEYS)
   }
-  if (!Array.isArray(record.lines) || !Array.isArray(record.ledger)) {
-    throw new Error('order lines and ledger must be arrays')
+  if (!Array.isArray(record.lines)) {
+    throw new Error('order lines must be an array')
   }
   record.lines.forEach((line) => {
     expectExactKeys(line, PROVIDER_LINE_KEYS)
   })
-  record.ledger.forEach((entry) => {
-    expectExactKeys(entry, LEDGER_KEYS)
-  })
+  if (record.journal !== null) {
+    expectExactKeys(record.journal, JOURNAL_KEYS)
+    const journalPostings = asRecord(record.journal).postings
+    if (!Array.isArray(journalPostings)) {
+      throw new Error('journal postings must be an array')
+    }
+    journalPostings.forEach((posting) => {
+      expectExactKeys(posting, POSTING_KEYS)
+    })
+  }
   if (record.payment !== null) {
     expectExactKeys(record.payment, PAYMENT_KEYS)
   }
@@ -992,7 +1001,7 @@ describe('POST /api/orders/:id/reopen', () => {
     expect(draft.cancelledAt).toBeNull()
     expect(draft.paidAt).toBeNull()
     expect(draft.payment).toBeNull()
-    expect(draft.ledger).toEqual([])
+    expect(draft.journal).toBeNull()
     expect(draft.lines).toEqual(cancelled.lines)
     expect(draft.split).toEqual(cancelled.split)
     expect(await storedTotals(draft.id)).toEqual({
@@ -1053,7 +1062,7 @@ describe('POST /api/orders/:id/reopen', () => {
     const providerPaid = await getProviderOrder(sent.id)
     expect(providerPaid.status).toBe('paid')
     expect(providerPaid.paidAt).not.toBeNull()
-    expect(providerPaid.ledger).toHaveLength(3)
+    expect(providerPaid.journal?.postings).toHaveLength(4)
     expect(stockOf(await listProducts(), productId)).toBe(
       before - placed.line.quantity,
     )
@@ -1083,7 +1092,7 @@ describe('POST /api/orders/:id/reopen', () => {
       expect(stockPairs(await listProducts())).toEqual(stock)
       if (status === 'paid') {
         expect(current.paidAt).toBe(target.paidAt)
-        expect(current.ledger).toEqual(target.ledger)
+        expect(current.journal).toEqual(target.journal)
         expect(current.payment).toEqual(target.payment)
       }
     },

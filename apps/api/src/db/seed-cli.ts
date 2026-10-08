@@ -3,7 +3,7 @@ import { loadConfig } from '../config'
 import { createDb } from './client'
 import { seedDatabase, truncateAll } from './seed'
 
-// Resets the database to the seed state: all orders, payments and ledger rows are removed.
+// Resets the database to the seed state: all orders, payments and journals are removed.
 const { db, pool } = createDb(loadConfig().DATABASE_URL)
 
 try {

@@ -1,4 +1,12 @@
 import { z } from 'zod'
+import {
+  ACCOUNT_TYPES,
+  JOURNAL_KINDS,
+  NORMAL_BALANCES,
+  type AccountType,
+  type JournalKind,
+  type NormalBalance,
+} from '../money/journal'
 
 // Response DTOs for every endpoint in FRONTEND_DESIGN.md §7.
 // Money fields are integer cents with a `Cents` suffix. Timestamps are ISO 8601 strings.
@@ -44,12 +52,6 @@ export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   paid: 'Paid',
   cancelled: 'Cancelled',
 }
-
-export const LEDGER_ENTRY_TYPES = [
-  'cogs',
-  'provider_margin',
-  'platform_fee',
-] as const
 
 /** GET /api/users returns UserDto[] (no X-User-Id required). */
 export interface UserDto {
@@ -310,18 +312,37 @@ export const paymentDtoSchema: z.ZodType<PaymentDto> = z.object({
   createdAt: timestamp,
 })
 
-export interface LedgerEntryDto {
-  id: number
-  type: (typeof LEDGER_ENTRY_TYPES)[number]
-  amountCents: number
-  createdAt: string
+/**
+ * Revision 16: one line of a journal. Exactly one of debitCents and creditCents
+ * is set (both positive); a posting is never 0.
+ */
+export interface JournalPostingDto {
+  accountCode: string
+  accountName: string
+  debitCents: number | null
+  creditCents: number | null
 }
 
-export const ledgerEntryDtoSchema: z.ZodType<LedgerEntryDto> = z.object({
+export const journalPostingDtoSchema: z.ZodType<JournalPostingDto> = z.object({
+  accountCode: z.string(),
+  accountName: z.string(),
+  debitCents: cents.nullable(),
+  creditCents: cents.nullable(),
+})
+
+/** Revision 16: a balanced journal; its debits always equal its credits. */
+export interface JournalDto {
+  id: number
+  postedAt: string
+  memo: string
+  postings: JournalPostingDto[]
+}
+
+export const journalDtoSchema: z.ZodType<JournalDto> = z.object({
   id,
-  type: z.enum(LEDGER_ENTRY_TYPES),
-  amountCents: cents,
-  createdAt: timestamp,
+  postedAt: timestamp,
+  memo: z.string(),
+  postings: z.array(journalPostingDtoSchema),
 })
 
 interface OrderSummaryBase {
@@ -446,7 +467,8 @@ const detailExtrasShape = {
  * Returned by POST /api/orders (201), PUT /api/orders/:id/lines, POST /api/orders/:id/send,
  * POST /api/orders/:id/cancel, POST /api/orders/:id/reopen, and GET /api/orders/:id when
  * the caller is the order's provider. DELETE /api/orders/:id returns 204 with no body.
- * `payment` and `ledger` are populated once paid; ledger is empty before that.
+ * `payment` and `journal` are set once paid and null before that. Revision 16:
+ * a paid order's `split` is read from its journal's postings.
  */
 export interface ProviderOrderDetailDto
   extends ProviderOrderSummaryDto, OrderDetailExtras {
@@ -455,14 +477,16 @@ export interface ProviderOrderDetailDto
   patientAddress: string
   lines: ProviderOrderLineDto[]
   payment: PaymentDto | null
-  ledger: LedgerEntryDto[]
+  /** Revision 16: the patient payment's journal; replaces `ledger`. */
+  journal: JournalDto | null
   /** Revision 14: set while the order awaits payment or stock, else null. */
   partialPaymentQuote: PartialPaymentQuoteDto | null
 }
 
 /**
  * Returned by GET /api/orders/:id and POST /api/orders/:id/pay when the caller is the
- * order's patient. Contains no wholesale cost, platform fee, margin, or ledger.
+ * order's patient. Contains no wholesale cost, platform fee, margin, journal or
+ * posting.
  */
 export interface PatientOrderDetailDto
   extends PatientOrderSummaryDto, OrderDetailExtras {
@@ -484,7 +508,7 @@ export const providerOrderDetailDtoSchema: z.ZodType<ProviderOrderDetailDto> =
     patientAddress: z.string(),
     lines: z.array(providerOrderLineDtoSchema),
     payment: paymentDtoSchema.nullable(),
-    ledger: z.array(ledgerEntryDtoSchema),
+    journal: journalDtoSchema.nullable(),
     partialPaymentQuote: partialPaymentQuoteDtoSchema.nullable(),
     ...detailExtrasShape,
   })
@@ -519,12 +543,14 @@ export interface DashboardRangeDto {
  * paid-order list was removed; use GET /api/orders?status=paid for it.
  */
 export interface DashboardDto {
-  /** SUM(payments.amountCents) over this provider's paid orders in range. */
+  /** Revision 16: Cash debits on this provider's payment journals in range. */
   gmvCents: number
-  /** SUM of provider_margin ledger entries in range. */
+  /** Credits to this provider's payable account in range. */
   providerMarginCents: number
-  /** SUM of platform_fee ledger entries in range. */
+  /** Platform fee revenue credits on this provider's journals in range. */
   platformFeeCents: number
+  /** Revision 16: the payable account's balance, all time (never date-filtered). */
+  owedToYouCents: number
   range: DashboardRangeDto
 }
 
@@ -541,6 +567,7 @@ export const dashboardDtoSchema: z.ZodType<DashboardDto> = z.object({
   gmvCents: cents,
   providerMarginCents: cents,
   platformFeeCents: cents,
+  owedToYouCents: cents,
   range: dashboardRangeDtoSchema,
 })
 
@@ -572,6 +599,76 @@ export const adminProductDtoSchema: z.ZodType<AdminProductDto> = z.object({
 export type AdminProductPageDto = Page<AdminProductDto>
 export const adminProductPageDtoSchema = pageSchema(adminProductDtoSchema)
 export const patientPageDtoSchema = pageSchema(patientDtoSchema)
+
+/**
+ * Revision 16 (admin only): one row of the trial balance. `debitsCents` and
+ * `creditsCents` are the account's totals (both positive); `balanceCents` is
+ * signed toward its normal balance (debits - credits for a debit-normal
+ * account, credits - debits for a credit-normal one).
+ */
+export interface AdminAccountDto {
+  id: number
+  code: string
+  name: string
+  type: AccountType
+  normalBalance: NormalBalance
+  /** Set only on provider payable accounts. */
+  providerId: number | null
+  debitsCents: number
+  creditsCents: number
+  balanceCents: number
+}
+
+export const adminAccountDtoSchema: z.ZodType<AdminAccountDto> = z.object({
+  id,
+  code: z.string(),
+  name: z.string(),
+  type: z.enum(ACCOUNT_TYPES),
+  normalBalance: z.enum(NORMAL_BALANCES),
+  providerId: id.nullable(),
+  debitsCents: cents,
+  creditsCents: cents,
+  balanceCents: z.int(),
+})
+
+/**
+ * GET /api/admin/accounts: every account ordered by code, and the ledger's
+ * total debits and credits, which are always equal.
+ */
+export interface AdminTrialBalanceDto {
+  accounts: AdminAccountDto[]
+  totals: { debitsCents: number; creditsCents: number }
+}
+
+export const adminTrialBalanceDtoSchema: z.ZodType<AdminTrialBalanceDto> =
+  z.object({
+    accounts: z.array(adminAccountDtoSchema),
+    totals: z.object({ debitsCents: cents, creditsCents: cents }),
+  })
+
+/** One row of GET /api/admin/journals (newest first). */
+export interface AdminJournalDto extends JournalDto {
+  kind: JournalKind
+  paymentId: number | null
+  orderId: number | null
+  patientName: string | null
+  providerName: string | null
+}
+
+export const adminJournalDtoSchema: z.ZodType<AdminJournalDto> = z.object({
+  id,
+  kind: z.enum(JOURNAL_KINDS),
+  postedAt: timestamp,
+  memo: z.string(),
+  postings: z.array(journalPostingDtoSchema),
+  paymentId: id.nullable(),
+  orderId: id.nullable(),
+  patientName: z.string().nullable(),
+  providerName: z.string().nullable(),
+})
+
+export type AdminJournalPageDto = Page<AdminJournalDto>
+export const adminJournalPageDtoSchema = pageSchema(adminJournalDtoSchema)
 
 /**
  * One row of GET /api/orders?status=... (provider only, own orders). `totalCents`

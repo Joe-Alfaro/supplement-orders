@@ -6,8 +6,9 @@ import {
 } from '../testing/harness'
 import { seedIfEmpty, truncateAll } from './seed'
 
-// Named rows (including revision 13's admin) plus the bulk rows `db:seed` adds.
-const FULL_SEED = { users: 253, patients: 250, providers: 2, products: 300 }
+// Named rows (including revision 13's admin) plus the bulk patients `db:seed`
+// adds, and revision 16.6's 12 demo products.
+const FULL_SEED = { users: 253, patients: 250, providers: 2, products: 12 }
 
 let ctx: InternalTestContext
 
@@ -71,6 +72,38 @@ describe('seedIfEmpty', () => {
       )
       .then((r) => r.rows)
     expect(row!.total).toBe(row!.distinct)
+  })
+
+  it('seeds 12 distinct demo products with small stock (revision 16.6)', async () => {
+    await truncateAll(ctx.db)
+
+    await seedIfEmpty(ctx.db)
+
+    const rows = await ctx.db
+      .execute<{ name: string; cogs_cents: string; stock_quantity: number }>(
+        sql`select name, cogs_cents::text, stock_quantity from products order by id`,
+      )
+      .then((r) => r.rows)
+    expect(rows).toHaveLength(12)
+    expect(new Set(rows.map((r) => r.name)).size).toBe(12)
+    expect(new Set(rows.map((r) => r.cogs_cents)).size).toBe(12)
+    const stock = rows.map((r) => r.stock_quantity)
+    expect(stock.filter((n) => n === 0)).toHaveLength(1)
+    expect(stock.filter((n) => n >= 1 && n <= 3).length).toBeGreaterThanOrEqual(
+      2,
+    )
+    expect(stock.every((n) => n <= 3 || (n >= 5 && n <= 25))).toBe(true)
+  })
+
+  it('gives the demo seed the system accounts and both provider payables', async () => {
+    await truncateAll(ctx.db)
+
+    await seedIfEmpty(ctx.db)
+
+    const codes = await ctx.db
+      .execute<{ code: string }>(sql`select code from accounts order by id`)
+      .then((r) => r.rows.map((row) => row.code))
+    expect(codes).toEqual(['1000', '4000', '4100', '2100-1', '2100-2'])
   })
 
   it('does nothing when users already exist', async () => {

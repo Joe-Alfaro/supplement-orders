@@ -12,7 +12,7 @@ import {
   type OrderStatusSelection,
   type ProviderOrderListItemDto,
   type ProviderOrderListPageDto,
-  type LedgerEntryDto,
+  type JournalSplit,
   type OrderLineDto,
   type OrderSplitDto,
   type PatientOrderDetailDto,
@@ -40,6 +40,7 @@ import { alias } from 'drizzle-orm/pg-core'
 import type { Db } from '../db/client'
 import type { ReadHooks } from '../server'
 import { forbidden, notFound } from '../http/errors'
+import { selectJournalSplits, selectOrderJournal } from '../ledger/journals'
 import type { CurrentUser } from '../seams'
 
 /** A database handle or a transaction: anything the read helpers can query through. */
@@ -48,7 +49,7 @@ type Reader = Db | Parameters<Parameters<Db['transaction']>[0]>[0]
 /**
  * Runs `read` in one read-only REPEATABLE READ transaction, so every query in it
  * sees the same snapshot (revision 11, N5): an order's header, lines, payment and
- * ledger can never come from different moments.
+ * journal can never come from different moments.
  */
 function inSnapshot<T>(db: Db, read: (tx: Reader) => Promise<T>): Promise<T> {
   return db.transaction(read, {
@@ -57,7 +58,6 @@ function inSnapshot<T>(db: Db, read: (tx: Reader) => Promise<T>): Promise<T> {
   })
 }
 import {
-  ledgerEntries,
   orderItems,
   orders,
   ordersWithStatus,
@@ -195,45 +195,6 @@ async function selectLines(db: Reader, orderIds: number[]) {
 }
 
 /**
- * Revision 15.5: a paid order's cost of goods, margin and fee as its ledger
- * recorded them, keyed by order id. Paid splits come from here, never from a
- * recomputation over the lines.
- */
-async function selectLedgerSplits(db: Reader, orderIds: number[]) {
-  if (orderIds.length === 0) return new Map<number, LedgerSplit>()
-  const rows = await db
-    .select({
-      orderId: ledgerEntries.orderId,
-      type: ledgerEntries.type,
-      amountCents: ledgerEntries.amountCents,
-    })
-    .from(ledgerEntries)
-    .where(inArray(ledgerEntries.orderId, orderIds))
-  return rows.reduce((acc, row) => {
-    const split = acc.get(row.orderId) ?? {
-      cogsCents: 0,
-      providerMarginCents: 0,
-      platformFeeCents: 0,
-    }
-    const key = LEDGER_SPLIT_KEYS[row.type]
-    acc.set(row.orderId, { ...split, [key]: split[key] + row.amountCents })
-    return acc
-  }, new Map<number, LedgerSplit>())
-}
-
-interface LedgerSplit {
-  cogsCents: number
-  providerMarginCents: number
-  platformFeeCents: number
-}
-
-const LEDGER_SPLIT_KEYS = {
-  cogs: 'cogsCents',
-  provider_margin: 'providerMarginCents',
-  platform_fee: 'platformFeeCents',
-} as const satisfies Record<LedgerEntryDto['type'], keyof LedgerSplit>
-
-/**
  * Revision 15.1: the order's latest unresolved payment attempt (pending,
  * succeeded without a payment, or in conflict), or undefined. While one holds
  * stock, the order's lines are exactly what it reserved.
@@ -272,12 +233,11 @@ type LineRow = Awaited<ReturnType<typeof selectLines>>[number]
 function splitFor(
   order: OrderRow,
   lines: LineRow[],
-  ledger: LedgerSplit | undefined,
+  journal: JournalSplit | undefined,
 ): OrderSplitDto | null {
-  if (order.storedStatus === 'paid' && ledger !== undefined) {
-    const totalCents =
-      ledger.cogsCents + ledger.providerMarginCents + ledger.platformFeeCents
-    return { subtotalCents: totalCents, totalCents, ...ledger }
+  // Revision 16: a paid order's split is read from its journal's postings.
+  if (order.storedStatus === 'paid' && journal !== undefined) {
+    return { subtotalCents: journal.totalCents, ...journal }
   }
   if (
     order.subtotalCents !== null &&
@@ -395,12 +355,12 @@ function lineAvailability(l: LineRow, open: boolean, held: boolean) {
 function providerSummary(
   order: OrderRow,
   lines: LineRow[],
-  ledger: LedgerSplit | undefined,
+  journal: JournalSplit | undefined,
 ): ProviderOrderSummaryDto {
   return {
     ...summaryBase(order),
     view: 'provider',
-    split: splitFor(order, lines, ledger),
+    split: splitFor(order, lines, journal),
   }
 }
 
@@ -508,12 +468,12 @@ export async function listProviderOrders(
   )
   const ids = rows.map((o) => o.id)
   const lines = groupLines(await selectLines(db, ids))
-  const ledgers = await selectLedgerSplits(
+  const journalSplits = await selectJournalSplits(
     db,
     rows.filter((o) => o.storedStatus === 'paid').map((o) => o.id),
   )
   return rows.map((o) =>
-    providerSummary(o, lines.get(o.id) ?? [], ledgers.get(o.id)),
+    providerSummary(o, lines.get(o.id) ?? [], journalSplits.get(o.id)),
   )
 }
 
@@ -589,28 +549,14 @@ async function readProviderOrderDetail(
 ): Promise<ProviderOrderDetailDto> {
   const { order, lines, attempt, payment } = await loadOne(db, orderId, hooks)
   const { held, ...extras } = detailExtras(order, attempt)
-  const ledgerRows = await db
-    .select({
-      id: ledgerEntries.id,
-      type: ledgerEntries.type,
-      amountCents: ledgerEntries.amountCents,
-      createdAt: ledgerEntries.createdAt,
-    })
-    .from(ledgerEntries)
-    .where(eq(ledgerEntries.orderId, orderId))
-    .orderBy(asc(ledgerEntries.id))
-  const ledger: LedgerEntryDto[] = ledgerRows.map((e) => ({
-    ...e,
-    createdAt: e.createdAt.toISOString(),
-  }))
-  const ledgerSplit = (await selectLedgerSplits(db, [orderId])).get(orderId)
+  const { journal, split } = await selectOrderJournal(db, orderId)
   return {
-    ...providerSummary(order, lines, ledgerSplit),
+    ...providerSummary(order, lines, split),
     patientDateOfBirth: order.patientDateOfBirth,
     patientAddress: order.patientAddress,
     lines: lines.map((line) => providerLine(line, held)),
     payment,
-    ledger,
+    journal,
     partialPaymentQuote: quoteFor(order, lines, 'provider', held),
     ...extras,
   }

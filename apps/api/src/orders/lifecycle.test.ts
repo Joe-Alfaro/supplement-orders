@@ -5,6 +5,7 @@ import {
   as,
   createDraft,
   createSentOrder,
+  journalSplitOf,
   moneyState,
   pay,
   sampleLines,
@@ -92,7 +93,7 @@ describe('revision 8: delete draft and reopen cancelled', () => {
         expect(res.status).toBe(409)
         expect(res.body.error.code).toBe('ORDER_NOT_DRAFT')
       })
-      expect((await moneyState(ctx, paid)).ledger).toHaveLength(3)
+      expect((await moneyState(ctx, paid)).postings).toHaveLength(4)
     })
 
     it('is provider-only and owner-only', async () => {
@@ -151,7 +152,7 @@ describe('revision 8: delete draft and reopen cancelled', () => {
 
       expect([delDraft.status, payDraft.status]).toEqual([204, 404])
       expect([delPending.status, payPending.status]).toEqual([409, 200])
-      expect((await moneyState(ctx, pendingId)).ledger).toHaveLength(3)
+      expect((await moneyState(ctx, pendingId)).postings).toHaveLength(4)
       expect(ctx.gateway.charges).toHaveLength(1)
     })
   })
@@ -213,7 +214,7 @@ describe('revision 8: delete draft and reopen cancelled', () => {
         paidAt: null,
         cancelledAt: null,
         payment: null,
-        ledger: [],
+        journal: null,
       })
       // Priced live again, as for any draft.
       expect(res.body.split).not.toBeNull()
@@ -242,7 +243,7 @@ describe('revision 8: delete draft and reopen cancelled', () => {
       expect(payRes.status).toBe(404)
     })
 
-    it('reopen, edit, re-send and pay writes a ledger for the new total', async () => {
+    it('reopen, edit, re-send and pay posts a journal for the new total', async () => {
       const orderId = await createSentOrder(ctx)
       await cancel(orderId)
       await reopen(orderId)
@@ -269,7 +270,7 @@ describe('revision 8: delete draft and reopen cancelled', () => {
       expect(paid.body).toMatchObject({ status: 'paid', totalCents: 8000 })
       const state = await moneyState(ctx, orderId)
       expect(state.payments.map((p) => p.amountCents)).toEqual([8000])
-      expect(state.ledger.reduce((sum, e) => sum + e.amountCents, 0)).toBe(8000)
+      expect(journalSplitOf(state.postings).totalCents).toBe(8000)
     })
 
     it('also reopens a draft cancelled before sending (a revision 6 row)', async () => {

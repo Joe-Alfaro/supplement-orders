@@ -1,4 +1,6 @@
 import type {
+  AdminJournalDto,
+  AdminTrialBalanceDto,
   DashboardDto,
   ListQuery,
   PatientDto,
@@ -16,11 +18,6 @@ import userEvent from '@testing-library/user-event'
 import type { UserEvent } from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
-import type {
-  AdminAccountsDto,
-  AdminJournalDto,
-  ProviderOrderJournalDto,
-} from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
 import { useCurrentUser } from '../user'
 import AdminAccountsView from '../views/AdminAccountsView.vue'
@@ -125,7 +122,7 @@ const providerSummary: ProviderOrderSummaryDto = {
   split: paidSplit,
 }
 
-const paidProviderOrder: ProviderOrderJournalDto = {
+const paidProviderOrder: ProviderOrderDetailDto = {
   partialPaymentQuote: null,
   paymentInProgress: null,
   backorderStatus: null,
@@ -156,7 +153,6 @@ const paidProviderOrder: ProviderOrderJournalDto = {
     reference: 'fake_ch_123',
     createdAt: '2026-10-05T12:10:00.000Z',
   },
-  ledger: [],
   journal: {
     id: 9,
     postedAt: '2026-10-05T12:10:00.000Z',
@@ -199,7 +195,7 @@ const emptyDraft: ProviderOrderDetailDto = {
   split: null,
   lines: [],
   payment: null,
-  ledger: [],
+  journal: null,
 }
 
 const pendingPatientOrder: PatientOrderDetailDto = {
@@ -273,7 +269,7 @@ const myOrders: PatientOrderSummaryDto[] = [
   },
 ]
 
-const dashboard: DashboardDto & { owedToYouCents: number } = {
+const dashboard: DashboardDto = {
   owedToYouCents: 785,
   gmvCents: 6951,
   providerMarginCents: 3499,
@@ -399,13 +395,15 @@ async function expectAccessible(container: Element) {
   await scanUncontained(container, 'listbox')
 }
 
-const trialBalance: AdminAccountsDto = {
+const trialBalance: AdminTrialBalanceDto = {
   accounts: [
     {
       id: 1,
       code: '1000',
       name: 'Cash',
       type: 'asset',
+      normalBalance: 'debit',
+      providerId: null,
       debitsCents: 2000,
       creditsCents: 0,
       balanceCents: 2000,
@@ -415,6 +413,8 @@ const trialBalance: AdminAccountsDto = {
       code: '4000',
       name: 'Product sales at wholesale cost',
       type: 'revenue',
+      normalBalance: 'credit',
+      providerId: null,
       debitsCents: 0,
       creditsCents: 2000,
       balanceCents: 2000,
@@ -426,6 +426,8 @@ const trialBalance: AdminAccountsDto = {
 const adminJournal: AdminJournalDto = {
   id: 9,
   orderId: 7,
+  kind: 'patient_payment',
+  paymentId: 5,
   memo: 'Payment for order #7',
   postedAt: '2026-10-05T12:10:00.000Z',
   patientName: 'Jordan Lee',

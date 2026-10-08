@@ -61,7 +61,7 @@ const draft = {
   patientDateOfBirth: '1984-03-14',
   patientAddress: '214 Alder St',
   payment: null,
-  ledger: [],
+  journal: null,
   lines: [
     {
       productId: 2,

@@ -9,12 +9,7 @@ import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, type LocationQuery } from 'vue-router'
-import {
-  ApiRequestError,
-  getDashboard,
-  searchProducts,
-  type OwedToYouDto,
-} from '../api'
+import { ApiRequestError, getDashboard, searchProducts } from '../api'
 import { ErrorBanner, MoneyText, PageSummary, StatTile } from '../components'
 import {
   DEFAULT_RANGE,
@@ -70,7 +65,7 @@ function fallBackToDefault() {
   listUrl.replaceQuery(urlQuery(inventoryState()))
 }
 
-const sales = useResource(async (): Promise<DashboardDto & OwedToYouDto> => {
+const sales = useResource(async (): Promise<DashboardDto> => {
   try {
     return await getDashboard(toDashboardParams(range.value))
   } catch (error) {
@@ -273,7 +268,7 @@ function onInventoryPage(event: DataTablePageEvent) {
           :cents="sales.data.value.platformFeeCents"
         />
       </div>
-      <div v-if="sales.data.value.owedToYouCents !== undefined" class="tiles">
+      <div class="tiles">
         <StatTile
           label="Owed to you (all time)"
           :cents="sales.data.value.owedToYouCents"

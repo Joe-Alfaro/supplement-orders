@@ -81,6 +81,13 @@ export async function readSalesTiles(page: Page): Promise<SalesTiles> {
   }
 }
 
+/** The all-time payable balance tile on the provider dashboard. */
+export async function readOwedToYou(page: Page): Promise<number> {
+  const tile = page.getByRole('group', { name: 'Owed to you (all time)' })
+  await expect(tile).toBeVisible()
+  return moneyIn(await tile.innerText())
+}
+
 /** Stock on hand for one SKU, after the inventory search has narrowed to it. */
 export async function readStock(
   page: Page,

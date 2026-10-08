@@ -52,7 +52,7 @@ const original: ProviderOrderDetailDto = {
     },
   ],
   payment: null,
-  ledger: [],
+  journal: null,
   splitFromOrderId: null,
   backorderOrderId: 77,
   partialPaymentQuote: null,

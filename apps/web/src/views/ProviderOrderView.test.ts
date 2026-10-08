@@ -1,9 +1,8 @@
-import type { ProviderOrderDetailDto } from '@supplement-orders/domain'
+import type { JournalDto, ProviderOrderDetailDto } from '@supplement-orders/domain'
 import { screen, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
-import type { JournalDto, ProviderOrderJournalDto } from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
 import { clearNoticeUnlessOn, notice } from '../user'
 import ProviderOrderView from './ProviderOrderView.vue'
@@ -51,7 +50,7 @@ const paidJournal: JournalDto = {
   ],
 }
 
-const paid: ProviderOrderJournalDto = {
+const paid: ProviderOrderDetailDto = {
   journal: paidJournal,
   partialPaymentQuote: null,
   paymentInProgress: null,
@@ -104,7 +103,6 @@ const paid: ProviderOrderJournalDto = {
     reference: 'fake_ch_1',
     createdAt: '2026-10-05T12:10:00.000Z',
   },
-  ledger: [],
 }
 
 describe('ProviderOrderView', () => {
@@ -143,7 +141,7 @@ describe('ProviderOrderView', () => {
   })
 
   it('has no journal table before payment', async () => {
-    const unpaid: ProviderOrderJournalDto = {
+    const unpaid: ProviderOrderDetailDto = {
       ...paid,
       status: 'pending_payment',
       paidAt: null,
@@ -165,7 +163,7 @@ const pending: ProviderOrderDetailDto = {
   status: 'pending_payment',
   paidAt: null,
   payment: null,
-  ledger: [],
+  journal: null,
 }
 
 const draft: ProviderOrderDetailDto = {
@@ -457,7 +455,7 @@ describe('ProviderOrderView reopen', () => {
       status: 'pending_payment',
       paidAt: null,
       payment: null,
-      ledger: [],
+      journal: null,
     }
     vi.mocked(api.getOrder).mockResolvedValue(pending)
     vi.mocked(api.cancelOrder).mockRejectedValue(

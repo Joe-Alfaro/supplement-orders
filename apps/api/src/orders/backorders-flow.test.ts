@@ -9,13 +9,20 @@ import {
 import { eq, inArray } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
-  ledgerEntries,
+  journals,
   orderItems,
   orders,
   ordersWithStatus,
   payments,
 } from '../db/schema'
-import { as, createDraft, createSentOrder, setStock } from '../testing/flows'
+import {
+  as,
+  createDraft,
+  createSentOrder,
+  journalSplitOf,
+  moneyState,
+  setStock,
+} from '../testing/flows'
 import {
   createInternalTestContext,
   type InternalTestContext,
@@ -110,22 +117,23 @@ describe('revision 14: low stock, partial payment and back-orders', () => {
   }
 
   async function expectBalancedLedger() {
-    const [paid, entries] = await Promise.all([
+    const [paid, allJournals] = await Promise.all([
       ctx.db.select().from(payments),
-      ctx.db.select().from(ledgerEntries),
+      ctx.db.select().from(journals),
     ])
-    paid.forEach((payment) => {
-      const own = entries.filter((e) => e.paymentId === payment.id)
-      expect(own.map((e) => e.type).sort()).toEqual([
-        'cogs',
-        'platform_fee',
-        'provider_margin',
-      ])
-      expect(own.every((e) => e.orderId === payment.orderId)).toBe(true)
-      expect(own.reduce((sum, e) => sum + e.amountCents, 0)).toBe(
-        payment.amountCents,
-      )
-    })
+    expect(allJournals).toHaveLength(paid.length)
+    await Promise.all(
+      paid.map(async (payment) => {
+        const state = await moneyState(ctx, payment.orderId)
+        expect(state.journals.map((j) => j.paymentId)).toEqual([payment.id])
+        expect(state.postings.every((p) => p.paymentId === payment.id)).toBe(
+          true,
+        )
+        expect(journalSplitOf(state.postings).totalCents).toBe(
+          payment.amountCents,
+        )
+      }),
+    )
     return paid
   }
 

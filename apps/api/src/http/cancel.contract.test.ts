@@ -33,7 +33,7 @@ import type { TestContext } from '../testing/harness'
 // POST /api/orders/:id/cancel returns the provider detail for a
 // pending_payment order: status becomes cancelled and cancelledAt is set.
 // A draft, a paid order, or a second cancel is 409 ORDER_NOT_CANCELLABLE.
-// Drafts are deleted, not cancelled. Cancel writes no ledger rows and does
+// Drafts are deleted, not cancelled. Cancel writes no journal and does
 // not change stock. The patient cannot cancel (403). Another provider cannot
 // cancel someone else's order (403), the same rule as reading it. A missing
 // or unknown X-User-Id is 401.
@@ -100,7 +100,7 @@ const PROVIDER_DETAIL_KEYS = [
   'partialPaymentQuote',
   'paymentInProgress',
   'backorderStatus',
-  'ledger',
+  'journal',
 ]
 
 const PATIENT_DETAIL_KEYS = [
@@ -153,7 +153,9 @@ const PATIENT_LINE_KEYS = [
 
 const PAYMENT_KEYS = ['id', 'amountCents', 'reference', 'createdAt']
 
-const LEDGER_KEYS = ['id', 'type', 'amountCents', 'createdAt']
+const JOURNAL_KEYS = ['id', 'postedAt', 'memo', 'postings']
+
+const POSTING_KEYS = ['accountCode', 'accountName', 'debitCents', 'creditCents']
 
 const PRODUCT_KEYS = ['id', 'sku', 'name', 'cogsCents', 'stockQuantity']
 
@@ -188,6 +190,7 @@ const DASHBOARD_KEYS = [
   'gmvCents',
   'providerMarginCents',
   'platformFeeCents',
+  'owedToYouCents',
   'range',
 ]
 
@@ -276,15 +279,22 @@ function expectProviderDetail(body: unknown): ProviderOrderDetailDto {
   } else {
     expectExactKeys(record.split, SPLIT_KEYS)
   }
-  if (!Array.isArray(record.lines) || !Array.isArray(record.ledger)) {
-    throw new Error('order lines and ledger must be arrays')
+  if (!Array.isArray(record.lines)) {
+    throw new Error('order lines must be an array')
   }
   record.lines.forEach((line) => {
     expectExactKeys(line, PROVIDER_LINE_KEYS)
   })
-  record.ledger.forEach((entry) => {
-    expectExactKeys(entry, LEDGER_KEYS)
-  })
+  if (record.journal !== null) {
+    expectExactKeys(record.journal, JOURNAL_KEYS)
+    const journalPostings = asRecord(record.journal).postings
+    if (!Array.isArray(journalPostings)) {
+      throw new Error('journal postings must be an array')
+    }
+    journalPostings.forEach((posting) => {
+      expectExactKeys(posting, POSTING_KEYS)
+    })
+  }
   if (record.payment !== null) {
     expectExactKeys(record.payment, PAYMENT_KEYS)
   }
@@ -294,9 +304,9 @@ function expectProviderDetail(body: unknown): ProviderOrderDetailDto {
   expectOptionalTimestamp(detail.sentAt)
   expectOptionalTimestamp(detail.paidAt)
   expectOptionalTimestamp(detail.cancelledAt)
-  detail.ledger.forEach((entry) => {
-    expectIsoTimestamp(entry.createdAt)
-  })
+  if (detail.journal) {
+    expectIsoTimestamp(detail.journal.postedAt)
+  }
   if (detail.payment) {
     expectIsoTimestamp(detail.payment.createdAt)
   }
@@ -522,7 +532,7 @@ function stockPairs(products: readonly ProductDto[]): StockPair[] {
     .sort((left, right) => left.id - right.id)
 }
 
-function expectPaidLedger(detail: ProviderOrderDetailDto): void {
+function expectPaidJournal(detail: ProviderOrderDetailDto): void {
   const split = requireSplit(detail)
   expect(detail.status).toBe('paid')
   expect(detail.cancelledAt).toBeNull()
@@ -531,18 +541,32 @@ function expectPaidLedger(detail: ProviderOrderDetailDto): void {
   if (!detail.payment) {
     throw new Error('paid order is missing a payment')
   }
-  expect(detail.ledger).toHaveLength(3)
-  expect(detail.ledger.map((entry) => entry.type)).toEqual([
-    'cogs',
-    'provider_margin',
-    'platform_fee',
-  ])
-  expect(detail.ledger.map((entry) => entry.amountCents)).toEqual([
-    split.cogsCents,
-    split.providerMarginCents,
-    split.platformFeeCents,
-  ])
-  expect(new Set(detail.ledger.map((entry) => entry.id)).size).toBe(3)
+  const journal = detail.journal
+  if (!journal) {
+    throw new Error('paid order is missing its journal')
+  }
+  expectIsoTimestamp(journal.postedAt)
+  expect(journal.memo.length).toBeGreaterThan(0)
+  // Revision 16: Cash debit, then credits for cogs, margin and fee; zero
+  // amounts are omitted. Debits equal credits.
+  expect(
+    journal.postings.map((p) => [
+      p.accountCode.replace(/^2100-\d+$/, '2100-provider'),
+      p.debitCents,
+      p.creditCents,
+    ]),
+  ).toEqual(
+    [
+      ['1000', split.totalCents, null],
+      ['4000', null, split.cogsCents],
+      ['2100-provider', null, split.providerMarginCents],
+      ['4100', null, split.platformFeeCents],
+    ].filter(([, debit, credit]) => debit !== 0 && credit !== 0),
+  )
+  const debits = journal.postings.reduce((s, p) => s + (p.debitCents ?? 0), 0)
+  const credits = journal.postings.reduce((s, p) => s + (p.creditCents ?? 0), 0)
+  expect(debits).toBe(credits)
+  expect(debits).toBe(detail.payment.amountCents)
   expect(detail.payment.amountCents).toBe(split.totalCents)
 }
 
@@ -682,7 +706,7 @@ async function placePayableOrder(
   expect(detail.paidAt).toBeNull()
   expect(detail.sentAt).not.toBeNull()
   expect(detail.payment).toBeNull()
-  expect(detail.ledger).toEqual([])
+  expect(detail.journal).toBeNull()
   expect(split.subtotalCents).toBe(12_000)
   expect(split.totalCents).toBe(12_000)
   expect(split.platformFeeCents).toBe(90)
@@ -742,7 +766,7 @@ function expectCancelled(
   expect(detail.status).toBe('cancelled')
   expect(detail.paidAt).toBeNull()
   expect(detail.payment).toBeNull()
-  expect(detail.ledger).toEqual([])
+  expect(detail.journal).toBeNull()
   expect(detail.createdAt).toBe(previous.createdAt)
   expect(detail.sentAt).toBe(previous.sentAt)
   expect(detail.patientId).toBe(previous.patientId)
@@ -785,7 +809,7 @@ describe('POST /api/orders/:id/cancel', () => {
     expect(current).toEqual(draft)
   })
 
-  it('cancels a pending payment order without a ledger row or a stock change', async () => {
+  it('cancels a pending payment order without a journal or a stock change', async () => {
     const before = stockPairs(await listProducts())
     const placed = await placePayableOrder()
     const response = await cancel(placed.detail.id)
@@ -805,13 +829,13 @@ describe('POST /api/orders/:id/cancel', () => {
     const current = await getProviderOrder(placed.detail.id)
     expect(current.status).toBe('cancelled')
     expect(current.cancelledAt).toBe(cancelledAt)
-    expect(current.ledger).toEqual([])
+    expect(current.journal).toBeNull()
     expect(current.payment).toBeNull()
     expect(current.split).toEqual(placed.detail.split)
     expect(stockPairs(await listProducts())).toEqual(before)
   })
 
-  it('refuses to cancel a paid order and leaves its three ledger entries', async () => {
+  it('refuses to cancel a paid order and leaves its journal', async () => {
     const placed = await placePayableOrder()
     const beforePay = stockPairs(await listProducts())
     const paidResponse = await pay(placed.detail)
@@ -822,7 +846,7 @@ describe('POST /api/orders/:id/cancel', () => {
     expect(patientPaid.payment).not.toBeNull()
 
     const paid = await getProviderOrder(placed.detail.id)
-    expectPaidLedger(paid)
+    expectPaidJournal(paid)
     const afterPay = stockPairs(await listProducts())
     const beforeStock = beforePay.find(
       (item) => item.id === placed.line.productId,
@@ -846,9 +870,9 @@ describe('POST /api/orders/:id/cancel', () => {
     expect(current.sentAt).toBe(paid.sentAt)
     expect(current.payment).toEqual(paid.payment)
     expect(current.split).toEqual(paid.split)
-    expect(current.ledger).toHaveLength(3)
-    expect(current.ledger).toEqual(paid.ledger)
-    expectPaidLedger(current)
+    expect(current.journal?.postings).toHaveLength(4)
+    expect(current.journal).toEqual(paid.journal)
+    expectPaidJournal(current)
     expect(stockPairs(await listProducts())).toEqual(afterPay)
 
     const patientCurrent = await context()
@@ -904,19 +928,19 @@ describe('POST /api/orders/:id/cancel', () => {
     expect(current.status).toBe('pending_payment')
     expect(current.cancelledAt).toBeNull()
     expect(current.payment).toBeNull()
-    expect(current.ledger).toEqual([])
+    expect(current.journal).toBeNull()
     expect(current.sentAt).toBe(placed.detail.sentAt)
   })
 })
 
 describe('POST /api/orders/:id/pay', () => {
-  it('refuses a cancelled order and leaves stock, payment, and the ledger unchanged', async () => {
+  it('refuses a cancelled order and leaves stock, payment, and the journal unchanged', async () => {
     const before = stockPairs(await listProducts())
     const placed = await placePayableOrder()
     const cancelled = await cancelOrder(placed.detail.id)
     expect(cancelled.status).toBe('cancelled')
     expect(cancelled.payment).toBeNull()
-    expect(cancelled.ledger).toEqual([])
+    expect(cancelled.journal).toBeNull()
 
     const refused = await pay(placed.detail)
     expectError(
@@ -929,7 +953,7 @@ describe('POST /api/orders/:id/pay', () => {
     expect(current.status).toBe('cancelled')
     expect(current.cancelledAt).toBe(cancelled.cancelledAt)
     expect(current.payment).toBeNull()
-    expect(current.ledger).toEqual([])
+    expect(current.journal).toBeNull()
     expect(current.paidAt).toBeNull()
     expect(stockPairs(await listProducts())).toEqual(before)
   })

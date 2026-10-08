@@ -2,7 +2,7 @@
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
 import { computed } from 'vue'
-import type { JournalPostingDto } from '../api'
+import type { JournalPostingDto } from '@supplement-orders/domain'
 import MoneyText from './MoneyText.vue'
 
 interface Props {

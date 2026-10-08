@@ -57,7 +57,7 @@ const backorder: ProviderOrderDetailDto = {
     },
   ],
   payment: null,
-  ledger: [],
+  journal: null,
   splitFromOrderId: 42,
   backorderOrderId: null,
   blockedByOrderId: null,

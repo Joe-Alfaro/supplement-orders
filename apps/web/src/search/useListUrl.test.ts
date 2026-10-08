@@ -55,6 +55,7 @@ const dashboard: DashboardDto = {
   gmvCents: 0,
   providerMarginCents: 0,
   platformFeeCents: 0,
+  owedToYouCents: 0,
 }
 
 const product: ProductDto = {

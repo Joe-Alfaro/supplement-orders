@@ -19,7 +19,7 @@ export interface ReadHooks {
 }
 
 export interface PayHooks {
-  /** Runs after the ledger rows are inserted, before the order is marked paid. */
+  /** Runs after the payment's journal is posted, before the order is marked paid. */
   afterLedgerInsert?: () => Promise<void>
 }
 
