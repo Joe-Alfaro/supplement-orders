@@ -34,7 +34,9 @@ export async function ensureDatabase(url: string) {
 
 /** The end-to-end database: E2E_DATABASE_URL, else `supplement_orders_e2e` beside DATABASE_URL. */
 export function e2eDatabaseUrl(env = process.env) {
-  return env.E2E_DATABASE_URL ?? siblingDatabaseUrl('supplement_orders_e2e', env)
+  return (
+    env.E2E_DATABASE_URL ?? siblingDatabaseUrl('supplement_orders_e2e', env)
+  )
 }
 
 const TEST_PREFIX = 'supplement_orders_test_'

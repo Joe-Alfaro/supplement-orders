@@ -1,7 +1,8 @@
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 
-export const LOCAL_DATABASE_URL = 'postgres://supplement_orders:supplement_orders@localhost:54329/supplement_orders'
+export const LOCAL_DATABASE_URL =
+  'postgres://supplement_orders:supplement_orders@localhost:54329/supplement_orders'
 
 /** Where `npm run build` puts the web app, relative to this file. */
 export const DEFAULT_WEB_DIST = fileURLToPath(

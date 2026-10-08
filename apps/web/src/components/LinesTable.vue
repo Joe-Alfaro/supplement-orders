@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import type { OrderLineDto, ProviderOrderLineDto } from '@supplement-orders/domain'
+import type {
+  OrderLineDto,
+  ProviderOrderLineDto,
+} from '@supplement-orders/domain'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
 import { formatBps } from '../money'

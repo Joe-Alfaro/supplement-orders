@@ -7,7 +7,8 @@ import type { Db } from '../db/client'
 import { ConsoleNotifier, FakePaymentGateway } from '../seams'
 import { createApp } from '../server'
 
-const INDEX_HTML = '<!doctype html><title>Supplement Orders</title><div id="app"></div>'
+const INDEX_HTML =
+  '<!doctype html><title>Supplement Orders</title><div id="app"></div>'
 const ASSET_JS = 'console.log("app")'
 
 let tmpRoot: string

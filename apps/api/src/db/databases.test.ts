@@ -72,7 +72,10 @@ describe('testDatabaseUrl', () => {
 
   it('puts the derived name beside DATABASE_URL', () => {
     const url = testDatabaseUrl(
-      { DATABASE_URL: 'postgres://u:p@h:1/supplement_orders', AO_SESSION_ID: 'abc' },
+      {
+        DATABASE_URL: 'postgres://u:p@h:1/supplement_orders',
+        AO_SESSION_ID: 'abc',
+      },
       '/repo',
     )
 

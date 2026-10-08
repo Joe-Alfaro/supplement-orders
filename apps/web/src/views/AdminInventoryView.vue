@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { STOCK_QUANTITY_MAX, type AdminProductDto } from '@supplement-orders/domain'
+import {
+  STOCK_QUANTITY_MAX,
+  type AdminProductDto,
+} from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable, { type DataTablePageEvent } from 'primevue/datatable'

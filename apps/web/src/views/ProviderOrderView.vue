@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import type { OrderStatus, ProviderOrderDetailDto } from '@supplement-orders/domain'
+import type {
+  OrderStatus,
+  ProviderOrderDetailDto,
+} from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import ConfirmDialog from 'primevue/confirmdialog'
 import { useConfirm } from 'primevue/useconfirm'

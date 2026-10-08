@@ -88,8 +88,8 @@ Run from the repo root.
 | `npm run format`                     | `prettier --write`                                                                                                                                           |
 | `npm run typecheck`                  | `tsc` for the domain and API packages, `vue-tsc` for the web app                                                                                             |
 | `npm run test:e2e`                   | Playwright end-to-end suite (Chromium, headless). Starts its own API and web servers                                                                         |
-| `npm run e2e:db`                     | Creates, migrates and resets the `supplement_orders_e2e` database to the small named seed                                                                                |
-| `npm run e2e:api`                    | API on port 3100 against `supplement_orders_e2e`                                                                                                                         |
+| `npm run e2e:db`                     | Creates, migrates and resets the `supplement_orders_e2e` database to the small named seed                                                                    |
+| `npm run e2e:api`                    | API on port 3100 against `supplement_orders_e2e`                                                                                                             |
 | `npm run e2e:web`                    | Vite on port 5174, proxying `/api` to port 3100                                                                                                              |
 | `npm run db:up` / `db:down`          | Start or stop the Docker Postgres                                                                                                                            |
 | `npm run db:migrate`                 | Apply Drizzle migrations to the dev database                                                                                                                 |

@@ -1,4 +1,7 @@
-import { MAX_LINE_QUANTITY, MAX_UNIT_PRICE_CENTS } from '@supplement-orders/domain'
+import {
+  MAX_LINE_QUANTITY,
+  MAX_UNIT_PRICE_CENTS,
+} from '@supplement-orders/domain'
 import {
   computePlatformFee,
   formatBps,

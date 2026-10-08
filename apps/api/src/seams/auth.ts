@@ -1,4 +1,8 @@
-import { USER_ID_HEADER, idParamSchema, type Role } from '@supplement-orders/domain'
+import {
+  USER_ID_HEADER,
+  idParamSchema,
+  type Role,
+} from '@supplement-orders/domain'
 import { eq } from 'drizzle-orm'
 import type { Request } from 'express'
 import type { Db } from '../db/client'

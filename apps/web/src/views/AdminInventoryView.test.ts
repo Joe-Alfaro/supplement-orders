@@ -1,4 +1,7 @@
-import type { AdminProductDto, AdminProductPageDto } from '@supplement-orders/domain'
+import type {
+  AdminProductDto,
+  AdminProductPageDto,
+} from '@supplement-orders/domain'
 import { fireEvent, screen, waitFor, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'

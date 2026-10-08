@@ -1,4 +1,7 @@
-import { expectedPayableLinesOf, minUnitPriceCents } from '@supplement-orders/domain'
+import {
+  expectedPayableLinesOf,
+  minUnitPriceCents,
+} from '@supplement-orders/domain'
 import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {

@@ -10,7 +10,10 @@ import {
   providerOrderDetailDtoSchema,
   providerOrderSummaryDtoSchema,
 } from '@supplement-orders/domain'
-import type { PatientOrderDetailDto, PayOrderRequest } from '@supplement-orders/domain'
+import type {
+  PatientOrderDetailDto,
+  PayOrderRequest,
+} from '@supplement-orders/domain'
 import { createTestContext } from '../testing/harness'
 import type { TestContext } from '../testing/harness'
 

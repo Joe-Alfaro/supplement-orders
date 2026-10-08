@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import type { DashboardDto, DashboardRangePreset } from '@supplement-orders/domain'
+import type {
+  DashboardDto,
+  DashboardRangePreset,
+} from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable, { type DataTablePageEvent } from 'primevue/datatable'

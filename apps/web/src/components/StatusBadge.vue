@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { ORDER_STATUS_LABELS, type OrderStatus } from '@supplement-orders/domain'
+import {
+  ORDER_STATUS_LABELS,
+  type OrderStatus,
+} from '@supplement-orders/domain'
 import Tag from 'primevue/tag'
 
 interface Props {

@@ -336,7 +336,9 @@ export async function seedDatabase(
  */
 export async function seedIfEmpty(db: Db) {
   return db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('supplement-orders:seed'))`)
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext('supplement-orders:seed'))`,
+    )
     const existing = await tx.select({ id: users.id }).from(users).limit(1)
     if (existing.length > 0) return false
     await seedDatabase(tx, { bulk: true })

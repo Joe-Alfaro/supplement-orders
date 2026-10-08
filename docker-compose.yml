@@ -12,7 +12,8 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U supplement_orders -d supplement_orders']
+      test:
+        ['CMD-SHELL', 'pg_isready -U supplement_orders -d supplement_orders']
       interval: 2s
       timeout: 5s
       retries: 30

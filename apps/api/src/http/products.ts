@@ -1,4 +1,7 @@
-import { listProductsQuerySchema, type ProductPageDto } from '@supplement-orders/domain'
+import {
+  listProductsQuerySchema,
+  type ProductPageDto,
+} from '@supplement-orders/domain'
 import { asc, count } from 'drizzle-orm'
 import { Router } from 'express'
 import { products } from '../db/schema'

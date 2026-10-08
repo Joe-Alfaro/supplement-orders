@@ -1,4 +1,8 @@
-import type { DashboardDto, ProductDto, ProductPageDto } from '@supplement-orders/domain'
+import type {
+  DashboardDto,
+  ProductDto,
+  ProductPageDto,
+} from '@supplement-orders/domain'
 import { screen, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
