@@ -150,7 +150,7 @@ describe('admin persona', () => {
     expect(localStorage.getItem('supplementOrders.userId')).toBe('3')
   })
 
-  it('shows only the Inventory tab, her name and Sign out', async () => {
+  it('shows only the Inventory and Accounts tabs, her name and Sign out', async () => {
     useCurrentUser().signIn(3)
     await startApp('/')
 
@@ -159,7 +159,7 @@ describe('admin persona', () => {
       within(nav)
         .getAllByRole('link')
         .map((link) => link.textContent),
-    ).toEqual(['Inventory'])
+    ).toEqual(['Inventory', 'Accounts'])
     expect(screen.getByText(/Signed in as Ada Admin/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
   })

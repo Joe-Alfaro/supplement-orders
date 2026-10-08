@@ -3,6 +3,7 @@ import { screen, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
+import type { JournalDto, ProviderOrderJournalDto } from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
 import { clearNoticeUnlessOn, notice } from '../user'
 import ProviderOrderView from './ProviderOrderView.vue'
@@ -18,7 +19,40 @@ vi.mock('../api', async (importOriginal) => {
   }
 })
 
-const paid: ProviderOrderDetailDto = {
+const paidJournal: JournalDto = {
+  id: 9,
+  postedAt: '2026-10-05T12:10:00.000Z',
+  memo: 'Payment for order #42',
+  postings: [
+    {
+      accountCode: '1000',
+      accountName: 'Cash',
+      debitCents: 12000,
+      creditCents: null,
+    },
+    {
+      accountCode: '4000',
+      accountName: 'Product sales at wholesale cost',
+      debitCents: null,
+      creditCents: 7000,
+    },
+    {
+      accountCode: '2100-1',
+      accountName: 'Payable to Dr. Maya Rivera',
+      debitCents: null,
+      creditCents: 4910,
+    },
+    {
+      accountCode: '4100',
+      accountName: 'Platform fee revenue',
+      debitCents: null,
+      creditCents: 90,
+    },
+  ],
+}
+
+const paid: ProviderOrderJournalDto = {
+  journal: paidJournal,
   partialPaymentQuote: null,
   paymentInProgress: null,
   backorderStatus: null,
@@ -70,49 +104,59 @@ const paid: ProviderOrderDetailDto = {
     reference: 'fake_ch_1',
     createdAt: '2026-10-05T12:10:00.000Z',
   },
-  ledger: [
-    {
-      id: 1,
-      type: 'cogs',
-      amountCents: 7000,
-      createdAt: '2026-10-05T12:10:00.000Z',
-    },
-    {
-      id: 2,
-      type: 'provider_margin',
-      amountCents: 4910,
-      createdAt: '2026-10-05T12:10:00.000Z',
-    },
-    {
-      id: 3,
-      type: 'platform_fee',
-      amountCents: 90,
-      createdAt: '2026-10-05T12:10:00.000Z',
-    },
-  ],
+  ledger: [],
 }
 
 describe('ProviderOrderView', () => {
-  it('labels the fee "Processing fee" in the split and ledger, and checks the total', async () => {
+  it('labels the fee "Processing fee" in the split', async () => {
     vi.mocked(api.getOrder).mockResolvedValue(paid)
     await renderWithRouter(ProviderOrderView, {
       path: '/orders/42',
       props: { orderId: '42' },
     })
-    await screen.findByText('Total of entries')
+    await screen.findByRole('table', { name: 'Journal' })
     expect(
       screen.getByRole('table', { name: 'Order lines' }),
     ).toBeInTheDocument()
-    expect(screen.getByRole('table', { name: 'Ledger' })).toBeInTheDocument()
-
-    expect(
-      screen.getByRole('cell', { name: 'Processing fee' }),
-    ).toBeInTheDocument()
-    expect(screen.getByText(/Equals amount paid/)).toBeInTheDocument()
     expect(
       screen.getByRole('rowheader', { name: /^Processing fee \(0\.75%\)/ }),
     ).toBeInTheDocument()
-    expect(document.body).not.toHaveTextContent(/Platform fee/i)
+    expect(document.body).not.toHaveTextContent(/Platform fee(?! revenue)/i)
+  })
+
+  it('shows the journal with a balanced totals row instead of a ledger', async () => {
+    vi.mocked(api.getOrder).mockResolvedValue(paid)
+    await renderWithRouter(ProviderOrderView, {
+      path: '/orders/42',
+      props: { orderId: '42' },
+    })
+    const table = await screen.findByRole('table', { name: 'Journal' })
+    expect(screen.getByRole('heading', { name: 'Journal' })).toBeVisible()
+    expect(screen.queryByRole('table', { name: 'Ledger' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Ledger' })).toBeNull()
+    expect(within(table).getByRole('row', { name: /Cash/ })).toHaveTextContent(
+      '$120.00',
+    )
+    const totals = within(table).getByRole('row', { name: /Totals/ })
+    expect(within(totals).getAllByText('$120.00')).toHaveLength(2)
+    expect(within(totals).getByText(/Debits = Credits/)).toBeVisible()
+  })
+
+  it('has no journal table before payment', async () => {
+    const unpaid: ProviderOrderJournalDto = {
+      ...paid,
+      status: 'pending_payment',
+      paidAt: null,
+      payment: null,
+      journal: null,
+    }
+    vi.mocked(api.getOrder).mockResolvedValue(unpaid)
+    await renderWithRouter(ProviderOrderView, {
+      path: '/orders/42',
+      props: { orderId: '42' },
+    })
+    await screen.findByRole('heading', { name: /Order #42/ })
+    expect(screen.queryByRole('table', { name: 'Journal' })).toBeNull()
   })
 })
 
@@ -270,7 +314,9 @@ describe('ProviderOrderView cancel', () => {
     await confirmAction('Cancel order')
 
     expect(await screen.findByText(paidMeanwhile)).toBeInTheDocument()
-    expect(await screen.findByText('Total of entries')).toBeInTheDocument()
+    expect(
+      await screen.findByRole('table', { name: 'Journal' }),
+    ).toBeInTheDocument()
     expect(api.getOrder).toHaveBeenCalledTimes(2)
     expect(screen.getByText(paidMeanwhile)).toBeInTheDocument()
     expect(

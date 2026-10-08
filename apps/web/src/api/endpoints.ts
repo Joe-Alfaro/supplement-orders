@@ -23,6 +23,7 @@ import type {
   ReplaceOrderLinesRequest,
   UserDto,
 } from '@supplement-orders/domain'
+import type { AdminAccountsDto, AdminJournalPageDto } from './accounting'
 import { request } from './client'
 
 // One typed function per endpoint in FRONTEND_DESIGN.md §7.
@@ -184,4 +185,21 @@ export function getDashboard(params: DashboardParams = {}) {
   })
   const query = search.toString()
   return request<DashboardDto>('GET', `/dashboard${query ? `?${query}` : ''}`)
+}
+
+/** GET /api/admin/accounts (admin only): the trial balance. */
+export function getAdminAccounts() {
+  return request<AdminAccountsDto>('GET', '/admin/accounts')
+}
+
+/** GET /api/admin/journals (admin only): newest first, with postings. */
+export function listAdminJournals(query: ListQuery = {}) {
+  const params = new URLSearchParams()
+  if (query.offset !== undefined) params.set('offset', String(query.offset))
+  if (query.limit !== undefined) params.set('limit', String(query.limit))
+  const search = params.toString()
+  return request<AdminJournalPageDto>(
+    'GET',
+    `/admin/journals${search ? `?${search}` : ''}`,
+  )
 }

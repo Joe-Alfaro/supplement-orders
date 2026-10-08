@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { DashboardRangePreset } from '@supplement-orders/domain'
+import type { DashboardDto, DashboardRangePreset } from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable, { type DataTablePageEvent } from 'primevue/datatable'
@@ -9,7 +9,12 @@ import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, type LocationQuery } from 'vue-router'
-import { ApiRequestError, getDashboard, searchProducts } from '../api'
+import {
+  ApiRequestError,
+  getDashboard,
+  searchProducts,
+  type OwedToYouDto,
+} from '../api'
 import { ErrorBanner, MoneyText, PageSummary, StatTile } from '../components'
 import {
   DEFAULT_RANGE,
@@ -65,7 +70,7 @@ function fallBackToDefault() {
   listUrl.replaceQuery(urlQuery(inventoryState()))
 }
 
-const sales = useResource(async () => {
+const sales = useResource(async (): Promise<DashboardDto & OwedToYouDto> => {
   try {
     return await getDashboard(toDashboardParams(range.value))
   } catch (error) {
@@ -266,6 +271,12 @@ function onInventoryPage(event: DataTablePageEvent) {
         <StatTile
           label="Processing fees"
           :cents="sales.data.value.platformFeeCents"
+        />
+      </div>
+      <div v-if="sales.data.value.owedToYouCents !== undefined" class="tiles">
+        <StatTile
+          label="Owed to you (all time)"
+          :cents="sales.data.value.owedToYouCents"
         />
       </div>
     </template>

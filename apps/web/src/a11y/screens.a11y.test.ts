@@ -16,8 +16,14 @@ import userEvent from '@testing-library/user-event'
 import type { UserEvent } from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
+import type {
+  AdminAccountsDto,
+  AdminJournalDto,
+  ProviderOrderJournalDto,
+} from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
 import { useCurrentUser } from '../user'
+import AdminAccountsView from '../views/AdminAccountsView.vue'
 import AdminInventoryView from '../views/AdminInventoryView.vue'
 import DashboardView from '../views/DashboardView.vue'
 import LoginView from '../views/LoginView.vue'
@@ -46,6 +52,8 @@ vi.mock('../api', async (importOriginal) => {
     payOrder: vi.fn(),
     getDashboard: vi.fn(),
     searchAdminProducts: vi.fn(),
+    getAdminAccounts: vi.fn(),
+    listAdminJournals: vi.fn(),
     setProductStock: vi.fn(),
   }
 })
@@ -117,7 +125,7 @@ const providerSummary: ProviderOrderSummaryDto = {
   split: paidSplit,
 }
 
-const paidProviderOrder: ProviderOrderDetailDto = {
+const paidProviderOrder: ProviderOrderJournalDto = {
   partialPaymentQuote: null,
   paymentInProgress: null,
   backorderStatus: null,
@@ -148,26 +156,38 @@ const paidProviderOrder: ProviderOrderDetailDto = {
     reference: 'fake_ch_123',
     createdAt: '2026-10-05T12:10:00.000Z',
   },
-  ledger: [
-    {
-      id: 1,
-      type: 'cogs',
-      amountCents: 1200,
-      createdAt: '2026-10-05T12:10:00.000Z',
-    },
-    {
-      id: 2,
-      type: 'provider_margin',
-      amountCents: 785,
-      createdAt: '2026-10-05T12:10:00.000Z',
-    },
-    {
-      id: 3,
-      type: 'platform_fee',
-      amountCents: 15,
-      createdAt: '2026-10-05T12:10:00.000Z',
-    },
-  ],
+  ledger: [],
+  journal: {
+    id: 9,
+    postedAt: '2026-10-05T12:10:00.000Z',
+    memo: 'Payment for order #7',
+    postings: [
+      {
+        accountCode: '1000',
+        accountName: 'Cash',
+        debitCents: 2000,
+        creditCents: null,
+      },
+      {
+        accountCode: '4000',
+        accountName: 'Product sales at wholesale cost',
+        debitCents: null,
+        creditCents: 1200,
+      },
+      {
+        accountCode: '2100-1',
+        accountName: 'Payable to Dr. Maya Rivera',
+        debitCents: null,
+        creditCents: 785,
+      },
+      {
+        accountCode: '4100',
+        accountName: 'Platform fee revenue',
+        debitCents: null,
+        creditCents: 15,
+      },
+    ],
+  },
 }
 
 const emptyDraft: ProviderOrderDetailDto = {
@@ -253,7 +273,8 @@ const myOrders: PatientOrderSummaryDto[] = [
   },
 ]
 
-const dashboard: DashboardDto = {
+const dashboard: DashboardDto & { owedToYouCents: number } = {
+  owedToYouCents: 785,
   gmvCents: 6951,
   providerMarginCents: 3499,
   platformFeeCents: 52,
@@ -299,6 +320,13 @@ beforeEach(async () => {
   vi.mocked(api.sendOrder).mockResolvedValue(paidProviderOrder)
   vi.mocked(api.payOrder).mockResolvedValue(paidPatientOrder)
   vi.mocked(api.getDashboard).mockResolvedValue(dashboard)
+  vi.mocked(api.getAdminAccounts).mockResolvedValue(trialBalance)
+  vi.mocked(api.listAdminJournals).mockResolvedValue({
+    items: [adminJournal],
+    total: 1,
+    offset: 0,
+    limit: 25,
+  })
   vi.mocked(api.searchAdminProducts).mockResolvedValue({
     items: [
       { id: 1, name: 'Vitamin D3', wholesaleCostCents: 850, stockQuantity: 40 },
@@ -371,7 +399,77 @@ async function expectAccessible(container: Element) {
   await scanUncontained(container, 'listbox')
 }
 
+const trialBalance: AdminAccountsDto = {
+  accounts: [
+    {
+      id: 1,
+      code: '1000',
+      name: 'Cash',
+      type: 'asset',
+      debitsCents: 2000,
+      creditsCents: 0,
+      balanceCents: 2000,
+    },
+    {
+      id: 2,
+      code: '4000',
+      name: 'Product sales at wholesale cost',
+      type: 'revenue',
+      debitsCents: 0,
+      creditsCents: 2000,
+      balanceCents: 2000,
+    },
+  ],
+  totals: { debitsCents: 2000, creditsCents: 2000 },
+}
+
+const adminJournal: AdminJournalDto = {
+  id: 9,
+  orderId: 7,
+  memo: 'Payment for order #7',
+  postedAt: '2026-10-05T12:10:00.000Z',
+  patientName: 'Jordan Lee',
+  providerName: 'Dr. Maya Rivera',
+  postings: [
+    {
+      accountCode: '1000',
+      accountName: 'Cash',
+      debitCents: 2000,
+      creditCents: null,
+    },
+    {
+      accountCode: '4000',
+      accountName: 'Product sales at wholesale cost',
+      debitCents: null,
+      creditCents: 2000,
+    },
+  ],
+}
+
 describe('accessibility', () => {
+  it('admin accounts: trial balance and journals', async () => {
+    const { container } = await renderWithRouter(AdminAccountsView, {
+      path: '/admin/accounts',
+    })
+    await screen.findByRole('table', { name: 'Trial balance' })
+    await screen.findByRole('table', { name: 'Journals' })
+    await expectAccessible(container)
+  })
+
+  it('admin accounts with an expanded journal', async () => {
+    const { container } = await renderWithRouter(AdminAccountsView, {
+      path: '/admin/accounts',
+    })
+    const user = userEvent.setup()
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Show postings for journal 9',
+      }),
+    )
+    await screen.findByRole('table', { name: 'Journal 9 postings' })
+    await expectAccessible(container)
+  })
+
   it('admin inventory', async () => {
     const { container } = await renderWithRouter(AdminInventoryView, {
       path: '/admin/inventory',
@@ -514,13 +612,13 @@ describe('accessibility', () => {
     await expectAccessible(container)
   })
 
-  it('provider order detail paid with ledger', async () => {
+  it('provider order detail paid with journal', async () => {
     const { container } = await renderWithRouter(ProviderOrderView, {
       path: '/orders/7',
       props: { orderId: '7' },
     })
     await screen.findByRole('heading', { name: /Order #7/ })
-    await screen.findByRole('heading', { name: 'Ledger' })
+    await screen.findByRole('heading', { name: 'Journal' })
     await screen.findByText('fake_ch_123')
     await expectAccessible(container)
   })

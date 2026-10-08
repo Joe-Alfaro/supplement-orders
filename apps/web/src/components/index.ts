@@ -1,6 +1,6 @@
 export { default as BackorderLinks } from './BackorderLinks.vue'
 export { default as ErrorBanner } from './ErrorBanner.vue'
-export { default as LedgerTable } from './LedgerTable.vue'
+export { default as JournalTable } from './JournalTable.vue'
 export { default as LinesTable } from './LinesTable.vue'
 export { default as MoneyText } from './MoneyText.vue'
 export { default as SplitSummary } from './SplitSummary.vue'

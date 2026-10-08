@@ -80,6 +80,11 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('./views/AdminInventoryView.vue'),
     meta: admin,
   },
+  {
+    path: '/admin/accounts',
+    component: () => import('./views/AdminAccountsView.vue'),
+    meta: admin,
+  },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 

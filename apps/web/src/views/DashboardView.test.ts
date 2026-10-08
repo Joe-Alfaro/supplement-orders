@@ -3,6 +3,7 @@ import { screen, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
+import type { OwedToYouDto } from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
 import DashboardView from './DashboardView.vue'
 
@@ -11,7 +12,8 @@ vi.mock('../api', async (importOriginal) => {
   return { ...actual, getDashboard: vi.fn(), searchProducts: vi.fn() }
 })
 
-const dashboard: DashboardDto = {
+const dashboard: DashboardDto & OwedToYouDto = {
+  owedToYouCents: 4910,
   gmvCents: 6951,
   providerMarginCents: 3499,
   platformFeeCents: 52,
@@ -624,5 +626,24 @@ describe('DashboardView date range', () => {
 
     await vi.waitFor(() => expect(screen.queryByText('$9.99')).toBeNull())
     expect(screen.getByText('$2.00')).toBeInTheDocument()
+  })
+})
+
+describe('DashboardView owed to you', () => {
+  it('shows the payable balance as an all-time tile', async () => {
+    vi.mocked(api.getDashboard).mockResolvedValue(dashboard)
+    vi.mocked(api.searchProducts).mockImplementation(serveProducts)
+    await renderWithRouter(DashboardView, { path: '/dashboard' })
+    const tile = await screen.findByRole('group', { name: /Owed to you/ })
+    expect(within(tile).getByText('$49.10')).toBeVisible()
+    expect(within(tile).getByText(/all time/i)).toBeVisible()
+  })
+
+  it('keeps showing the all-time balance whatever the date range', async () => {
+    vi.mocked(api.getDashboard).mockResolvedValue(dashboard)
+    vi.mocked(api.searchProducts).mockImplementation(serveProducts)
+    await renderWithRouter(DashboardView, { path: '/dashboard?range=last30' })
+    const tile = await screen.findByRole('group', { name: /Owed to you/ })
+    expect(within(tile).getByText('$49.10')).toBeVisible()
   })
 })

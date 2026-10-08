@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { OrderStatus, ProviderOrderDetailDto } from '@supplement-orders/domain'
+import type { OrderStatus } from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import ConfirmDialog from 'primevue/confirmdialog'
 import { useConfirm } from 'primevue/useconfirm'
@@ -7,6 +7,7 @@ import { computed, nextTick, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   ApiRequestError,
+  type ProviderOrderJournalDto,
   cancelOrder,
   deleteOrder,
   getOrder,
@@ -16,7 +17,7 @@ import {
 import {
   BackorderLinks,
   ErrorBanner,
-  LedgerTable,
+  JournalTable,
   LinesTable,
   SplitSummary,
   StatusBadge,
@@ -36,7 +37,7 @@ const {
   loading,
   error,
   load,
-} = useResource(async (): Promise<ProviderOrderDetailDto> => {
+} = useResource(async (): Promise<ProviderOrderJournalDto> => {
   const detail = await getOrder(Number(props.orderId))
   if (detail.view !== 'provider') {
     throw new ApiRequestError(403, 'FORBIDDEN', 'This is not your order')
@@ -57,10 +58,10 @@ const heading = useTemplateRef<HTMLHeadingElement>('heading')
 
 interface OrderAction {
   label: string
-  prompt: (order: ProviderOrderDetailDto) => string
+  prompt: (order: ProviderOrderJournalDto) => string
   keepLabel: string
   destructive: boolean
-  run: (order: ProviderOrderDetailDto) => Promise<void>
+  run: (order: ProviderOrderJournalDto) => Promise<void>
 }
 
 const PENDING_CANCEL: OrderAction = {
@@ -141,7 +142,7 @@ function confirmAction() {
   })
 }
 
-async function perform(chosen: OrderAction, current: ProviderOrderDetailDto) {
+async function perform(chosen: OrderAction, current: ProviderOrderJournalDto) {
   if (acting.value) return
   acting.value = true
   actionError.value = null
@@ -247,12 +248,9 @@ async function perform(chosen: OrderAction, current: ProviderOrderDetailDto) {
       This draft is incomplete, so there is no split yet.
     </p>
 
-    <template v-if="order.status === 'paid' && order.payment">
-      <h2>Ledger</h2>
-      <LedgerTable
-        :entries="order.ledger"
-        :amount-paid-cents="order.payment.amountCents"
-      />
+    <template v-if="order.status === 'paid' && order.journal">
+      <h2>Journal</h2>
+      <JournalTable :postings="order.journal.postings" />
     </template>
   </template>
 </template>
