@@ -1,12 +1,23 @@
 import {
+  computeSplit,
+  paymentJournalAccountOf,
+  splitFromPostings,
   USER_ID_HEADER,
   type DraftLine,
   type OrderLineInput,
+  type PaymentJournalAccount,
 } from '@supplement-orders/domain'
-import { eq, sql } from 'drizzle-orm'
+import { asc, eq, sql } from 'drizzle-orm'
 import { expect } from 'vitest'
 import type { Db } from '../db/client'
-import { ledgerEntries, orders, payments, products } from '../db/schema'
+import {
+  accounts,
+  journals,
+  orders,
+  payments,
+  postings,
+  products,
+} from '../db/schema'
 import type { InternalTestContext, TestContext } from './harness'
 
 export function as(userId: number) {
@@ -101,15 +112,101 @@ export async function moneyState(ctx: InternalTestContext, orderId: number) {
       .select()
       .from(payments)
       .where(eq(payments.orderId, orderId)),
-    ledger: await ctx.db
+    journals: await ctx.db
       .select()
-      .from(ledgerEntries)
-      .where(eq(ledgerEntries.orderId, orderId)),
+      .from(journals)
+      .where(eq(journals.orderId, orderId)),
+    /** Revision 16: the order's postings in posting order, with their account. */
+    postings: await ctx.db
+      .select({
+        id: postings.id,
+        journalId: postings.journalId,
+        paymentId: journals.paymentId,
+        accountCode: accounts.code,
+        accountProviderId: accounts.providerId,
+        amountCents: postings.amountCents,
+      })
+      .from(postings)
+      .innerJoin(journals, eq(journals.id, postings.journalId))
+      .innerJoin(accounts, eq(accounts.id, postings.accountId))
+      .where(eq(journals.orderId, orderId))
+      .orderBy(asc(postings.id)),
     stock: await ctx.db
       .select({ id: products.id, stockQuantity: products.stockQuantity })
       .from(products)
       .orderBy(products.id),
   }
+}
+
+/** The split computeSplit gives for complete lines of seeded products. */
+export function expectedSplit(ctx: TestContext, lines: CompleteLine[]) {
+  return computeSplit(
+    lines.map((line) => ({
+      quantity: line.quantity,
+      unitPriceCents: line.unitPriceCents,
+      unitCogsCents: ctx.seed.products.find((p) => p.id === line.productId)!
+        .cogsCents,
+    })),
+  )
+}
+
+interface PostingLike {
+  accountCode: string
+  accountProviderId: number | null
+  amountCents: number
+}
+
+/** Revision 16: which line of a patient payment a moneyState posting is. */
+export function postingRole(posting: PostingLike): PaymentJournalAccount {
+  const role = paymentJournalAccountOf(posting.accountCode)
+  if (!role) throw new Error(`Unexpected account ${posting.accountCode}`)
+  return role
+}
+
+/**
+ * Revision 16: the split a payment journal's postings record. Also asserts the
+ * postings balance, so callers check both at once.
+ */
+export function journalSplitOf(postingRows: PostingLike[]) {
+  expect(postingRows.reduce((sum, p) => sum + p.amountCents, 0)).toBe(0)
+  postingRows.forEach(postingRole)
+  return splitFromPostings(postingRows)
+}
+
+/**
+ * Test fixtures only: writes a payment's journal by direct SQL, the way a
+ * legacy or hand-built payment would have it: Cash debit, then credits for
+ * cogs, the order's provider payable and the fee, zero amounts omitted. Amounts
+ * are text so values past 2^53 stay exact.
+ */
+export async function insertPaymentJournal(
+  tx: Pick<Db, 'execute'>,
+  input: {
+    paymentId: number
+    orderId: number
+    cogsCents: number | string
+    marginCents: number | string
+    feeCents: number | string
+  },
+) {
+  const journal = await tx.execute<{ id: number }>(sql`
+    insert into journals (kind, payment_id, order_id, memo)
+    values ('patient_payment', ${input.paymentId}, ${input.orderId}, ${`Patient payment for order #${input.orderId}`})
+    returning id`)
+  const journalId = journal.rows[0]!.id
+  await tx.execute(sql`
+    insert into postings (journal_id, account_id, amount_cents)
+    select ${journalId}, a.id, x.amount
+    from (values
+      (1, '1000', (select amount_cents from payments where id = ${input.paymentId})),
+      (2, '4000', -(${String(input.cogsCents)}::bigint)),
+      (3, (select '2100-' || provider_id from orders where id = ${input.orderId}), -(${String(input.marginCents)}::bigint)),
+      (4, '4100', -(${String(input.feeCents)}::bigint))
+    ) as x(position, code, amount)
+    join accounts a on a.code = x.code
+    where x.amount <> 0
+    order by x.position`)
+  return journalId
 }
 
 /** Stock is read-only over HTTP, so tests set it directly. */

@@ -99,7 +99,7 @@ const PROVIDER_DETAIL_KEYS = [
   'partialPaymentQuote',
   'paymentInProgress',
   'backorderStatus',
-  'ledger',
+  'journal',
 ]
 
 const PROVIDER_LINE_KEYS = [
@@ -134,7 +134,9 @@ const PATIENT_LINE_KEYS = [
 
 const PAYMENT_KEYS = ['id', 'amountCents', 'reference', 'createdAt']
 
-const LEDGER_KEYS = ['id', 'type', 'amountCents', 'createdAt']
+const JOURNAL_KEYS = ['id', 'postedAt', 'memo', 'postings']
+
+const POSTING_KEYS = ['accountCode', 'accountName', 'debitCents', 'creditCents']
 
 interface ContextHolder {
   ctx?: TestContext
@@ -200,15 +202,22 @@ function expectProviderDetail(body: unknown): ProviderOrderDetailDto {
   } else {
     expectExactKeys(record.split, SPLIT_KEYS)
   }
-  if (!Array.isArray(record.lines) || !Array.isArray(record.ledger)) {
-    throw new Error('order lines and ledger must be arrays')
+  if (!Array.isArray(record.lines)) {
+    throw new Error('order lines must be an array')
   }
   record.lines.forEach((line) => {
     expectExactKeys(line, PROVIDER_LINE_KEYS)
   })
-  record.ledger.forEach((entry) => {
-    expectExactKeys(entry, LEDGER_KEYS)
-  })
+  if (record.journal !== null) {
+    expectExactKeys(record.journal, JOURNAL_KEYS)
+    const journalPostings = asRecord(record.journal).postings
+    if (!Array.isArray(journalPostings)) {
+      throw new Error('journal postings must be an array')
+    }
+    journalPostings.forEach((posting) => {
+      expectExactKeys(posting, POSTING_KEYS)
+    })
+  }
   if (record.payment !== null) {
     expectExactKeys(record.payment, PAYMENT_KEYS)
   }
@@ -479,7 +488,7 @@ describe('personas and users', () => {
     const detail = expectProviderDetail(current.body)
     expect(detail.status).toBe('pending_payment')
     expect(detail.payment).toBeNull()
-    expect(detail.ledger).toEqual([])
+    expect(detail.journal).toBeNull()
     const productsAfter = await context()
       .request.get('/api/products')
       .query({ limit: 100 })

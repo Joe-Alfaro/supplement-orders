@@ -22,7 +22,7 @@ import type { TestContext } from '../testing/harness'
 // Pay returns the patient detail (200). The patient pays the subtotal, so
 // totalCents equals that subtotal and the patient DTO has no fee or margin.
 // A repeated pay is that same payment, not 409 ORDER_NOT_PAYABLE.
-// Ledger rows stay in domain order and are immutable, so their ids do not change.
+// Journal postings stay in posting order and are immutable, so a replay returns the same journal.
 
 const ISO_TIMESTAMP =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
@@ -51,7 +51,7 @@ const PROVIDER_DETAIL_KEYS = [
   'partialPaymentQuote',
   'paymentInProgress',
   'backorderStatus',
-  'ledger',
+  'journal',
 ]
 
 const PATIENT_DETAIL_KEYS = [
@@ -119,7 +119,9 @@ const PATIENT_LINE_KEYS = [
 
 const PAYMENT_KEYS = ['id', 'amountCents', 'reference', 'createdAt']
 
-const LEDGER_KEYS = ['id', 'type', 'amountCents', 'createdAt']
+const JOURNAL_KEYS = ['id', 'postedAt', 'memo', 'postings']
+
+const POSTING_KEYS = ['accountCode', 'accountName', 'debitCents', 'creditCents']
 
 const PRODUCT_KEYS = ['id', 'sku', 'name', 'cogsCents', 'stockQuantity']
 
@@ -197,24 +199,31 @@ function expectProviderDetail(body: unknown): ProviderOrderDetailDto {
   } else {
     expectExactKeys(record.split, SPLIT_KEYS)
   }
-  if (!Array.isArray(record.lines) || !Array.isArray(record.ledger)) {
-    throw new Error('order lines and ledger must be arrays')
+  if (!Array.isArray(record.lines)) {
+    throw new Error('order lines must be an array')
   }
   record.lines.forEach((line) => {
     expectExactKeys(line, PROVIDER_LINE_KEYS)
   })
-  record.ledger.forEach((entry) => {
-    expectExactKeys(entry, LEDGER_KEYS)
-  })
+  if (record.journal !== null) {
+    expectExactKeys(record.journal, JOURNAL_KEYS)
+    const journalPostings = asRecord(record.journal).postings
+    if (!Array.isArray(journalPostings)) {
+      throw new Error('journal postings must be an array')
+    }
+    journalPostings.forEach((posting) => {
+      expectExactKeys(posting, POSTING_KEYS)
+    })
+  }
   if (record.payment !== null) {
     expectExactKeys(record.payment, PAYMENT_KEYS)
   }
   const detail = providerOrderDetailDtoSchema.parse(body)
   expect(detail.view).toBe('provider')
   expectIsoTimestamp(detail.createdAt)
-  detail.ledger.forEach((entry) => {
-    expectIsoTimestamp(entry.createdAt)
-  })
+  if (detail.journal) {
+    expectIsoTimestamp(detail.journal.postedAt)
+  }
   if (detail.payment) {
     expectIsoTimestamp(detail.payment.createdAt)
   }
@@ -404,7 +413,7 @@ function pay(
     .send(body)
 }
 
-function expectPaidLedger(detail: ProviderOrderDetailDto): void {
+function expectPaidJournal(detail: ProviderOrderDetailDto): void {
   const split = requireSplit(detail)
   expect(detail.status).toBe('paid')
   expect(detail.paidAt).not.toBeNull()
@@ -424,22 +433,32 @@ function expectPaidLedger(detail: ProviderOrderDetailDto): void {
   ).toBe(split.totalCents)
   expect(detail.payment.reference.length).toBeGreaterThan(0)
   expect(detail.payment.amountCents).toBe(split.totalCents)
-  expect(detail.ledger.map((entry) => entry.type)).toEqual([
-    'cogs',
-    'provider_margin',
-    'platform_fee',
-  ])
-  expect(detail.ledger.map((entry) => entry.amountCents)).toEqual([
-    split.cogsCents,
-    split.providerMarginCents,
-    split.platformFeeCents,
-  ])
-  const ledgerSum = detail.ledger.reduce(
-    (sum, entry) => sum + entry.amountCents,
-    0,
+  const journal = detail.journal
+  if (!journal) {
+    throw new Error('paid order is missing its journal')
+  }
+  expectIsoTimestamp(journal.postedAt)
+  expect(journal.memo.length).toBeGreaterThan(0)
+  // Revision 16: Cash debit, then credits for cogs, margin and fee; zero
+  // amounts are omitted. Debits equal credits.
+  expect(
+    journal.postings.map((p) => [
+      p.accountCode.replace(/^2100-\d+$/, '2100-provider'),
+      p.debitCents,
+      p.creditCents,
+    ]),
+  ).toEqual(
+    [
+      ['1000', split.totalCents, null],
+      ['4000', null, split.cogsCents],
+      ['2100-provider', null, split.providerMarginCents],
+      ['4100', null, split.platformFeeCents],
+    ].filter(([, debit, credit]) => debit !== 0 && credit !== 0),
   )
-  expect(ledgerSum).toBe(detail.payment.amountCents)
-  expect(new Set(detail.ledger.map((entry) => entry.id)).size).toBe(3)
+  const debits = journal.postings.reduce((s, p) => s + (p.debitCents ?? 0), 0)
+  const credits = journal.postings.reduce((s, p) => s + (p.creditCents ?? 0), 0)
+  expect(debits).toBe(credits)
+  expect(debits).toBe(detail.payment.amountCents)
 }
 
 beforeAll(async () => {
@@ -457,7 +476,7 @@ afterAll(async () => {
 })
 
 describe('POST /api/orders/:id/pay', () => {
-  it('records three ledger entries and decrements stock by quantity', async () => {
+  it('posts one balanced journal and decrements stock by quantity', async () => {
     const placed = await placePayableOrder()
     const before = stockPairs(await listProducts())
     const response = await pay(placed.detail)
@@ -472,7 +491,7 @@ describe('POST /api/orders/:id/pay', () => {
     expect(patientOrder.payment?.amountCents).toBe(patientOrder.totalCents)
 
     const providerOrder = await getProviderOrder(placed.detail.id)
-    expectPaidLedger(providerOrder)
+    expectPaidJournal(providerOrder)
     expect(providerOrder.payment?.reference).toBe(
       patientOrder.payment?.reference,
     )
@@ -501,7 +520,7 @@ describe('POST /api/orders/:id/pay', () => {
     const providerAfterFailure = await getProviderOrder(placed.detail.id)
     expect(providerAfterFailure.status).toBe('pending_payment')
     expect(providerAfterFailure.payment).toBeNull()
-    expect(providerAfterFailure.ledger).toEqual([])
+    expect(providerAfterFailure.journal).toBeNull()
     expect(providerAfterFailure.paidAt).toBeNull()
     expect(providerAfterFailure.split).toEqual(placed.detail.split)
     const patientAfterFailure = await getPatientOrder(placed.detail.id)
@@ -512,7 +531,7 @@ describe('POST /api/orders/:id/pay', () => {
     const paid = await pay(placed.detail)
     expect(paid.status).toBe(200)
     const providerPaid = await getProviderOrder(placed.detail.id)
-    expectPaidLedger(providerPaid)
+    expectPaidJournal(providerPaid)
     const after = stockPairs(await listProducts())
     const beforeStock = before.find((item) => item.id === placed.line.productId)
     const afterStock = after.find((item) => item.id === placed.line.productId)
@@ -528,7 +547,7 @@ describe('POST /api/orders/:id/pay', () => {
     expect(first.status).toBe(200)
     const firstPatient = expectPatientDetail(first.body)
     const firstProvider = await getProviderOrder(placed.detail.id)
-    expectPaidLedger(firstProvider)
+    expectPaidJournal(firstProvider)
     const afterFirst = stockPairs(await listProducts())
 
     const second = await pay(placed.detail)
@@ -541,10 +560,8 @@ describe('POST /api/orders/:id/pay', () => {
     )
     expect(secondPatient.payment?.id).toBe(firstPatient.payment?.id)
     expect(secondProvider.payment?.id).toBe(firstProvider.payment?.id)
-    expect(secondProvider.ledger.map((entry) => entry.id).sort()).toEqual(
-      firstProvider.ledger.map((entry) => entry.id).sort(),
-    )
-    expectPaidLedger(secondProvider)
+    expect(secondProvider.journal).toEqual(firstProvider.journal)
+    expectPaidJournal(secondProvider)
     expect(stockPairs(await listProducts())).toEqual(afterFirst)
     const beforeStock = before.find((item) => item.id === placed.line.productId)
     const afterStock = afterFirst.find(

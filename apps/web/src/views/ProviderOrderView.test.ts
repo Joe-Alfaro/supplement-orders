@@ -70,26 +70,37 @@ const paid: ProviderOrderDetailDto = {
     reference: 'fake_ch_1',
     createdAt: '2026-10-05T12:10:00.000Z',
   },
-  ledger: [
-    {
-      id: 1,
-      type: 'cogs',
-      amountCents: 7000,
-      createdAt: '2026-10-05T12:10:00.000Z',
-    },
-    {
-      id: 2,
-      type: 'provider_margin',
-      amountCents: 4910,
-      createdAt: '2026-10-05T12:10:00.000Z',
-    },
-    {
-      id: 3,
-      type: 'platform_fee',
-      amountCents: 90,
-      createdAt: '2026-10-05T12:10:00.000Z',
-    },
-  ],
+  journal: {
+    id: 1,
+    postedAt: '2026-10-05T12:10:00.000Z',
+    memo: 'Patient payment for order #42',
+    postings: [
+      {
+        accountCode: '1000',
+        accountName: 'Cash',
+        debitCents: 12000,
+        creditCents: null,
+      },
+      {
+        accountCode: '4000',
+        accountName: 'Product sales at wholesale cost',
+        debitCents: null,
+        creditCents: 7000,
+      },
+      {
+        accountCode: '2100-1',
+        accountName: 'Payable to Dr. Maya Rivera',
+        debitCents: null,
+        creditCents: 4910,
+      },
+      {
+        accountCode: '4100',
+        accountName: 'Platform fee revenue',
+        debitCents: null,
+        creditCents: 90,
+      },
+    ],
+  },
 }
 
 describe('ProviderOrderView', () => {
@@ -121,7 +132,7 @@ const pending: ProviderOrderDetailDto = {
   status: 'pending_payment',
   paidAt: null,
   payment: null,
-  ledger: [],
+  journal: null,
 }
 
 const draft: ProviderOrderDetailDto = {
@@ -411,7 +422,7 @@ describe('ProviderOrderView reopen', () => {
       status: 'pending_payment',
       paidAt: null,
       payment: null,
-      ledger: [],
+      journal: null,
     }
     vi.mocked(api.getOrder).mockResolvedValue(pending)
     vi.mocked(api.cancelOrder).mockRejectedValue(

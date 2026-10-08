@@ -1,11 +1,9 @@
 import {
-  assertLedgerBalances,
   computeSplit,
   partialPaymentQuoteDto,
   planPartialPayment,
   samePayableLines,
   SplitValidationError,
-  toLedgerEntries,
   ORDER_STATUS_LABELS,
   type DraftLine,
   type ExpectedPayableLine,
@@ -30,7 +28,6 @@ import {
 } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import {
-  ledgerEntries,
   orderItems,
   orders,
   patients,
@@ -39,6 +36,7 @@ import {
   products,
 } from '../db/schema'
 import { ApiError, forbidden, notFound } from '../http/errors'
+import { postPaymentJournal } from '../ledger/journals'
 import { IDEMPOTENCY_KEY_REUSED, type CurrentUser } from '../seams'
 import type { AppContext } from '../server'
 
@@ -388,7 +386,7 @@ async function lockDescendants(tx: Tx, orderId: number): Promise<Order[]> {
 
 /**
  * Permanently deletes a draft and its lines. Safe because a draft was never sent
- * and so has no payment or ledger rows. Takes the order row lock, so a concurrent
+ * and so has no payment or journal. Takes the order row lock, so a concurrent
  * send serializes with it: if send wins, the delete gets 409 ORDER_NOT_DRAFT; if
  * the delete wins, the send finds no order (404).
  *
@@ -465,7 +463,7 @@ export async function reopenOrder(db: Db, user: ProviderUser, orderId: number) {
  * Provider cancels a pending order (revision 8: drafts are deleted, not
  * cancelled). Takes the same row lock as pay, so
  * a concurrent cancel and pay serialize: whichever commits first wins and the
- * other gets a 409. No ledger rows, no stock change (stock only moves on pay).
+ * other gets a 409. No journal, no stock change (stock only moves on pay).
  * The patient is notified only if the order had been sent to them.
  *
  * Revision 15.3: every downstream back-order awaiting payment or stock is
@@ -1167,7 +1165,7 @@ async function verifySucceeded({ gateway }: AppContext, attempt: Attempt) {
 /**
  * Step 5 (one transaction): lock, re-check the order still matches the
  * succeeded execution, record the payment against it (its held stock becomes
- * the sale), write and verify the three ledger rows, mark paid. If this rolls
+ * the sale), post and verify its journal (revision 16), mark paid. If this rolls
  * back, the execution stays succeeded without a payment and blocks the order
  * until a retried pay finalizes it.
  */
@@ -1219,16 +1217,13 @@ async function recordPayment({ db, payHooks }: AppContext, attempt: Attempt) {
     if (!payment)
       throw new Error(`Payment insert for order ${order.id} returned no row`)
 
-    const entries = toLedgerEntries(split)
-    assertLedgerBalances(entries, payment.amountCents)
-    await tx.insert(ledgerEntries).values(
-      entries.map((entry) => ({
-        orderId: order.id,
-        paymentId: payment.id,
-        type: entry.type,
-        amountCents: entry.amountCents,
-      })),
-    )
+    await postPaymentJournal(tx, {
+      paymentId: payment.id,
+      orderId: order.id,
+      providerId: order.providerId,
+      amountCents: payment.amountCents,
+      split,
+    })
     await payHooks.afterLedgerInsert?.()
 
     const now = new Date()
@@ -1244,7 +1239,7 @@ async function recordPayment({ db, payHooks }: AppContext, attempt: Attempt) {
  * validate the quote and pick or start an execution with its stock held;
  * charge it (or, for an execution already succeeded, verify it by lookup,
  * never by charging again); apply the outcome under a fence; then write
- * payment, ledger and status atomically.
+ * payment, journal and status atomically.
  */
 export async function payOrder(
   ctx: AppContext,

@@ -96,7 +96,7 @@ describe('order detail reads are one consistent snapshot', () => {
     expect(fresh.status).toBe(404)
   })
 
-  it('gives the provider a header, payment and ledger from the same moment while a pay commits', async () => {
+  it('gives the provider a header, payment and journal from the same moment while a pay commits', async () => {
     const orderId = await createSentOrder(ctx)
     const pause = pauseAfterHeader()
     const reading = ctx.request
@@ -113,12 +113,12 @@ describe('order detail reads are one consistent snapshot', () => {
     // The header was read before the payment, so the rest must agree with it.
     expect(res.body).toMatchObject({ status: 'pending_payment', paidAt: null })
     expect(res.body.payment).toBeNull()
-    expect(res.body.ledger).toEqual([])
+    expect(res.body.journal).toBeNull()
 
     const fresh = await ctx.request
       .get(`/api/orders/${orderId}`)
       .set(provider())
     expect(fresh.body.status).toBe('paid')
-    expect(fresh.body.ledger).toHaveLength(3)
+    expect(fresh.body.journal.postings).toHaveLength(4)
   })
 })

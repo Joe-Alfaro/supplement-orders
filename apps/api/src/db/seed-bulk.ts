@@ -1,12 +1,5 @@
-// Deterministic demo data so search and pagination have something to page through.
+// Deterministic demo patients so search and pagination have something to page through.
 // A fixed LCG (not Math.random) makes every `db:seed` produce identical rows.
-
-export interface BulkProduct {
-  sku: string
-  name: string
-  cogsCents: number
-  stockQuantity: number
-}
 
 export interface BulkPatient {
   name: string
@@ -14,39 +7,6 @@ export interface BulkPatient {
   dateOfBirth: string
   address: string
 }
-
-const NUTRIENTS = [
-  { name: 'Vitamin C', code: 'VITC', baseCents: 650 },
-  { name: 'Vitamin B12', code: 'B12', baseCents: 720 },
-  { name: 'Vitamin K2', code: 'VITK2', baseCents: 1180 },
-  { name: 'Vitamin E', code: 'VITE', baseCents: 890 },
-  { name: 'Zinc Picolinate', code: 'ZINC', baseCents: 540 },
-  { name: 'Iron Bisglycinate', code: 'IRON', baseCents: 610 },
-  { name: 'Selenium', code: 'SEL', baseCents: 480 },
-  { name: 'Calcium Citrate', code: 'CALC', baseCents: 760 },
-  { name: 'Folate', code: 'FOL', baseCents: 830 },
-  { name: 'CoQ10', code: 'COQ10', baseCents: 2150 },
-  { name: 'Curcumin', code: 'CURC', baseCents: 1720 },
-  { name: 'Ashwagandha', code: 'ASHW', baseCents: 1390 },
-  { name: 'Berberine', code: 'BERB', baseCents: 1960 },
-  { name: 'NAC', code: 'NAC', baseCents: 1240 },
-  { name: 'Quercetin', code: 'QUER', baseCents: 1450 },
-  { name: 'L-Theanine', code: 'LTHE', baseCents: 1060 },
-  { name: 'Melatonin', code: 'MELA', baseCents: 420 },
-  { name: 'Collagen Peptides', code: 'COLL', baseCents: 2480 },
-  { name: 'Alpha Lipoic Acid', code: 'ALA', baseCents: 1330 },
-  { name: 'Glucosamine', code: 'GLUC', baseCents: 1150 },
-]
-
-const FORMS = [
-  { name: 'Capsules', code: 'CAP', factor: 100 },
-  { name: 'Tablets', code: 'TAB', factor: 90 },
-  { name: 'Softgels', code: 'SG', factor: 115 },
-  { name: 'Gummies', code: 'GUM', factor: 125 },
-  { name: 'Powder', code: 'PWD', factor: 140 },
-]
-
-const COUNTS = [30, 60, 90, 120]
 
 const FIRST_NAMES = [
   'Avery',
@@ -136,31 +96,6 @@ function pick<T>(items: readonly T[], index: number): T {
   const item = items[index % items.length]
   if (item === undefined) throw new Error('empty seed list')
   return item
-}
-
-/** Every nutrient x form x count combination, cycled until `total` products. */
-export function generateProducts(total: number): BulkProduct[] {
-  const next = lcg(20261005)
-  return Array.from({ length: total }, (_, i) => {
-    const nutrient = pick(NUTRIENTS, i)
-    const form = pick(FORMS, Math.floor(i / NUTRIENTS.length))
-    const unitCount = pick(
-      COUNTS,
-      Math.floor(i / (NUTRIENTS.length * FORMS.length)),
-    )
-    const sizeFactor = unitCount / 60
-    const jitter = 90 + next(21)
-    const cogsCents = Math.round(
-      (nutrient.baseCents * form.factor * sizeFactor * jitter) / 10_000,
-    )
-    return {
-      sku: `${nutrient.code}-${form.code}-${unitCount}-${String(i + 1).padStart(3, '0')}`,
-      name: `${nutrient.name} ${form.name} (${unitCount} ct)`,
-      cogsCents,
-      // About one in twelve is out of stock so the UI's disabled state is visible.
-      stockQuantity: next(12) === 0 ? 0 : 5 + next(200),
-    }
-  })
 }
 
 const DAY_MS = 86_400_000

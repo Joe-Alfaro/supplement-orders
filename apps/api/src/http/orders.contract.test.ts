@@ -51,7 +51,7 @@ const PROVIDER_DETAIL_KEYS = [
   'partialPaymentQuote',
   'paymentInProgress',
   'backorderStatus',
-  'ledger',
+  'journal',
 ]
 
 const SPLIT_KEYS = [
@@ -81,7 +81,9 @@ const PROVIDER_LINE_KEYS = [
 
 const PAYMENT_KEYS = ['id', 'amountCents', 'reference', 'createdAt']
 
-const LEDGER_KEYS = ['id', 'type', 'amountCents', 'createdAt']
+const JOURNAL_KEYS = ['id', 'postedAt', 'memo', 'postings']
+
+const POSTING_KEYS = ['accountCode', 'accountName', 'debitCents', 'creditCents']
 
 const PRODUCT_KEYS = ['id', 'sku', 'name', 'cogsCents', 'stockQuantity']
 
@@ -164,15 +166,22 @@ function expectProviderDetail(body: unknown): ProviderOrderDetailDto {
   } else {
     expectExactKeys(record.split, SPLIT_KEYS)
   }
-  if (!Array.isArray(record.lines) || !Array.isArray(record.ledger)) {
-    throw new Error('order lines and ledger must be arrays')
+  if (!Array.isArray(record.lines)) {
+    throw new Error('order lines must be an array')
   }
   record.lines.forEach((line) => {
     expectExactKeys(line, PROVIDER_LINE_KEYS)
   })
-  record.ledger.forEach((entry) => {
-    expectExactKeys(entry, LEDGER_KEYS)
-  })
+  if (record.journal !== null) {
+    expectExactKeys(record.journal, JOURNAL_KEYS)
+    const journalPostings = asRecord(record.journal).postings
+    if (!Array.isArray(journalPostings)) {
+      throw new Error('journal postings must be an array')
+    }
+    journalPostings.forEach((posting) => {
+      expectExactKeys(posting, POSTING_KEYS)
+    })
+  }
   if (record.payment !== null) {
     expectExactKeys(record.payment, PAYMENT_KEYS)
   }
@@ -185,9 +194,9 @@ function expectProviderDetail(body: unknown): ProviderOrderDetailDto {
   if (detail.paidAt) {
     expectIsoTimestamp(detail.paidAt)
   }
-  detail.ledger.forEach((entry) => {
-    expectIsoTimestamp(entry.createdAt)
-  })
+  if (detail.journal) {
+    expectIsoTimestamp(detail.journal.postedAt)
+  }
   if (detail.payment) {
     expectIsoTimestamp(detail.payment.createdAt)
   }
@@ -397,7 +406,7 @@ describe('order draft and send', () => {
     expect(draft.patientId).toBe(context().seed.patientId)
     expect(draft.providerId).toBe(provider.providerId)
     expect(draft.lines).toEqual([])
-    expect(draft.ledger).toEqual([])
+    expect(draft.journal).toBeNull()
     expect(draft.payment).toBeNull()
     expect(draft.sentAt).toBeNull()
     expect(draft.paidAt).toBeNull()
@@ -464,7 +473,7 @@ describe('order draft and send', () => {
       expect(sentSplit.providerMarginCents).toBe(4_910)
     }
     expect(sent.payment).toBeNull()
-    expect(sent.ledger).toEqual([])
+    expect(sent.journal).toBeNull()
     expect(sent.sentAt).not.toBeNull()
     expect(sent.paidAt).toBeNull()
     expect(stockOf(await listProducts(), line.productId)).toBe(stockBefore)

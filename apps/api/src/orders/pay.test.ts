@@ -6,7 +6,10 @@ import {
 import {
   as,
   createSentOrder,
+  expectedSplit,
+  journalSplitOf,
   moneyState,
+  postingRole,
   pay,
   sampleLines,
   setStock,
@@ -25,7 +28,7 @@ describe('POST /api/orders/:id/pay', () => {
     await ctx.close()
   })
 
-  it('charges the total once and writes exactly three ledger rows summing to it', async () => {
+  it('charges the total once and posts exactly one balanced journal for it', async () => {
     const orderId = await createSentOrder(ctx)
     const before = await moneyState(ctx, orderId)
 
@@ -39,15 +42,26 @@ describe('POST /api/orders/:id/pay', () => {
     expect(payment!.amountCents).toBe(res.body.totalCents)
     expect(payment!.idempotencyKey).toBe(`order-${orderId}-r1-e1`)
     expect(payment!.paymentAttemptId).not.toBeNull()
-    expect(after.ledger.map((e) => e.type).sort()).toEqual([
-      'cogs',
+    expect(after.journals).toHaveLength(1)
+    expect(after.journals[0]).toMatchObject({
+      kind: 'patient_payment',
+      paymentId: payment!.id,
+      orderId,
+    })
+    expect(after.postings.map(postingRole)).toEqual([
+      'cash',
+      'product_sales',
+      'provider_payable',
       'platform_fee',
-      'provider_margin',
     ])
-    expect(after.ledger.every((e) => e.paymentId === payment!.id)).toBe(true)
-    expect(after.ledger.reduce((sum, e) => sum + e.amountCents, 0)).toBe(
-      payment!.amountCents,
-    )
+    expect(after.postings.every((p) => p.paymentId === payment!.id)).toBe(true)
+    const split = expectedSplit(ctx, sampleLines(ctx))
+    expect(journalSplitOf(after.postings)).toEqual({
+      cogsCents: split.cogsCents,
+      providerMarginCents: split.providerMarginCents,
+      platformFeeCents: split.platformFeeCents,
+      totalCents: payment!.amountCents,
+    })
     expect(ctx.gateway.charges).toHaveLength(1)
     expect(ctx.gateway.charges[0]!.amountCents).toBe(payment!.amountCents)
 
@@ -70,17 +84,34 @@ describe('POST /api/orders/:id/pay', () => {
       .get(`/api/orders/${orderId}`)
       .set(as(ctx.seed.providerUserId))
 
-    const byType = Object.fromEntries(
-      detail.body.ledger.map((e: { type: string; amountCents: number }) => [
-        e.type,
-        e.amountCents,
-      ]),
-    )
-    expect(byType).toEqual({
-      cogs: detail.body.split.cogsCents,
-      provider_margin: detail.body.split.providerMarginCents,
-      platform_fee: detail.body.split.platformFeeCents,
-    })
+    const split = expectedSplit(ctx, sampleLines(ctx))
+    expect(detail.body.split).toEqual(split)
+    expect(detail.body.journal.postings).toEqual([
+      {
+        accountCode: '1000',
+        accountName: 'Cash',
+        debitCents: split.totalCents,
+        creditCents: null,
+      },
+      {
+        accountCode: '4000',
+        accountName: 'Product sales at wholesale cost',
+        debitCents: null,
+        creditCents: split.cogsCents,
+      },
+      {
+        accountCode: '2100-1',
+        accountName: 'Payable to Dr. Maya Rivera',
+        debitCents: null,
+        creditCents: split.providerMarginCents,
+      },
+      {
+        accountCode: '4100',
+        accountName: 'Platform fee revenue',
+        debitCents: null,
+        creditCents: split.platformFeeCents,
+      },
+    ])
     expect(detail.body.payment.amountCents).toBe(detail.body.split.totalCents)
     // Revision 2: the fee comes out of the margin; the patient pays the subtotal.
     const subtotal = sampleLines(ctx).reduce(
@@ -111,7 +142,7 @@ describe('POST /api/orders/:id/pay', () => {
     expect(res.body.error.code).toBe('PAYMENT_FAILED')
     const after = await moneyState(ctx, orderId)
     expect(after.payments).toHaveLength(0)
-    expect(after.ledger).toHaveLength(0)
+    expect(after.postings).toHaveLength(0)
     expect(after.stock).toEqual(before.stock)
     expect(after.order).toEqual({ status: 'pending_payment', paidAt: null })
 
@@ -119,7 +150,7 @@ describe('POST /api/orders/:id/pay', () => {
     expect((await pay(ctx, orderId)).status).toBe(200)
   })
 
-  it("rolls back the payment and ledger when a failure follows the ledger insert, keeping the charge's stock", async () => {
+  it("rolls back the payment and journal when a failure follows the journal insert, keeping the charge's stock", async () => {
     const orderId = await createSentOrder(ctx)
     const before = await moneyState(ctx, orderId)
     ctx.payHooks.afterLedgerInsert = async () => {
@@ -132,7 +163,7 @@ describe('POST /api/orders/:id/pay', () => {
     expect(res.body.error.code).toBe('INTERNAL')
     const after = await moneyState(ctx, orderId)
     expect(after.payments).toHaveLength(0)
-    expect(after.ledger).toHaveLength(0)
+    expect(after.postings).toHaveLength(0)
     expect(after.order).toEqual({ status: 'pending_payment', paidAt: null })
     // The charge succeeded, so its attempt keeps the stock it reserved before
     // charging: the unreconciled charge can always complete.
@@ -172,7 +203,7 @@ describe('POST /api/orders/:id/pay', () => {
     expect(results.map((r) => r.status)).toEqual([200, 200])
     const state = await moneyState(ctx, orderId)
     expect(state.payments).toHaveLength(1)
-    expect(state.ledger).toHaveLength(3)
+    expect(state.postings).toHaveLength(4)
     // The loser may replay the same key (revision 10), which never charges twice.
     const keys = new Set(ctx.gateway.charges.map((c) => c.idempotencyKey))
     expect(keys.size).toBe(1)

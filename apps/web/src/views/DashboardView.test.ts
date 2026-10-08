@@ -15,6 +15,7 @@ const dashboard: DashboardDto = {
   gmvCents: 6951,
   providerMarginCents: 3499,
   platformFeeCents: 52,
+  owedToYouCents: 0,
   range: {
     preset: 'month',
     from: '2026-10-01',

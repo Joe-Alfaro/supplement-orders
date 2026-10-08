@@ -148,26 +148,37 @@ const paidProviderOrder: ProviderOrderDetailDto = {
     reference: 'fake_ch_123',
     createdAt: '2026-10-05T12:10:00.000Z',
   },
-  ledger: [
-    {
-      id: 1,
-      type: 'cogs',
-      amountCents: 1200,
-      createdAt: '2026-10-05T12:10:00.000Z',
-    },
-    {
-      id: 2,
-      type: 'provider_margin',
-      amountCents: 785,
-      createdAt: '2026-10-05T12:10:00.000Z',
-    },
-    {
-      id: 3,
-      type: 'platform_fee',
-      amountCents: 15,
-      createdAt: '2026-10-05T12:10:00.000Z',
-    },
-  ],
+  journal: {
+    id: 1,
+    postedAt: '2026-10-05T12:10:00.000Z',
+    memo: 'Patient payment for order #42',
+    postings: [
+      {
+        accountCode: '1000',
+        accountName: 'Cash',
+        debitCents: 2000,
+        creditCents: null,
+      },
+      {
+        accountCode: '4000',
+        accountName: 'Product sales at wholesale cost',
+        debitCents: null,
+        creditCents: 1200,
+      },
+      {
+        accountCode: '2100-1',
+        accountName: 'Payable to Dr. Maya Rivera',
+        debitCents: null,
+        creditCents: 785,
+      },
+      {
+        accountCode: '4100',
+        accountName: 'Platform fee revenue',
+        debitCents: null,
+        creditCents: 15,
+      },
+    ],
+  },
 }
 
 const emptyDraft: ProviderOrderDetailDto = {
@@ -179,7 +190,7 @@ const emptyDraft: ProviderOrderDetailDto = {
   split: null,
   lines: [],
   payment: null,
-  ledger: [],
+  journal: null,
 }
 
 const pendingPatientOrder: PatientOrderDetailDto = {
@@ -257,6 +268,7 @@ const dashboard: DashboardDto = {
   gmvCents: 6951,
   providerMarginCents: 3499,
   platformFeeCents: 52,
+  owedToYouCents: 0,
   range: {
     preset: 'month',
     from: '2026-10-01',

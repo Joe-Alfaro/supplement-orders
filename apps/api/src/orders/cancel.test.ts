@@ -64,7 +64,7 @@ describe('POST /api/orders/:id/cancel', () => {
     expect(res.body.paidAt).toBeNull()
     const after = await moneyState(ctx, orderId)
     expect(after.payments).toEqual([])
-    expect(after.ledger).toEqual([])
+    expect(after.postings).toEqual([])
     expect(after.stock).toEqual(before.stock)
     expect(ctx.notifier.cancelled).toEqual([orderId])
   })
@@ -164,7 +164,7 @@ describe('POST /api/orders/:id/cancel', () => {
     const state = await moneyState(ctx, orderId)
     expect(state.order?.status).toBe('paid')
     expect(state.payments).toHaveLength(1)
-    expect(state.ledger).toHaveLength(3)
+    expect(state.postings).toHaveLength(4)
     expect(ctx.notifier.cancelled).toEqual([])
   })
 
@@ -213,12 +213,12 @@ describe('POST /api/orders/:id/cancel', () => {
         if (r.pay === 200) {
           expect(state.order?.status).toBe('paid')
           expect(state.payments).toHaveLength(1)
-          expect(state.ledger).toHaveLength(3)
+          expect(state.postings).toHaveLength(4)
           return
         }
         expect(state.order?.status).toBe('cancelled')
         expect(state.payments).toEqual([])
-        expect(state.ledger).toEqual([])
+        expect(state.postings).toEqual([])
       }),
     )
     // Stock moved by exactly the paid orders' quantities.

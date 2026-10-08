@@ -21,6 +21,7 @@ import {
   as,
   createDraft,
   createSentOrder,
+  insertPaymentJournal,
   moneyState,
   pay,
   patientQuote,
@@ -764,11 +765,13 @@ describe('revision 9: payment integrity and hardening', () => {
           values (${bigOrder}, ${huge}::bigint, 'huge-order', 'ref-huge-order')
           returning id`)
         const paymentId = payment.rows[0]!.id
-        await tx.execute(sql`
-          insert into ledger_entries (order_id, payment_id, type, amount_cents) values
-            (${bigOrder}, ${paymentId}, 'cogs', ${huge}::bigint),
-            (${bigOrder}, ${paymentId}, 'provider_margin', 0),
-            (${bigOrder}, ${paymentId}, 'platform_fee', 0)`)
+        await insertPaymentJournal(tx, {
+          paymentId,
+          orderId: bigOrder,
+          cogsCents: huge,
+          marginCents: 0,
+          feeCents: 0,
+        })
       })
 
       const res = await ctx.request.get('/api/dashboard').set(provider())

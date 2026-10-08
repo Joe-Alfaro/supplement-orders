@@ -2,11 +2,12 @@ import {
   calendarDayInZone,
   dashboardQuerySchema,
   resolveDashboardRange,
+  SYSTEM_ACCOUNTS,
   type DashboardDto,
 } from '@supplement-orders/domain'
-import { sql } from 'drizzle-orm'
+import { sql, type SQL } from 'drizzle-orm'
 import { Router } from 'express'
-import { ledgerEntries, orders, payments } from '../db/schema'
+import { accounts, journals, orders, postings } from '../db/schema'
 import { requireRole } from '../seams'
 import type { AppContext } from '../server'
 import { ApiError } from './errors'
@@ -16,6 +17,7 @@ interface DashboardRow extends Record<string, unknown> {
   gmv_cents: string
   provider_margin_cents: string
   platform_fee_cents: string
+  owed_to_you_cents: string
 }
 
 /**
@@ -35,12 +37,14 @@ function exactCents(value: string, field: string) {
 }
 
 /**
- * GMV is what patients actually paid (payments); margin and fees come from the
- * ledger, so the dashboard reports the audited figures rather than recomputing
- * them. All three are read in one statement, so they describe one snapshot even
- * while payments commit concurrently (revision 9, M4). The server resolves the
- * requested range to calendar days in the caller's zone (revision 11a-v2) and
- * bounds all three on orders.paid_at to [local midnight of the first day, local
+ * Revision 16: every figure comes from postings on this provider's payment
+ * journals: GMV is their Cash debits, margin their credits to the provider's
+ * payable, and fees their Platform fee revenue credits. Owed to you is the
+ * payable's balance, all time. All four are read in one statement, so they
+ * describe one snapshot even while payments commit concurrently (revision 9,
+ * M4). The server resolves the requested range to calendar days in the
+ * caller's zone (revision 11a-v2) and bounds the three ranged figures on
+ * orders.paid_at to [local midnight of the first day, local
  * midnight of the day after the last); Postgres computes those instants, so a
  * 23- or 25-hour DST day is handled.
  */
@@ -60,17 +64,22 @@ export function dashboardRouter({ db, auth, now }: AppContext) {
            or ${orders.paidAt} >= (${from}::text::date)::timestamp at time zone ${timeZone}::text)
       and (${to}::text is null
            or ${orders.paidAt} < (${to}::text::date + 1)::timestamp at time zone ${timeZone}::text)`
+    // This provider's payment journals whose order was paid in range.
+    const inRange = sql`${postings.journalId} in (
+      select ${journals.id} from ${journals}
+        join ${orders} on ${orders.id} = ${journals.orderId}
+       where ${journals.kind} = 'patient_payment' and ${paid})`
+    const payable = sql`${accounts.providerId} = ${user.providerId}`
+    const sumPostings = (where: SQL, sign: '' | '-') =>
+      sql`(select coalesce(${sql.raw(sign)}sum(${postings.amountCents}), 0)::text
+             from ${postings} join ${accounts} on ${accounts.id} = ${postings.accountId}
+            where ${where})`
     const result = await db.execute<DashboardRow>(sql`
       select
-        (select coalesce(sum(${payments.amountCents}), 0)::text
-           from ${payments} join ${orders} on ${orders.id} = ${payments.orderId}
-          where ${paid}) as gmv_cents,
-        (select coalesce(sum(${ledgerEntries.amountCents}), 0)::text
-           from ${ledgerEntries} join ${orders} on ${orders.id} = ${ledgerEntries.orderId}
-          where ${paid} and ${ledgerEntries.type} = 'provider_margin') as provider_margin_cents,
-        (select coalesce(sum(${ledgerEntries.amountCents}), 0)::text
-           from ${ledgerEntries} join ${orders} on ${orders.id} = ${ledgerEntries.orderId}
-          where ${paid} and ${ledgerEntries.type} = 'platform_fee') as platform_fee_cents
+        ${sumPostings(sql`${accounts.code} = ${SYSTEM_ACCOUNTS.cash.code} and ${postings.amountCents} > 0 and ${inRange}`, '')} as gmv_cents,
+        ${sumPostings(sql`${payable} and ${postings.amountCents} < 0 and ${inRange}`, '-')} as provider_margin_cents,
+        ${sumPostings(sql`${accounts.code} = ${SYSTEM_ACCOUNTS.platformFee.code} and ${postings.amountCents} < 0 and ${inRange}`, '-')} as platform_fee_cents,
+        ${sumPostings(payable, '-')} as owed_to_you_cents
     `)
     const [row] = result.rows
     if (!row) throw new Error('Dashboard query returned no row')
@@ -79,6 +88,7 @@ export function dashboardRouter({ db, auth, now }: AppContext) {
       gmvCents: exactCents(row.gmv_cents, 'GMV'),
       providerMarginCents: exactCents(row.provider_margin_cents, 'margin'),
       platformFeeCents: exactCents(row.platform_fee_cents, 'processing fees'),
+      owedToYouCents: exactCents(row.owed_to_you_cents, 'owed to you'),
       range,
     }
     res.json(body)

@@ -1,8 +1,11 @@
 import {
   incrementStockRequestSchema,
+  listAdminJournalsQuerySchema,
   listAdminProductsQuerySchema,
   setStockRequestSchema,
+  type AdminJournalPageDto,
   type AdminProductPageDto,
+  type AdminTrialBalanceDto,
 } from '@supplement-orders/domain'
 import { asc, count } from 'drizzle-orm'
 import { Router } from 'express'
@@ -12,12 +15,16 @@ import {
   incrementStock,
   setStock,
 } from '../inventory/service'
+import { listJournals, trialBalance } from '../ledger/journals'
 import { requireRole } from '../seams'
 import type { AppContext } from '../server'
 import { matchesSearch } from './search'
 import { parseId, parseOrThrow } from './validate'
 
-/** Revision 13: admin only. The admin manages available stock. */
+/**
+ * Revision 13: admin only. The admin manages available stock. Revision 16 adds
+ * the read-only ledger: the trial balance and the journal list.
+ */
 export function adminRouter({ db, auth }: AppContext) {
   const router = Router()
 
@@ -71,6 +78,22 @@ export function adminRouter({ db, auth }: AppContext) {
         expectedStockQuantity,
       ),
     )
+  })
+
+  router.get('/accounts', async (req, res) => {
+    requireRole(await auth.getCurrentUser(req), 'admin')
+    const body: AdminTrialBalanceDto = await trialBalance(db)
+    res.json(body)
+  })
+
+  router.get('/journals', async (req, res) => {
+    requireRole(await auth.getCurrentUser(req), 'admin')
+    const { offset, limit } = parseOrThrow(
+      listAdminJournalsQuerySchema,
+      req.query,
+    )
+    const body: AdminJournalPageDto = await listJournals(db, offset, limit)
+    res.json(body)
   })
 
   return router

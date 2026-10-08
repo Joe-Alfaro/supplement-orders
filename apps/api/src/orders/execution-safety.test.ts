@@ -495,7 +495,7 @@ describe('revision 10 execution-safe payments', () => {
         ?.status,
     ).toBe('declined')
     const after = await moneyState(ctx, orderId)
-    expect(after.ledger).toHaveLength(3)
+    expect(after.postings).toHaveLength(4)
     expect(after.stock.find((row) => row.id === productId)?.stockQuantity).toBe(
       before.stock.find((row) => row.id === productId)!.stockQuantity - 1,
     )
@@ -661,7 +661,7 @@ describe('revision 10 execution-safe payments', () => {
     expect(state.stock.find((row) => row.id === productId)?.stockQuantity).toBe(
       0,
     )
-    expect(state.ledger).toHaveLength(3)
+    expect(state.postings).toHaveLength(4)
   })
 
   it('N2: a fresh gateway completes a persisted success without a second charge', async () => {
@@ -710,7 +710,7 @@ describe('revision 10 execution-safe payments', () => {
     ])
     const after = await moneyState(ctx, orderId)
     expect(after.payments).toHaveLength(1)
-    expect(after.ledger).toHaveLength(3)
+    expect(after.postings).toHaveLength(4)
     expect(after.stock).toEqual(pending.stock)
   })
 
@@ -807,7 +807,7 @@ describe('revision 10 execution-safe payments', () => {
     )
     const state = await moneyState(ctx, orderId)
     expect(state.payments).toHaveLength(0)
-    expect(state.ledger).toHaveLength(0)
+    expect(state.postings).toHaveLength(0)
     expect(state.order).toEqual({ status: 'pending_payment', paidAt: null })
     expect(state.stock.find((row) => row.id === productId)?.stockQuantity).toBe(
       before.stock.find((row) => row.id === productId)!.stockQuantity - 1,

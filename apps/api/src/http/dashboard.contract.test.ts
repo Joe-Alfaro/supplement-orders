@@ -22,6 +22,7 @@ const DASHBOARD_KEYS = [
   'gmvCents',
   'providerMarginCents',
   'platformFeeCents',
+  'owedToYouCents',
   'range',
 ]
 
@@ -49,7 +50,7 @@ const PROVIDER_DETAIL_KEYS = [
   'partialPaymentQuote',
   'paymentInProgress',
   'backorderStatus',
-  'ledger',
+  'journal',
 ]
 
 interface ContextHolder {

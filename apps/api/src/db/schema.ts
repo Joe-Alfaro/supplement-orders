@@ -1,4 +1,9 @@
-import { ORDER_STATUSES } from '@supplement-orders/domain'
+import {
+  ACCOUNT_TYPES,
+  JOURNAL_KINDS,
+  NORMAL_BALANCES,
+  ORDER_STATUSES,
+} from '@supplement-orders/domain'
 import { sql } from 'drizzle-orm'
 import {
   bigint,
@@ -85,12 +90,6 @@ export const fakeGatewayCharges = pgTable(
   ],
 )
 
-export const ledgerEntryTypeEnum = pgEnum('ledger_entry_type', [
-  'cogs',
-  'provider_margin',
-  'platform_fee',
-])
-
 // List endpoints order by (name, id) and search with `column ILIKE '%q%'`. The
 // (name, id) btree serves ordering and pagination. A btree can't serve a
 // substring match, so each searched column also has a pg_trgm GIN index on the
@@ -176,7 +175,7 @@ export const orders = pgTable(
       .defaultNow(),
     sentAt: timestamp('sent_at', { withTimezone: true }),
     paidAt: timestamp('paid_at', { withTimezone: true }),
-    // Set when a provider cancels a pending order. No ledger or stock effect.
+    // Set when a provider cancels a pending order. No journal or stock effect.
     // Revision 6 also allowed cancelling drafts; such rows may still exist.
     cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
     // Revision 9: the quote version. 0 until first sent, +1 on every send.
@@ -384,24 +383,92 @@ export const payments = pgTable(
   (t) => [check('payments_amount_nonnegative', sql`${t.amountCents} >= 0`)],
 )
 
-// Append-only: the application has no update or delete path for this table.
-export const ledgerEntries = pgTable(
-  'ledger_entries',
+export const accountTypeEnum = pgEnum('account_type', ACCOUNT_TYPES)
+export const normalBalanceEnum = pgEnum('normal_balance', NORMAL_BALANCES)
+export const journalKindEnum = pgEnum('journal_kind', JOURNAL_KINDS)
+
+/**
+ * Revision 16: the chart of accounts. Migration 0014 seeds the system accounts
+ * (1000 Cash, 4000 Product sales, 4100 Platform fee revenue) and a trigger on
+ * `providers` creates each provider's `2100-<providerId>` payable. Append-only
+ * except for a rename (migration 0014 triggers).
+ */
+export const accounts = pgTable(
+  'accounts',
   {
     id: serial('id').primaryKey(),
-    orderId: integer('order_id')
-      .notNull()
-      .references(() => orders.id),
-    paymentId: integer('payment_id')
-      .notNull()
-      .references(() => payments.id),
-    type: ledgerEntryTypeEnum('type').notNull(),
-    amountCents: cents('amount_cents').notNull(),
+    code: text('code').notNull().unique(),
+    name: text('name').notNull(),
+    type: accountTypeEnum('type').notNull(),
+    normalBalance: normalBalanceEnum('normal_balance').notNull(),
+    providerId: integer('provider_id')
+      .unique()
+      .references(() => providers.id),
     createdAt: createdAt(),
   },
   (t) => [
-    unique('ledger_entries_payment_type_unique').on(t.paymentId, t.type),
-    check('ledger_entries_amount_nonnegative', sql`${t.amountCents} >= 0`),
+    check(
+      'accounts_normal_balance_matches_type',
+      sql`(${t.type} = 'asset') = (${t.normalBalance} = 'debit')`,
+    ),
+    check(
+      'accounts_provider_payable_is_liability',
+      sql`${t.providerId} is null or ${t.type} = 'liability'`,
+    ),
+  ],
+)
+
+/**
+ * Revision 16: one balanced set of postings. A patient_payment journal belongs
+ * to exactly one payment (deferred triggers in migration 0014 check its
+ * postings at commit). Append-only.
+ */
+export const journals = pgTable(
+  'journals',
+  {
+    id: serial('id').primaryKey(),
+    kind: journalKindEnum('kind').notNull(),
+    paymentId: integer('payment_id')
+      .unique()
+      .references(() => payments.id),
+    orderId: integer('order_id').references(() => orders.id),
+    memo: text('memo').notNull(),
+    postedAt: timestamp('posted_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    check(
+      'journals_patient_payment_links',
+      sql`${t.kind} <> 'patient_payment' or (${t.paymentId} is not null and ${t.orderId} is not null)`,
+    ),
+    index('journals_order_id_idx').on(t.orderId),
+    index('journals_posted_at_id_idx').on(
+      sql`${t.postedAt} desc`,
+      sql`${t.id} desc`,
+    ),
+  ],
+)
+
+/**
+ * Revision 16: signed integer cents, positive = debit, negative = credit, never
+ * 0 (checked at commit with the journal's balance). Append-only.
+ */
+export const postings = pgTable(
+  'postings',
+  {
+    id: serial('id').primaryKey(),
+    journalId: integer('journal_id')
+      .notNull()
+      .references(() => journals.id),
+    accountId: integer('account_id')
+      .notNull()
+      .references(() => accounts.id),
+    amountCents: cents('amount_cents').notNull(),
+  },
+  (t) => [
+    unique('postings_journal_account_unique').on(t.journalId, t.accountId),
+    index('postings_account_id_idx').on(t.accountId),
   ],
 )
 

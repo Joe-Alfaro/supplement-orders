@@ -247,10 +247,10 @@ async function perform(chosen: OrderAction, current: ProviderOrderDetailDto) {
       This draft is incomplete, so there is no split yet.
     </p>
 
-    <template v-if="order.status === 'paid' && order.payment">
+    <template v-if="order.status === 'paid' && order.payment && order.journal">
       <h2>Ledger</h2>
       <LedgerTable
-        :entries="order.ledger"
+        :journal="order.journal"
         :amount-paid-cents="order.payment.amountCents"
       />
     </template>

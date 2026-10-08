@@ -99,7 +99,9 @@ describe('auth, persona and ownership', () => {
     expect(draft.status).toBe(404)
     expect(sent.status).toBe(200)
     expect(sent.body.view).toBe('patient')
-    expect(JSON.stringify(sent.body)).not.toMatch(/cogs|margin|ledger|fee/i)
+    expect(JSON.stringify(sent.body)).not.toMatch(
+      /cogs|margin|ledger|journal|posting|fee/i,
+    )
   })
 
   it('scopes the patient list and order list to the acting provider', async () => {

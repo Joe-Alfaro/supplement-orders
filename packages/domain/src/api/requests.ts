@@ -89,6 +89,20 @@ export const listProductsQuerySchema = listQuerySchema
 /** Revision 13: GET /api/admin/products; `q` matches the product name only. */
 export const listAdminProductsQuerySchema = listQuerySchema
 
+/** Revision 16: GET /api/admin/journals?offset&limit (no search). */
+export interface ParsedPageQuery {
+  offset: number
+  limit: number
+}
+
+export const listAdminJournalsQuerySchema: z.ZodType<
+  ParsedPageQuery,
+  Pick<ListQueryParams, 'offset' | 'limit'>
+> = z.object({
+  offset: intParam(0, Number.MAX_SAFE_INTEGER, 0),
+  limit: intParam(1, PAGE_LIMIT_MAX, PAGE_LIMIT_DEFAULT),
+})
+
 /** Patients list filter on each patient's most recent order (by created_at); `none` = no orders. */
 export const LATEST_ORDER_STATUS_FILTERS = ['none', ...ORDER_STATUSES] as const
 export type LatestOrderStatusFilter =
