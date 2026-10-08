@@ -15,6 +15,8 @@ export default tseslint.config(
       'test-results/**',
       'playwright-report/**',
       'blob-report/**',
+      // The CI npm cache (.gitlab-ci.yml).
+      '.npm/**',
     ],
   },
   js.configs.recommended,

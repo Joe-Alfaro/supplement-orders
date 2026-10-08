@@ -46,6 +46,7 @@ function patientPage(query: ListPatientsQuery): PatientPageDto {
 }
 
 const dashboard: DashboardDto = {
+  soldByProduct: [],
   range: {
     preset: 'month',
     from: '2026-10-01',

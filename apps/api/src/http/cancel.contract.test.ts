@@ -187,6 +187,7 @@ const DASHBOARD_KEYS = [
   'providerMarginCents',
   'platformFeeCents',
   'owedToYouCents',
+  'soldByProduct',
   'range',
 ]
 
@@ -888,10 +889,11 @@ describe('POST /api/orders/:id/cancel', () => {
       placed.detail.id,
       context().seed.otherProviderUserId,
     )
+    // Revision 18.4 (L6): another practice's order is 404.
     expectError(
       { status: otherProvider.status, body: otherProvider.body },
-      403,
-      'FORBIDDEN',
+      404,
+      'NOT_FOUND',
     )
 
     const missing = await cancelAs(placed.detail.id)

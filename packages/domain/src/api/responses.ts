@@ -44,6 +44,20 @@ export const ORDER_STATUSES = [
 ] as const
 export type OrderStatus = (typeof ORDER_STATUSES)[number]
 
+/**
+ * Payment attempt statuses (the database enum). Revision 18.2 adds
+ * `abandoned`: reconciled by an admin after the gateway never saw the charge
+ * within the safety window; its stock was released.
+ */
+export const PAYMENT_ATTEMPT_STATUSES = [
+  'pending',
+  'succeeded',
+  'declined',
+  'conflict',
+  'abandoned',
+] as const
+export type PaymentAttemptStatus = (typeof PAYMENT_ATTEMPT_STATUSES)[number]
+
 /** Human labels for order statuses: the only wording the UI and API messages use. */
 export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   draft: 'Draft',
@@ -201,11 +215,25 @@ export interface QuoteTotalsDto {
 export interface PartialPaymentQuoteDto {
   pay: QuoteTotalsDto
   backorder: QuoteTotalsDto
-  /** At least one unit is in stock. */
+  /**
+   * The quote can be paid now. False when nothing is in stock, and (revision
+   * 18.1) when the order is short again while it already has a live
+   * back-order, which `reason` then explains.
+   */
   payable: boolean
   /** At least one unit is short. */
   hasShortfall: boolean
+  /**
+   * Revision 18.1: set only when `payable` is false because the order already
+   * has a live back-order (`backorderOrderId`) and can't split again; it can
+   * be paid once restocked.
+   */
+  reason?: QuoteUnpayableReason
 }
+
+/** Revision 18.1: why a quote with stock is still not payable. */
+export const QUOTE_UNPAYABLE_REASONS = ['awaiting_restock'] as const
+export type QuoteUnpayableReason = (typeof QUOTE_UNPAYABLE_REASONS)[number]
 
 const quoteTotalsDtoSchema: z.ZodType<QuoteTotalsDto> = z.object({
   subtotalCents: cents,
@@ -219,6 +247,7 @@ export const partialPaymentQuoteDtoSchema: z.ZodType<PartialPaymentQuoteDto> =
     backorder: quoteTotalsDtoSchema,
     payable: z.boolean(),
     hasShortfall: z.boolean(),
+    reason: z.enum(QUOTE_UNPAYABLE_REASONS).optional(),
   })
 
 /** A patient-visible line. Patients only see sent orders, so lines are complete. */
@@ -567,8 +596,31 @@ export interface DashboardDto {
   platformFeeCents: number
   /** Revision 16: the payable account's balance, all time (never date-filtered). */
   owedToYouCents: number
+  /**
+   * Revision 18.3: units and revenue per product over this provider's orders
+   * paid in range, by revenue descending (then name, then product id).
+   */
+  soldByProduct: SoldByProductDto[]
   range: DashboardRangeDto
 }
+
+/** One row of the dashboard's "Sold by product" table (revision 18.3). */
+export interface SoldByProductDto {
+  productId: number
+  productName: string
+  sku: string
+  unitsSold: number
+  /** The sum of line totals (quantity × unit price) on paid orders. */
+  revenueCents: number
+}
+
+export const soldByProductDtoSchema: z.ZodType<SoldByProductDto> = z.object({
+  productId: id,
+  productName: z.string(),
+  sku: z.string(),
+  unitsSold: z.int().nonnegative(),
+  revenueCents: cents,
+})
 
 const dayString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 
@@ -584,6 +636,7 @@ export const dashboardDtoSchema: z.ZodType<DashboardDto> = z.object({
   providerMarginCents: cents,
   platformFeeCents: cents,
   owedToYouCents: cents,
+  soldByProduct: z.array(soldByProductDtoSchema),
   range: dashboardRangeDtoSchema,
 })
 
@@ -739,3 +792,63 @@ export type AwaitingPaymentPageDto = ProviderOrderListPageDto
 export const awaitingPaymentOrderDtoSchema = providerOrderListItemDtoSchema
 /** @deprecated Use providerOrderListPageDtoSchema. */
 export const awaitingPaymentPageDtoSchema = providerOrderListPageDtoSchema
+
+/**
+ * Revision 18.2 (admin only): one row of GET /api/admin/payment-attempts. No
+ * patient fields. `ageSeconds` is measured from `createdAt` on the server's
+ * clock. `hasPayment` is true once a payment records the attempt.
+ */
+export interface AdminPaymentAttemptDto {
+  id: number
+  orderId: number
+  providerName: string
+  amountCents: number
+  status: PaymentAttemptStatus
+  hasPayment: boolean
+  createdAt: string
+  ageSeconds: number
+  reconciledAt: string | null
+}
+
+export const adminPaymentAttemptDtoSchema: z.ZodType<AdminPaymentAttemptDto> =
+  z.object({
+    id,
+    orderId: id,
+    providerName: z.string(),
+    amountCents: cents,
+    status: z.enum(PAYMENT_ATTEMPT_STATUSES),
+    hasPayment: z.boolean(),
+    createdAt: timestamp,
+    ageSeconds: z.int().nonnegative(),
+    reconciledAt: timestamp.nullable(),
+  })
+
+export type AdminPaymentAttemptPageDto = Page<AdminPaymentAttemptDto>
+export const adminPaymentAttemptPageDtoSchema = pageSchema(
+  adminPaymentAttemptDtoSchema,
+)
+
+/**
+ * What POST /api/admin/payment-attempts/:id/reconcile did (revision 18.2):
+ * `finalized` recorded the payment the gateway already took, `declined` and
+ * `abandoned` released the attempt's stock, and `unchanged` means it was
+ * already resolved (reconciling is idempotent).
+ */
+export const RECONCILE_OUTCOMES = [
+  'finalized',
+  'declined',
+  'abandoned',
+  'unchanged',
+] as const
+export type ReconcileOutcome = (typeof RECONCILE_OUTCOMES)[number]
+
+export interface ReconcilePaymentAttemptDto {
+  outcome: ReconcileOutcome
+  attempt: AdminPaymentAttemptDto
+}
+
+export const reconcilePaymentAttemptDtoSchema: z.ZodType<ReconcilePaymentAttemptDto> =
+  z.object({
+    outcome: z.enum(RECONCILE_OUTCOMES),
+    attempt: adminPaymentAttemptDtoSchema,
+  })

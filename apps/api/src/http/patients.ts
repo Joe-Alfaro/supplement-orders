@@ -22,7 +22,7 @@ import type { Db } from '../db/client'
 import { ordersWithStatus, patients, users } from '../db/schema'
 import { requireRole } from '../seams'
 import type { AppContext } from '../server'
-import { forbidden, notFound } from './errors'
+import { notFound } from './errors'
 import { matchesSearch } from './search'
 import { parseId, parseOrThrow } from './validate'
 
@@ -157,9 +157,9 @@ export function patientsRouter({ db, auth }: AppContext) {
       user.providerId,
       eq(patients.id, id),
     )
-    if (!patient) throw notFound('Patient')
-    if (patient.providerId !== user.providerId) {
-      throw forbidden('This patient belongs to another provider')
+    // Revision 18.4 (L6): another practice's patient is 404, not 403.
+    if (!patient || patient.providerId !== user.providerId) {
+      throw notFound('Patient')
     }
     res.json(patient)
   })

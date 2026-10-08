@@ -1,13 +1,53 @@
+# Revision 18.4 (L3): every pipeline runs the test gate, and main deploys only
+# after it passes. Both jobs use the project runner tagged railway-deploy
+# (docker executor) and the node:22 image, matching .nvmrc and package.json
+# engines.
+#
 # Deploys main to the Railway `web` service. RAILWAY_TOKEN is a Railway project
 # token stored as a masked CI/CD variable; Railway builds the app from railway.json.
 stages:
+  - test
   - deploy
+
+test:
+  stage: test
+  image: node:22
+  tags:
+    - railway-deploy
+  services:
+    - name: postgres:16
+      alias: postgres
+  variables:
+    # The same credentials as docker-compose.yml. The API tests create their
+    # own sibling databases on this server (see apps/api/src/db/databases.ts).
+    POSTGRES_USER: supplement_orders
+    POSTGRES_PASSWORD: supplement_orders
+    POSTGRES_DB: supplement_orders
+    DATABASE_URL: postgres://supplement_orders:supplement_orders@postgres:5432/supplement_orders
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+  # Playwright e2e (npm run test:e2e) is not run here: the node:22 image has no
+  # browsers, and installing them on every run would dominate the job. It stays
+  # part of the local gate before merging.
+  script:
+    - node --version
+    - npm ci --cache .npm --prefer-offline
+    - npm run lint
+    - npm run typecheck
+    - npm test
+    - npm run build
 
 deploy:
   stage: deploy
   image: node:22
   tags:
     - railway-deploy
+  needs:
+    - test
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
   script:

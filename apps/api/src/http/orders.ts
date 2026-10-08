@@ -27,7 +27,7 @@ import {
 } from '../orders/views'
 import { requireAnyRole, requireRole, type CurrentUser } from '../seams'
 import type { AppContext } from '../server'
-import { forbidden, notFound } from './errors'
+import { notFound } from './errors'
 import { parseId, parseOrThrow } from './validate'
 
 export function ordersRouter(ctx: AppContext) {
@@ -42,8 +42,10 @@ export function ordersRouter(ctx: AppContext) {
       .select({ providerId: patients.providerId })
       .from(patients)
       .where(eq(patients.id, patientId))
-    if (!patient) throw notFound('Patient')
-    if (patient.providerId !== user.providerId) throw forbidden()
+    // Revision 18.4 (L6): another practice's patient is reported as missing.
+    if (!patient || patient.providerId !== user.providerId) {
+      throw notFound('Patient')
+    }
   }
 
   router.get('/', async (req, res) => {
@@ -70,7 +72,7 @@ export function ordersRouter(ctx: AppContext) {
     }
     if (user.role === 'patient') {
       if (patientId !== undefined && patientId !== user.patientId) {
-        throw forbidden()
+        throw notFound('Patient')
       }
       res.json(await listPatientOrders(db, user.patientId))
       return

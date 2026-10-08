@@ -103,6 +103,41 @@ export const listAdminJournalsQuerySchema: z.ZodType<
   limit: intParam(1, PAGE_LIMIT_MAX, PAGE_LIMIT_DEFAULT),
 })
 
+/**
+ * Revision 18.2: GET /api/admin/payment-attempts. `unresolved` (the default)
+ * lists attempts that are pending, succeeded without a payment, or in
+ * conflict; `all` lists every attempt, newest first, so reconciled ones stay
+ * visible.
+ */
+export const ADMIN_PAYMENT_ATTEMPT_FILTERS = ['unresolved', 'all'] as const
+export type AdminPaymentAttemptFilter =
+  (typeof ADMIN_PAYMENT_ATTEMPT_FILTERS)[number]
+
+export interface ListAdminPaymentAttemptsQuery {
+  status?: AdminPaymentAttemptFilter
+  offset?: string
+  limit?: string
+}
+
+export interface ParsedListAdminPaymentAttemptsQuery extends ParsedPageQuery {
+  status: AdminPaymentAttemptFilter
+}
+
+export const listAdminPaymentAttemptsQuerySchema: z.ZodType<
+  ParsedListAdminPaymentAttemptsQuery,
+  ListAdminPaymentAttemptsQuery
+> = z.object({
+  status: z.enum(ADMIN_PAYMENT_ATTEMPT_FILTERS).default('unresolved'),
+  offset: intParam(0, Number.MAX_SAFE_INTEGER, 0),
+  limit: intParam(1, PAGE_LIMIT_MAX, PAGE_LIMIT_DEFAULT),
+})
+
+/**
+ * Revision 18.2: reconciling waits this long after an attempt was created
+ * before a charge the gateway has no record of may be abandoned.
+ */
+export const RECONCILE_ABANDON_AFTER_MS = 15 * 60 * 1000
+
 /** Patients list filter on each patient's most recent order (by created_at); `none` = no orders. */
 export const LATEST_ORDER_STATUS_FILTERS = ['none', ...ORDER_STATUSES] as const
 export type LatestOrderStatusFilter =
@@ -256,11 +291,16 @@ export const orderLineInputSchema: z.ZodType<DraftLine, OrderLineInput> =
       .default(null),
   })
 
+/** Revision 18.4 (L8): an order has at most this many lines. */
+export const MAX_ORDER_LINES = 100
+
 export const replaceOrderLinesRequestSchema: z.ZodType<
   ParsedReplaceOrderLinesRequest,
   ReplaceOrderLinesRequest
 > = z.strictObject({
-  lines: z.array(orderLineInputSchema),
+  lines: z
+    .array(orderLineInputSchema)
+    .max(MAX_ORDER_LINES, `An order can have at most ${MAX_ORDER_LINES} lines`),
 })
 
 /**

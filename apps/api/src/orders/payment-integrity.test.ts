@@ -19,6 +19,7 @@ import { FakePaymentGateway, fakeGatewaySucceededReferences } from '../seams'
 import type { ChargeResult } from '../seams'
 import { testDatabaseUrl } from '../db/databases'
 import {
+  attemptKey,
   createInternalTestContext,
   type InternalTestContext,
 } from '../testing/harness'
@@ -246,7 +247,7 @@ async function unreconciledCharge(): Promise<Unreconciled> {
   expect(attempt).toMatchObject({
     orderId,
     revision,
-    idempotencyKey: `order-${orderId}-r${revision}-e1`,
+    idempotencyKey: attemptKey(ctx, orderId, revision),
     amountCents: totalCents,
     status: 'succeeded',
   })
@@ -601,7 +602,7 @@ describe('payment integrity inside the order service', () => {
     const quote = quoteFrom(detail.body)
     expect(quote.expectedRevision).toBe(1)
     const { expectedRevision: revision, expectedTotalCents: totalCents } = quote
-    const key = `order-${orderId}-r${revision}-e1`
+    const key = attemptKey(ctx, orderId, revision)
     const seeded = await ctx.gateway.charge({
       amountCents: totalCents + 1,
       idempotencyKey: key,

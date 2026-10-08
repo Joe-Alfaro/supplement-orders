@@ -29,6 +29,7 @@ import {
   setStock,
 } from '../testing/flows'
 import {
+  attemptKey,
   createInternalTestContext,
   restartContext,
   type InternalTestContext,
@@ -242,7 +243,7 @@ describe('revision 9: payment integrity and hardening', () => {
       expect(attempt).toMatchObject({
         revision: 1,
         execution: 1,
-        idempotencyKey: `order-${orderId}-r1-e1`,
+        idempotencyKey: attemptKey(ctx, orderId, 1, 1),
         amountCents: 2000,
         status: 'succeeded',
         stockHeld: true,
@@ -328,8 +329,8 @@ describe('revision 9: payment integrity and hardening', () => {
           .sort((a, b) => a.execution - b.execution)
           .map((a) => [a.execution, a.idempotencyKey, a.status, a.stockHeld]),
       ).toEqual([
-        [1, `order-${orderId}-r1-e1`, 'declined', false],
-        [2, `order-${orderId}-r1-e2`, 'succeeded', true],
+        [1, attemptKey(ctx, orderId, 1, 1), 'declined', false],
+        [2, attemptKey(ctx, orderId, 1, 2), 'succeeded', true],
       ])
       expect(await stockOf(productId)).toBe(start - 1)
     })
@@ -355,7 +356,7 @@ describe('revision 9: payment integrity and hardening', () => {
         orderId,
         revision: 1,
         execution: 1,
-        idempotencyKey: `order-${orderId}-r1-e1`,
+        idempotencyKey: attemptKey(ctx, orderId, 1, 1),
         amountCents: 2000,
         status: 'pending',
       })
@@ -492,7 +493,8 @@ describe('revision 9: payment integrity and hardening', () => {
           throw new Error('crash after the gateway charged')
         },
       )
-      expect((await pay(ctx, orderId)).status).toBe(500)
+      // Revision 18.2: a gateway error is 503 PAYMENT_PENDING, not a 500.
+      expect((await pay(ctx, orderId)).status).toBe(503)
       expect((await attemptsFor(orderId))[0]?.status).toBe('pending')
 
       restartContext(ctx)
@@ -509,7 +511,7 @@ describe('revision 9: payment integrity and hardening', () => {
       vi.spyOn(ctx.gateway, 'charge').mockRejectedValueOnce(
         new Error('crash before charging'),
       )
-      expect((await pay(ctx, orderId)).status).toBe(500)
+      expect((await pay(ctx, orderId)).status).toBe(503)
       expect((await chargesAndPayments()).charged).toEqual([])
 
       restartContext(ctx)
@@ -530,7 +532,7 @@ describe('revision 9: payment integrity and hardening', () => {
       // Something already holds this execution's key at another amount.
       await ctx.gateway.charge({
         amountCents: 1999,
-        idempotencyKey: `order-${orderId}-r1-e1`,
+        idempotencyKey: attemptKey(ctx, orderId, 1, 1),
         description: 'an earlier charge under the same key',
       })
 

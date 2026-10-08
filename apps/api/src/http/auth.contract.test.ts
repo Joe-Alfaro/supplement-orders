@@ -563,7 +563,8 @@ describe('personas and users', () => {
     const foreign = await context()
       .request.get(`/api/orders/${sent.id}`)
       .set(USER_ID_HEADER, String(context().seed.otherProviderUserId))
-    expectError(foreign, 403, 'FORBIDDEN')
+    // Revision 18.4 (L6): not yours reads as not found.
+    expectError(foreign, 404, 'NOT_FOUND')
 
     const owner = await context()
       .request.get(`/api/orders/${sent.id}`)
@@ -585,7 +586,8 @@ describe('personas and users', () => {
     const foreign = await context()
       .request.get(`/api/orders/${sent.id}`)
       .set(USER_ID_HEADER, String(context().seed.otherPatientUserId))
-    expectError(foreign, 403, 'FORBIDDEN')
+    // Revision 18.4 (L6): not yours reads as not found.
+    expectError(foreign, 404, 'NOT_FOUND')
 
     const owner = await context()
       .request.get(`/api/orders/${sent.id}`)

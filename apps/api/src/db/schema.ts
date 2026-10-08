@@ -3,6 +3,7 @@ import {
   JOURNAL_KINDS,
   NORMAL_BALANCES,
   ORDER_STATUSES,
+  PAYMENT_ATTEMPT_STATUSES,
 } from '@supplement-orders/domain'
 import { sql } from 'drizzle-orm'
 import {
@@ -20,6 +21,7 @@ import {
   timestamp,
   unique,
   uniqueIndex,
+  uuid,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
 
@@ -47,14 +49,29 @@ export const orderStatusEnum = pgEnum('order_status', [
  * Revision 10: pending = stock held, gateway outcome unknown; succeeded = the
  * gateway charged it; declined = the gateway refused it and the stock was
  * released; conflict = the key is bound to another amount at the gateway, so
- * the outcome is unresolved and the stock stays held.
+ * the outcome is unresolved and the stock stays held. Revision 18.2 adds
+ * abandoned: an admin reconciled a pending attempt the gateway never saw,
+ * after the safety window, and its stock was released.
  */
-export const paymentAttemptStatusEnum = pgEnum('payment_attempt_status', [
-  'pending',
-  'succeeded',
-  'declined',
-  'conflict',
-])
+export const paymentAttemptStatusEnum = pgEnum(
+  'payment_attempt_status',
+  PAYMENT_ATTEMPT_STATUSES,
+)
+
+/**
+ * Revision 18.4 (L4): one row per installation, holding the UUID that
+ * prefixes every new idempotency key, so two databases sharing a processor
+ * account can never collide. Created with its row by migration 0016.
+ */
+export const installation = pgTable(
+  'installation',
+  {
+    singleton: boolean('singleton').primaryKey().default(true),
+    installId: uuid('install_id').notNull().defaultRandom(),
+    createdAt: createdAt(),
+  },
+  (t) => [check('installation_singleton', sql`${t.singleton}`)],
+)
 
 export const fakeGatewayChargeStatusEnum = pgEnum(
   'fake_gateway_charge_status',
@@ -186,6 +203,9 @@ export const orders = pgTable(
       (): AnyPgColumn => orders.id,
     ),
     splitFromRevision: integer('split_from_revision'),
+    // Revision 18.1: set on a cancelled back-order when reopening the order it
+    // was split from merged its lines back, so they are merged only once.
+    mergedBackAt: timestamp('merged_back_at', { withTimezone: true }),
   },
   (t) => [
     check(
@@ -245,8 +265,11 @@ export const orders = pgTable(
       'orders_paid_at_iff_paid',
       sql`(${t.status} = 'paid') = (${t.paidAt} is not null)`,
     ),
-    // Revision 14: each order has at most one direct back-order.
-    uniqueIndex('orders_split_from_order_id_unique').on(t.splitFromOrderId),
+    // Revision 18.1: each order has at most one live (not cancelled) direct
+    // back-order; cancelled ones stay as history.
+    uniqueIndex('orders_split_from_order_id_live_unique')
+      .on(t.splitFromOrderId)
+      .where(sql`${t.status} <> 'cancelled'`),
     check(
       'orders_split_columns_together',
       sql`(${t.splitFromOrderId} is null) = (${t.splitFromRevision} is null)`,
@@ -276,6 +299,7 @@ export const ordersWithStatus = pgView('orders_with_status', {
   revision: integer('revision').notNull(),
   splitFromOrderId: integer('split_from_order_id'),
   splitFromRevision: integer('split_from_revision'),
+  mergedBackAt: timestamp('merged_back_at', { withTimezone: true }),
   effectiveStatus: text('effective_status', {
     enum: ORDER_STATUSES,
   }).notNull(),
@@ -347,6 +371,11 @@ export const paymentAttempts = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
+    /** Revision 18.2: when and by which admin the attempt was reconciled. */
+    reconciledAt: timestamp('reconciled_at', { withTimezone: true }),
+    reconciledByUserId: integer('reconciled_by_user_id').references(
+      () => users.id,
+    ),
   },
   (t) => [
     unique('payment_attempts_order_revision_execution_unique').on(
@@ -472,15 +501,22 @@ export const postings = pgTable(
   ],
 )
 
+/**
+ * Revision 18.2 adds reconcile_release: stock an admin's reconcile gave back
+ * from a declined or abandoned payment attempt (one row per product).
+ */
 export const inventoryAdjustmentKindEnum = pgEnum('inventory_adjustment_kind', [
   'increment',
   'set',
+  'reconcile_release',
 ])
 
 /**
  * Revision 13: one row per successful admin stock change, written in the same
  * transaction as the change. Append-only (migration 0011 rejects UPDATE and
- * DELETE). Payment reservations and releases are not recorded here.
+ * DELETE). Payment reservations, and releases by a patient's pay, are not
+ * recorded here; an admin's reconcile release is (revision 18.2), naming its
+ * attempt.
  */
 export const inventoryAdjustments = pgTable(
   'inventory_adjustments',
@@ -495,6 +531,12 @@ export const inventoryAdjustments = pgTable(
     kind: inventoryAdjustmentKindEnum('kind').notNull(),
     previousQuantity: integer('previous_quantity').notNull(),
     newQuantity: integer('new_quantity').notNull(),
+    /**
+     * Revision 18.2: set only on a reconcile_release, its source. Not a
+     * foreign key: this audit row is append-only history and must not stop a
+     * reopened draft's released attempts from being deleted with it.
+     */
+    paymentAttemptId: integer('payment_attempt_id'),
     createdAt: createdAt(),
   },
   (t) => [

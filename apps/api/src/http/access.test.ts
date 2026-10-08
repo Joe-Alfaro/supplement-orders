@@ -49,7 +49,7 @@ describe('auth, persona and ownership', () => {
     })
   })
 
-  it("returns 403 for another provider's patient and order", async () => {
+  it("returns 404 for another provider's patient and order", async () => {
     const orderId = await createDraft(ctx)
     const other = as(ctx.seed.otherProviderUserId)
 
@@ -68,10 +68,11 @@ describe('auth, persona and ownership', () => {
         .send({ patientId: ctx.seed.patientId }),
     ])
 
-    expect(results.map((r) => r.status)).toEqual([403, 403, 403, 403, 403, 403])
+    // Revision 18.4 (L6): another practice's order or patient is 404.
+    expect(results.map((r) => r.status)).toEqual([404, 404, 404, 404, 404, 404])
   })
 
-  it("returns 403 when a patient opens or pays another patient's order", async () => {
+  it("returns 404 when a patient opens or pays another patient's order", async () => {
     const orderId = await createSentOrder(ctx)
     const other = as(ctx.seed.otherPatientUserId)
 
@@ -82,8 +83,8 @@ describe('auth, persona and ownership', () => {
       .set(other)
       .send({ expectedRevision: 1, expectedTotalCents: 0 })
 
-    expect(view.status).toBe(403)
-    expect(payRes.status).toBe(403)
+    expect(view.status).toBe(404)
+    expect(payRes.status).toBe(404)
   })
 
   it('hides drafts and internals from the patient', async () => {

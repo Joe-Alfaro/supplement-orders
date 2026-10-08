@@ -524,7 +524,8 @@ describe('revision 14: low stock, partial payment and back-orders', () => {
         .post(`/api/orders/${orderId}/pay`)
         .set(as(ctx.seed.providerUserId))
         .send(body)
-      expect([other.status, provider.status]).toEqual([403, 403])
+      // Revision 18.4 (L6): another patient's order is 404, not 403.
+      expect([other.status, provider.status]).toEqual([404, 403])
       expect(await backordersOf(orderId)).toEqual([])
     })
   })

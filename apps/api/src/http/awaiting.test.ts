@@ -102,7 +102,8 @@ describe('GET /api/orders?status=pending_payment', () => {
 
     expect(other.body).toMatchObject({ items: [], total: 0 })
     expect(patient.status).toBe(403)
-    expect(othersPatient.status).toBe(403)
+    // Revision 18.4 (L6): another practice's patient is 404.
+    expect(othersPatient.status).toBe(404)
     expect(mineFiltered.body.total).toBe(1)
   })
 

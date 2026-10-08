@@ -16,6 +16,7 @@ vi.mock('../api', async (importOriginal) => {
 })
 
 const dashboard: DashboardDto = {
+  soldByProduct: [],
   owedToYouCents: 4910,
   gmvCents: 6951,
   providerMarginCents: 3499,

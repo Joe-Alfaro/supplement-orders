@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url'
+import { sql } from 'drizzle-orm'
 import supertest from 'supertest'
 import { createDb, type Db } from '../db/client'
 import { ensureDatabase, testDatabaseUrl } from '../db/databases'
@@ -62,6 +63,23 @@ export interface InternalTestContext extends TestContext {
    * default, means the real clock; reset() clears it.
    */
   clock?: { now: Date | null }
+  /**
+   * Revision 18.4 (L4): this database's installation id, the prefix of every
+   * new idempotency key (`<installId>-order-<id>-r<rev>-e<n>`). Optional so
+   * suites can build their own context; the harness always sets it.
+   */
+  installId?: string
+}
+
+/** The idempotency key the app gives an execution (revision 18.4, L4). */
+export function attemptKey(
+  ctx: Pick<InternalTestContext, 'installId'>,
+  orderId: number,
+  revision: number,
+  execution = 1,
+) {
+  if (ctx.installId === undefined) throw new Error('No installId on context')
+  return `${ctx.installId}-order-${orderId}-r${revision}-e${execution}`
 }
 
 /** This checkout's root; its path keys the test database when no session id is set. */
@@ -126,9 +144,24 @@ export async function createInternalTestContext(
     return toSeedIds(await seedDatabase(db))
   }
 
+  // A scratch database migrated to before 0016 has no installation yet.
+  const [hasInstallation] = (
+    await db.execute<{ present: boolean }>(
+      sql`select to_regclass('public.installation') is not null as present`,
+    )
+  ).rows
+  const [install] = hasInstallation?.present
+    ? (
+        await db.execute<{ install_id: string }>(
+          sql`select install_id from installation`,
+        )
+      ).rows
+    : []
+
   const ctx: InternalTestContext = {
     request: supertest(app),
     seed: await reseed(),
+    installId: install?.install_id,
     db,
     gateway,
     notifier,

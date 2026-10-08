@@ -39,7 +39,7 @@ import {
 import { alias } from 'drizzle-orm/pg-core'
 import type { Db } from '../db/client'
 import type { ReadHooks } from '../server'
-import { forbidden, notFound } from '../http/errors'
+import { notFound } from '../http/errors'
 import { selectJournalSplits, selectOrderJournal } from '../ledger/journals'
 import type { CurrentUser } from '../seams'
 
@@ -77,12 +77,23 @@ const providerUsers = alias(users, 'provider_users')
 /**
  * Order reads go through the orders_with_status view (revision 14.3b), whose
  * `effective_status` reports the derived awaiting_stock. `backorders` is the
- * order's direct child (at most one, by a unique index), for the link back;
- * `priorOrders` is the order it was split from (revision 15.3).
+ * order's latest direct child, for the link back; `priorOrders` is the order
+ * it was split from (revision 15.3).
  */
 const view = ordersWithStatus
 const backorders = alias(ordersWithStatus, 'backorders')
 const priorOrders = alias(orders, 'prior_orders')
+
+/**
+ * Revision 18.1: an order may have cancelled back-orders as history and at
+ * most one live one. A live child is always the newest (none can be created
+ * while one is live), so the newest child is the live one when there is one,
+ * else the most recently cancelled.
+ */
+const latestBackorder = eq(
+  backorders.id,
+  sql`(select max(siblings.id) from ${orders} siblings where siblings.split_from_order_id = ${view.id})`,
+)
 
 /**
  * Revision 15.3: a back-order awaiting payment or stock is blocked by its
@@ -146,6 +157,7 @@ async function selectOrders(db: Reader, where: SQL | undefined) {
       splitFromOrderId: view.splitFromOrderId,
       backorderOrderId: backorders.id,
       backorderStatus: backorders.effectiveStatus,
+      backorderStoredStatus: backorders.status,
       blockedByOrderId,
     })
     .from(view)
@@ -153,7 +165,7 @@ async function selectOrders(db: Reader, where: SQL | undefined) {
     .innerJoin(patientUsers, eq(patientUsers.id, patients.userId))
     .innerJoin(providers, eq(providers.id, view.providerId))
     .innerJoin(providerUsers, eq(providerUsers.id, providers.userId))
-    .leftJoin(backorders, eq(backorders.splitFromOrderId, view.id))
+    .leftJoin(backorders, latestBackorder)
     .leftJoin(priorOrders, eq(priorOrders.id, view.splitFromOrderId))
     .where(where)
     .orderBy(desc(view.createdAt), desc(view.id))
@@ -314,7 +326,11 @@ function quoteFor(
   view: OrderView,
   held: boolean,
 ): PartialPaymentQuoteDto | null {
-  if (order.storedStatus !== 'pending_payment' || order.totalCents === null) {
+  if (
+    order.storedStatus !== 'pending_payment' ||
+    order.totalCents === null ||
+    order.platformFeeCents === null
+  ) {
     return null
   }
   const complete = lines.flatMap((l) =>
@@ -339,7 +355,15 @@ function quoteFor(
         : [[l.productId, available] as const]
     }),
   )
-  return partialPaymentQuoteDto(planPartialPayment(complete, stock), view)
+  // Revision 18.4 (L5): the halves share the stored fee. Revision 18.1: an
+  // order with a live back-order can't split again, so a shortfall makes the
+  // quote unpayable until restocked; every payable quote round-trips.
+  return partialPaymentQuoteDto(planPartialPayment(complete, stock), view, {
+    orderFeeCents: order.platformFeeCents,
+    hasLiveBackorder:
+      order.backorderOrderId !== null &&
+      order.backorderStoredStatus !== 'cancelled',
+  })
 }
 
 /** Per-line availability (revision 14.3), null when stock no longer matters. */
@@ -602,7 +626,7 @@ export function loadPatientOrderDetail(
  * one snapshot (revision 11, N5). A read overlapping a provider's cancel,
  * reopen and edit therefore returns the coherent old sent order or a 404 to
  * the patient, never lines from a newer, unsent draft.
- * 404 if missing (or unsent, for its patient); 403 if not the caller's.
+ * 404 if missing, not the caller's, or (for its patient) unsent.
  */
 export function loadOrderDetailFor(
   db: Db,
@@ -613,13 +637,16 @@ export function loadOrderDetailFor(
   return inSnapshot(db, async (tx) => {
     const order = await findOrderOwnership(tx, orderId)
     if (!order) throw notFound('Order')
+    // Revision 18.4 (L6): another practice's or patient's order is 404, the
+    // same as a missing one, so ids can't be probed.
     if (user.role === 'provider') {
-      if (order.providerId !== user.providerId) throw forbidden()
+      if (order.providerId !== user.providerId) throw notFound('Order')
       return readProviderOrderDetail(tx, orderId, hooks)
     }
-    if (order.patientId !== user.patientId) throw forbidden()
     // Unsent orders (drafts, and drafts cancelled before sending) stay hidden.
-    if (order.sentAt === null) throw notFound('Order')
+    if (order.patientId !== user.patientId || order.sentAt === null) {
+      throw notFound('Order')
+    }
     return readPatientOrderDetail(tx, orderId, hooks)
   })
 }
@@ -684,7 +711,7 @@ export async function listProviderOrderPage(
       .from(view)
       .innerJoin(patients, eq(patients.id, view.patientId))
       .innerJoin(patientUsers, eq(patientUsers.id, patients.userId))
-      .leftJoin(backorders, eq(backorders.splitFromOrderId, view.id))
+      .leftJoin(backorders, latestBackorder)
       .leftJoin(priorOrders, eq(priorOrders.id, view.splitFromOrderId))
       .where(where)
       .orderBy(...ordering)

@@ -18,8 +18,11 @@ import {
   type InternalTestContext,
 } from '../testing/harness'
 import {
+  addLaterAppSchema,
+  migrationCountInFolder,
   migrationsThrough,
   recreateDatabase,
+  removeLaterAppSchema,
   scratchUrl,
 } from '../testing/scratch-db'
 import { runMigrations } from './migrate'
@@ -27,14 +30,21 @@ import { runMigrations } from './migrate'
 // Revision 17.3: migration 0015 checks every existing payment journal's split
 // and provenance. Scratch databases are migrated through 0014, given data, then
 // migrated to the latest: real payments pass, and a row that can't pass fails
-// the migration instead of loosening the check.
+// the migration instead of loosening the check. The current app makes the
+// data, so the scratch databases briefly carry the schema later migrations
+// add for it (addLaterAppSchema).
 
 const LAST_PRE_SPLIT_CHECK_MIGRATION = 14
 
 async function contextThrough0014(suffix: string, folder: string) {
   const databaseUrl = scratchUrl(suffix)
   await recreateDatabase(databaseUrl)
-  return createInternalTestContext({ databaseUrl, migrationsFolder: folder })
+  const ctx = await createInternalTestContext({
+    databaseUrl,
+    migrationsFolder: folder,
+  })
+  await addLaterAppSchema(ctx.db)
+  return ctx
 }
 
 async function migrationCount(ctx: InternalTestContext) {
@@ -102,12 +112,13 @@ describe('migration 0015: the journal split check over existing data', () => {
       )
       expect((await pay(ctx, backorder.rows[0]!.id)).status).toBe(200)
 
+      await removeLaterAppSchema(ctx.db)
       await runMigrations(ctx.db)
     }, 120_000)
 
     it('applies, with every existing payment passing', async () => {
       const ctx = context()
-      expect(await migrationCount(ctx)).toBe(LAST_PRE_SPLIT_CHECK_MIGRATION + 2)
+      expect(await migrationCount(ctx)).toBe(migrationCountInFolder())
       expect(await hasSplitCheck(ctx)).toBe(true)
       const paid = await ctx.db.execute<{ n: number }>(
         sql`select count(*)::int as n from payments`,
@@ -160,6 +171,7 @@ describe('migration 0015: the journal split check over existing data', () => {
 
     it('fails the migration loudly and leaves the database at 0014', async () => {
       const ctx = holder.ctx!
+      await removeLaterAppSchema(ctx.db)
 
       const failure = await runMigrations(ctx.db).then(
         () => null,

@@ -19,6 +19,9 @@ export class ApiError extends Error {
       | 'partialPaymentQuote'
       | 'lines'
       | 'priorOrderId'
+      | 'orderId'
+      | 'revision'
+      | 'amountCents'
     > = {},
   ) {
     super(message)

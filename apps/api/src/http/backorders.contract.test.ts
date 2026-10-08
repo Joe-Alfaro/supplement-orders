@@ -266,10 +266,13 @@ describe('revision 14 availability HTTP contract', () => {
         totalCents: total,
         platformFeeCents: Math.ceil((total * 75) / 10000),
       },
+      // Revision 18.4 (L5): the back-order keeps the rest of the order's fee.
       backorder: {
         subtotalCents: backorderTotal,
         totalCents: backorderTotal,
-        platformFeeCents: Math.ceil((backorderTotal * 75) / 10000),
+        platformFeeCents:
+          Math.ceil(((total + backorderTotal) * 75) / 10000) -
+          Math.ceil((total * 75) / 10000),
       },
     })
     expect(response.body.lines).toMatchObject([
@@ -357,7 +360,9 @@ describe('revision 14 availability HTTP contract', () => {
         },
         ctx.seed[actor],
       )
-      expect(response.status).toBe(403)
+      // Revision 18.4 (L6): another patient's order is 404; a provider is
+      // still refused by role.
+      expect(response.status).toBe(actor === 'otherPatientUserId' ? 404 : 403)
       expect((await detail(id)).body).toEqual(before.body)
       expect(
         (await ctx.request.get('/api/orders').set(as(ctx.seed.patientUserId)))
