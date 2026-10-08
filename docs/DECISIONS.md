@@ -377,7 +377,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 - **Install-scoped keys (L4):** migration 0016 stores one UUID per database; new keys are `<installId>-order-<id>-r<rev>-e<n>`. Existing attempts keep their keys, so retries of them still replay.
 - **Conserved fees (L5):** the in-stock part is charged `min(ceil(75 × paySubtotal / 10000), order fee)` and the back-order stores the rest, so a chain's fees equal the unsplit order's (the audit's 17¢ case is 9¢ + 8¢). Each part's fee is at most its own rounded-up fee, so no margin goes negative, and the journal uses the stored fee that migration 0015 checks.
 - **404 for not yours (L6):** another practice's or patient's order or patient is 404 `NOT_FOUND`, like a missing one. A wrong persona for an endpoint is still 403.
-- **Frozen attempts (L7):** a trigger rejects any change (other than `updated_at`) or delete of an attempt a payment references, like a paid order.
+- **Frozen attempts (L7):** a trigger rejects any update (even of `updated_at`) or delete of an attempt a payment references, on the pattern of the paid-order freeze.
 - **At most 100 lines (L8)** per order, a 400 on `lines`.
 - **Node 22 only (L9):** `.nvmrc` and `engine-strict=true`, so installs on another Node fail fast.
 

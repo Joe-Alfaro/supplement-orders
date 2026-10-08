@@ -104,10 +104,10 @@ export const listAdminJournalsQuerySchema: z.ZodType<
 })
 
 /**
- * Revision 18.2: GET /api/admin/payment-attempts. `unresolved` (the default)
- * lists attempts that are pending, succeeded without a payment, or in
- * conflict; `all` lists every attempt, newest first, so reconciled ones stay
- * visible.
+ * Revision 18.2: GET /api/admin/payment-attempts returns an array.
+ * `unresolved` (the default) lists attempts that are pending, succeeded
+ * without a payment, or in conflict, oldest first; `all` lists every attempt,
+ * newest first, so reconciled ones stay visible.
  */
 export const ADMIN_PAYMENT_ATTEMPT_FILTERS = ['unresolved', 'all'] as const
 export type AdminPaymentAttemptFilter =
@@ -115,11 +115,9 @@ export type AdminPaymentAttemptFilter =
 
 export interface ListAdminPaymentAttemptsQuery {
   status?: AdminPaymentAttemptFilter
-  offset?: string
-  limit?: string
 }
 
-export interface ParsedListAdminPaymentAttemptsQuery extends ParsedPageQuery {
+export interface ParsedListAdminPaymentAttemptsQuery {
   status: AdminPaymentAttemptFilter
 }
 
@@ -128,8 +126,6 @@ export const listAdminPaymentAttemptsQuerySchema: z.ZodType<
   ListAdminPaymentAttemptsQuery
 > = z.object({
   status: z.enum(ADMIN_PAYMENT_ATTEMPT_FILTERS).default('unresolved'),
-  offset: intParam(0, Number.MAX_SAFE_INTEGER, 0),
-  limit: intParam(1, PAGE_LIMIT_MAX, PAGE_LIMIT_DEFAULT),
 })
 
 /**

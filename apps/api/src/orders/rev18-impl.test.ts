@@ -1,5 +1,5 @@
 import {
-  adminPaymentAttemptPageDtoSchema,
+  adminPaymentAttemptListDtoSchema,
   dashboardDtoSchema,
   expectedPayableLinesOf,
   patientOrderDetailDtoSchema,
@@ -321,9 +321,9 @@ describe('revision 18', () => {
         .get('/api/admin/payment-attempts?status=unresolved')
         .set(admin())
       expect(res.status).toBe(200)
-      return adminPaymentAttemptPageDtoSchema
+      return adminPaymentAttemptListDtoSchema
         .parse(res.body)
-        .items.map((item) => item.id)
+        .map((item) => item.id)
     }
 
     it('lists the stranded attempt without patient data', async () => {
@@ -332,8 +332,8 @@ describe('revision 18', () => {
         .get('/api/admin/payment-attempts')
         .set(admin())
       expect(res.status).toBe(200)
-      const page = adminPaymentAttemptPageDtoSchema.parse(res.body)
-      expect(page.items).toEqual([
+      const items = adminPaymentAttemptListDtoSchema.parse(res.body)
+      expect(items).toEqual([
         expect.objectContaining({
           id: attemptId,
           orderId: id,
@@ -344,7 +344,7 @@ describe('revision 18', () => {
       ])
       const text = JSON.stringify(res.body).toLowerCase()
       expect(text).not.toContain('patient')
-      expect(Object.keys(page.items[0]!).sort()).toEqual([
+      expect(Object.keys(items[0]!).sort()).toEqual([
         'ageSeconds',
         'amountCents',
         'createdAt',
@@ -572,9 +572,11 @@ describe('revision 18', () => {
           sql`delete from payment_attempts where order_id = ${id}`,
         ),
       ).rejects.toThrow()
-      await ctx.db.execute(
-        sql`update payment_attempts set updated_at = now() where order_id = ${id}`,
-      )
+      await expect(
+        ctx.db.execute(
+          sql`update payment_attempts set updated_at = now() where order_id = ${id}`,
+        ),
+      ).rejects.toThrow()
     })
 
     it('L8: refuses more than 100 lines', async () => {

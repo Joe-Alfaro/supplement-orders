@@ -6,6 +6,7 @@ import {
   setStockRequestSchema,
   type AdminJournalPageDto,
   type AdminProductPageDto,
+  type AdminPaymentAttemptDto,
   type AdminTrialBalanceDto,
   type ReconcilePaymentAttemptDto,
 } from '@supplement-orders/domain'
@@ -104,8 +105,16 @@ export function adminRouter(ctx: AppContext) {
 
   router.get('/payment-attempts', async (req, res) => {
     requireRole(await auth.getCurrentUser(req), 'admin')
-    const query = parseOrThrow(listAdminPaymentAttemptsQuerySchema, req.query)
-    res.json(await listPaymentAttempts(db, now(), query))
+    const { status } = parseOrThrow(
+      listAdminPaymentAttemptsQuerySchema,
+      req.query,
+    )
+    const body: AdminPaymentAttemptDto[] = await listPaymentAttempts(
+      db,
+      now(),
+      status,
+    )
+    res.json(body)
   })
 
   router.post('/payment-attempts/:id/reconcile', async (req, res) => {

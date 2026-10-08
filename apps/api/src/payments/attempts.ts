@@ -1,9 +1,8 @@
 import type {
   AdminPaymentAttemptDto,
   AdminPaymentAttemptFilter,
-  AdminPaymentAttemptPageDto,
 } from '@supplement-orders/domain'
-import { and, asc, count, desc, eq, inArray, isNull, or } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, or } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import {
   orders,
@@ -66,42 +65,26 @@ function toDto(row: AttemptRow, now: Date): AdminPaymentAttemptDto {
 }
 
 /**
- * GET /api/admin/payment-attempts: `unresolved` lists the attempts needing
- * attention, oldest first; `all` lists every attempt, newest first, so the
- * outcome of each reconcile stays visible.
+ * GET /api/admin/payment-attempts, a plain array: `unresolved` lists the
+ * attempts needing attention, oldest first; `all` lists every attempt, newest
+ * first, so the outcome of each reconcile stays visible. Unresolved attempts
+ * are few by nature (each blocks its order), so the list isn't paged.
  */
 export async function listPaymentAttempts(
   db: Db,
   now: Date,
-  {
-    status,
-    offset,
-    limit,
-  }: { status: AdminPaymentAttemptFilter; offset: number; limit: number },
-): Promise<AdminPaymentAttemptPageDto> {
-  const where = status === 'unresolved' ? unresolved : undefined
-  const ordering =
+  status: AdminPaymentAttemptFilter,
+): Promise<AdminPaymentAttemptDto[]> {
+  const rows =
     status === 'unresolved'
-      ? [asc(paymentAttempts.createdAt), asc(paymentAttempts.id)]
-      : [desc(paymentAttempts.createdAt), desc(paymentAttempts.id)]
-  const [rows, [counted]] = await Promise.all([
-    selectAttempts(db)
-      .where(where)
-      .orderBy(...ordering)
-      .limit(limit)
-      .offset(offset),
-    db
-      .select({ total: count() })
-      .from(paymentAttempts)
-      .leftJoin(payments, eq(payments.paymentAttemptId, paymentAttempts.id))
-      .where(where),
-  ])
-  return {
-    items: rows.map((row) => toDto(row, now)),
-    total: counted?.total ?? 0,
-    offset,
-    limit,
-  }
+      ? await selectAttempts(db)
+          .where(unresolved)
+          .orderBy(asc(paymentAttempts.createdAt), asc(paymentAttempts.id))
+      : await selectAttempts(db).orderBy(
+          desc(paymentAttempts.createdAt),
+          desc(paymentAttempts.id),
+        )
+  return rows.map((row) => toDto(row, now))
 }
 
 /** One attempt as the admin sees it, or undefined when there is none. */

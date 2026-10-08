@@ -45,7 +45,7 @@ export function partialPaymentQuoteDto(
     backorder: totalsDto(backorder, view),
     hasShortfall: plan.hasShortfall,
   }
-  if (plan.payable && plan.hasShortfall && hasLiveBackorder) {
+  if (plan.hasShortfall && hasLiveBackorder) {
     return { ...totals, payable: false, reason: 'awaiting_restock' }
   }
   return { ...totals, payable: plan.payable }

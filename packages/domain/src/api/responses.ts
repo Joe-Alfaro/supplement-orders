@@ -224,9 +224,9 @@ export interface PartialPaymentQuoteDto {
   /** At least one unit is short. */
   hasShortfall: boolean
   /**
-   * Revision 18.1: set only when `payable` is false because the order already
-   * has a live back-order (`backorderOrderId`) and can't split again; it can
-   * be paid once restocked.
+   * Revision 18.1: set only when the order is short while it already has a
+   * live back-order (`backorderOrderId`), so it can't split again; `payable`
+   * is then false, and the order can be paid once restocked.
    */
   reason?: QuoteUnpayableReason
 }
@@ -608,7 +608,6 @@ export interface DashboardDto {
 export interface SoldByProductDto {
   productId: number
   productName: string
-  sku: string
   unitsSold: number
   /** The sum of line totals (quantity × unit price) on paid orders. */
   revenueCents: number
@@ -617,7 +616,6 @@ export interface SoldByProductDto {
 export const soldByProductDtoSchema: z.ZodType<SoldByProductDto> = z.object({
   productId: id,
   productName: z.string(),
-  sku: z.string(),
   unitsSold: z.int().nonnegative(),
   revenueCents: cents,
 })
@@ -823,8 +821,8 @@ export const adminPaymentAttemptDtoSchema: z.ZodType<AdminPaymentAttemptDto> =
     reconciledAt: timestamp.nullable(),
   })
 
-export type AdminPaymentAttemptPageDto = Page<AdminPaymentAttemptDto>
-export const adminPaymentAttemptPageDtoSchema = pageSchema(
+/** GET /api/admin/payment-attempts returns a plain array (no paging). */
+export const adminPaymentAttemptListDtoSchema = z.array(
   adminPaymentAttemptDtoSchema,
 )
 

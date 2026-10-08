@@ -55,8 +55,9 @@ SELECT
   END AS effective_status
 FROM orders o;--> statement-breakpoint
 
--- 18.4 (L7): an attempt a payment references is frozen, like a paid order
--- (migration 0013): only updated_at may change, and it can't be deleted.
+-- 18.4 (L7): an attempt a payment references is frozen, with the trigger
+-- pattern of paid orders (migration 0013) but stricter: no update at all, not
+-- even updated_at, and no delete. Nothing in the app writes such an attempt.
 -- TRUNCATE-based test, seed and e2e resets bypass row triggers as before.
 CREATE FUNCTION forbid_paid_attempt_change() RETURNS trigger
 LANGUAGE plpgsql AS $$
@@ -65,10 +66,6 @@ BEGIN
     IF TG_OP = 'DELETE' THEN
       RETURN OLD;
     END IF;
-    RETURN NEW;
-  END IF;
-  IF TG_OP = 'UPDATE'
-    AND (to_jsonb(NEW) - 'updated_at') = (to_jsonb(OLD) - 'updated_at') THEN
     RETURN NEW;
   END IF;
   RAISE EXCEPTION '% of payment attempt % is not allowed: it is recorded by a payment', TG_OP, OLD.id

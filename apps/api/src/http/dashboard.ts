@@ -32,7 +32,6 @@ interface DashboardRow extends Record<string, unknown> {
 interface SoldByProductRow {
   product_id: number
   product_name: string
-  sku: string
   units_sold: string
   revenue_cents: string
 }
@@ -102,20 +101,18 @@ export function dashboardRouter({ db, auth, now }: AppContext) {
         (select coalesce(json_agg(json_build_object(
                   'product_id', sold.product_id,
                   'product_name', sold.product_name,
-                  'sku', sold.sku,
                   'units_sold', sold.units_sold::text,
                   'revenue_cents', sold.revenue_cents::text)
                 order by sold.revenue_cents desc, sold.product_name, sold.product_id), '[]'::json)
            from (select ${orderItems.productId} as product_id,
                         ${products.name} as product_name,
-                        ${products.sku} as sku,
                         sum(${orderItems.quantity}) as units_sold,
                         sum(${orderItems.quantity} * ${orderItems.unitPriceCents}) as revenue_cents
                    from ${orderItems}
                    join ${orders} on ${orders.id} = ${orderItems.orderId}
                    join ${products} on ${products.id} = ${orderItems.productId}
                   where ${paid}
-                  group by ${orderItems.productId}, ${products.name}, ${products.sku}) sold
+                  group by ${orderItems.productId}, ${products.name}) sold
         ) as sold_by_product
     `)
     const [row] = result.rows
@@ -129,7 +126,6 @@ export function dashboardRouter({ db, auth, now }: AppContext) {
       soldByProduct: row.sold_by_product.map((sold): SoldByProductDto => ({
         productId: Number(sold.product_id),
         productName: sold.product_name,
-        sku: sold.sku,
         unitsSold: exactCents(sold.units_sold, 'units sold'),
         revenueCents: exactCents(sold.revenue_cents, 'revenue'),
       })),
