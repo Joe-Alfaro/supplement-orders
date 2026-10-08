@@ -1,0 +1,15 @@
+# Deploys main to the Railway `web` service. RAILWAY_TOKEN is a Railway project
+# token stored as a masked CI/CD variable; Railway builds the app from railway.json.
+stages:
+  - deploy
+
+deploy:
+  stage: deploy
+  image: node:22
+  tags:
+    - railway-deploy
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  script:
+    - npm i -g @railway/cli
+    - railway up --ci --service web
