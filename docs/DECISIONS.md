@@ -276,21 +276,48 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 - **Decision (user, 2026-10-07):** migration 0012 creates `orders_with_status`, every `orders` column plus `effective_status`, which is `awaiting_stock` for a `pending_payment` order with no line whose product has stock. All order reads use the view; all writes and locks use the table.
 - **Why:** a stored status would need every stock change (admin edits, reservations, releases, sales) to update every open order containing the product, and would drift if any path missed it. The view is always current and costs one indexed `EXISTS` per order row, in the same query (no N+1). Status filters on stored statuses still compare the stored column, so the existing status indexes apply.
-- **Tradeoff:** while an order's own payment holds its last units, it reads as awaiting stock until the payment finishes; and a list filtered on `pending_payment` or `awaiting_stock` evaluates the `EXISTS` per pending order.
+- **Tradeoff:** a list filtered on `pending_payment` or `awaiting_stock` evaluates the `EXISTS` per pending order. (An order whose own payment held its last units used to read as awaiting stock; revision 15.1 fixed that.)
 
 **Back-orders are never edited**
 
 - **Decision:** reopening a back-order is 409 `BACKORDER_NOT_EDITABLE`, before and after cancelling it; cancelling follows the normal rules. Both order DTOs link the two ways with `splitFromOrderId` and `backorderOrderId`.
 - **Why:** a back-order's prices are the ones the patient already agreed to on the original; editing would break that link.
 
+## Audit 4 fixes (revision 15)
+
+**An order's own reservation is its stock (H1)**
+
+- **Decision:** `orders_with_status` (recreated in migration 0013) never reports `awaiting_stock` for an order whose unresolved attempt holds stock, and the quote and per-line availability count that reservation as the order's own: an order whose attempt took the last unit is still payable, for exactly the attempt's lines and amount. The detail DTOs expose `paymentInProgress: { revision, amountCents }`, and the patient page offers **Complete payment**, which pays again with that revision and amount.
+- **Why:** before this, a charge that succeeded but failed to finalize left the order reading as awaiting stock with no Pay button, so the patient had no way to trigger the retry that completes it. The retry reuses the attempt's key, so it verifies by lookup and never charges again.
+
+**Approval covers the exact payable lines (M2)**
+
+- **Decision:** an `available` pay must send `expectedPayableLines`, the in-stock `{ productId, quantity }` set the patient saw, and the server compares it with its own plan under the lock. Any difference is 409 `ORDER_CHANGED` with a fresh quote, even when the revision and total match. Sending it with `mode: 'full'`, or a duplicate product, is a 400.
+- **Why:** a revision and total don't pin down what is bought. Two products at the same price swapping availability, or quantities redistributing, keep the total and would charge for items the patient never approved.
+
+**Cancel and delete apply to the whole chain; the chain pays in order (M3)**
+
+- **Decision:** cancelling an order cancels its downstream back-orders in the same transaction, locking the chain in ascending id (a back-order is always newer than its parent, so that is the lock order every path agrees on). An unresolved attempt anywhere in it refuses the whole cancel. Deleting a reopened original deletes its back-orders too. A back-order can't start a payment while its parent is unpaid: 409 `PRIOR_ORDER_UNPAID` with `priorOrderId`, and the DTOs carry `blockedByOrderId`. An attempt already in progress on a back-order is still completed, so a charged payment is never stranded.
+- **Why:** a back-order paid while its original was cancelled, or left dangling after the original was deleted, made the chain inconsistent, and deleting such an original failed with a 500 on the foreign key.
+- **Tradeoff:** a reopened and resent original can't be split again, because it already has its (cancelled) back-order; it can only be paid in full once restocked. Its back-orders stay cancelled and are never reopened.
+
+**Stock above the bound can be corrected (M4)**
+
+- **Decision:** the stock set's `expectedStockQuantity` accepts any non-negative integer; only the new value is bounded to 0..1,000,000. Releasing a reservation is never clamped.
+- **Why:** a decline after an admin set stock to the maximum leaves stock above it. With a bounded `expected`, nothing could ever match that value again, so it couldn't be corrected.
+
+**Paid order records are frozen in the database (L1)**
+
+- **Decision:** migration 0013 adds `order_items.product_name` and `product_sku`, snapshotted on save and refreshed on send (backfilled from the products), and triggers that reject any change to a paid order except `updated_at`, any delete of it, and any write to its lines. Sent and paid orders show the snapshot; drafts show the live product. The paid split shown to the provider is read from the ledger.
+- **Why:** the ledger was already append-only, but the order rows it describes weren't, and a renamed product changed what a paid order said was sold. Test fixtures that pin a paid order's timestamps switch the trigger off inside their own transaction (`withPaidOrdersUnfrozen`); resets use `TRUNCATE`, as before.
+
 ## What we cut
 
 - Refunds, cancelling paid orders, and reopening paid orders.
 - Provider payouts. The ledger records what's owed; nothing moves money to providers.
 - Real payments, auth, email, shipping, tax.
-- Date-range filters, CSV export and charts on the dashboard. A platform-wide (admin) revenue view.
+- CSV export and charts on the dashboard. A platform-wide (admin) revenue view.
 - Warehouses, purchase orders and receiving. Revision 13 added admin stock editing (see Inventory above), but there's still no model of where stock comes from, and the adjustment audit isn't shown in the UI.
-- A database-level guard against ledger updates or deletes.
 - Automated deploys. Deploys run `railway up` by hand because Railway's auto-deploy supports only GitHub.
 - Order status history. Reopen overwrites the earlier send and cancel times.
 - Dark mode, responsive layout work beyond the centered column, internationalization.
@@ -302,6 +329,6 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 3. Refunds as negative ledger entries, and a payout report per provider.
 4. Real authentication and role-based access behind the existing `Auth` interface, with audit logging on PHI reads.
 5. Rate limiting, structured logging with order and payment ids, and alerting on ledger imbalance or post-charge rollback.
-6. Date filters on the dashboard and a platform-level GMV and fee report.
+6. A platform-level GMV and fee report.
 7. Remove the unused `lower(name)` indexes.
 8. An order events table, so reopen and cancel keep a full status history.

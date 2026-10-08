@@ -3,7 +3,6 @@ import { screen } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
-import { PRIOR_ORDER_UNPAID, type PatientOrder } from '../api/rev15'
 import { renderWithRouter } from '../test/renderWithRouter'
 import PatientOrderView from './PatientOrderView.vue'
 
@@ -47,7 +46,7 @@ function line(
   }
 }
 
-const base: PatientOrder = {
+const base: PatientOrderDetailDto = {
   id: 42,
   view: 'patient',
   revision: 3,
@@ -67,9 +66,12 @@ const base: PatientOrder = {
   splitFromOrderId: null,
   backorderOrderId: null,
   partialPaymentQuote: quoteOf(3000, 0),
+  blockedByOrderId: null,
+  paymentInProgress: null,
+  backorderStatus: null,
 }
 
-async function renderOrder(order: PatientOrder) {
+async function renderOrder(order: PatientOrderDetailDto) {
   vi.mocked(api.getOrder).mockResolvedValue(order)
   await renderWithRouter(PatientOrderView, {
     path: '/my-orders/42',
@@ -85,12 +87,12 @@ beforeEach(() => {
 
 describe('PatientOrderView unresolved attempt (15.1)', () => {
   // The order's own reserved unit is gone from free stock (available 0).
-  const processing: PatientOrder = {
+  const processing: PatientOrderDetailDto = {
     ...base,
     totalCents: 1000,
     lines: [line(1, 1, 1, 0, 1000)],
     partialPaymentQuote: quoteOf(1000, 0),
-    unresolvedAttempt: { revision: 3, amountCents: 1000 },
+    paymentInProgress: { revision: 3, amountCents: 1000 },
   }
 
   it('says the payment is being processed and offers Complete payment', async () => {
@@ -119,13 +121,13 @@ describe('PatientOrderView unresolved attempt (15.1)', () => {
     await renderOrder({
       ...processing,
       revision: 5,
-      unresolvedAttempt: { revision: 4, amountCents: 900 },
+      paymentInProgress: { revision: 4, amountCents: 900 },
     })
     vi.mocked(api.payOrder).mockResolvedValue({
       ...processing,
       status: 'paid',
       paidAt: '2026-10-05T12:10:00.000Z',
-      unresolvedAttempt: null,
+      paymentInProgress: null,
     })
 
     await user.click(screen.getByRole('button', { name: 'Complete payment' }))
@@ -150,7 +152,7 @@ describe('PatientOrderView unresolved attempt (15.1)', () => {
 })
 
 describe('PatientOrderView expectedPayableLines (15.2)', () => {
-  const limited: PatientOrder = {
+  const limited: PatientOrderDetailDto = {
     ...base,
     totalCents: 1000 * 3 + 500 * 2,
     lines: [
@@ -200,7 +202,11 @@ describe('PatientOrderView expectedPayableLines (15.2)', () => {
 })
 
 describe('PatientOrderView chain order (15.3)', () => {
-  const blocked: PatientOrder = { ...base, id: 42, blockedByOrderId: 41 }
+  const blocked: PatientOrderDetailDto = {
+    ...base,
+    id: 42,
+    blockedByOrderId: 41,
+  }
 
   it('hides Pay and links to the unpaid parent', async () => {
     await renderOrder(blocked)
@@ -225,7 +231,7 @@ describe('PatientOrderView chain order (15.3)', () => {
     const user = userEvent.setup()
     await renderOrder(base)
     vi.mocked(api.payOrder).mockRejectedValueOnce(
-      new api.ApiRequestError(409, PRIOR_ORDER_UNPAID, 'Pay order #41 first'),
+      new api.ApiRequestError(409, 'PRIOR_ORDER_UNPAID', 'Pay order #41 first'),
     )
     vi.mocked(api.getOrder).mockResolvedValue(blocked)
 
@@ -244,7 +250,7 @@ describe('PatientOrderView chain order (15.3)', () => {
     vi.mocked(api.payOrder).mockRejectedValueOnce(
       new api.ApiRequestError(
         409,
-        PRIOR_ORDER_UNPAID,
+        'PRIOR_ORDER_UNPAID',
         'Pay order #41 first',
         undefined,
         undefined,

@@ -60,7 +60,10 @@ const backorder: ProviderOrderDetailDto = {
   ledger: [],
   splitFromOrderId: 42,
   backorderOrderId: null,
+  blockedByOrderId: null,
   partialPaymentQuote: null,
+  paymentInProgress: null,
+  backorderStatus: null,
 }
 
 async function renderOrder(order: ProviderOrderDetailDto) {

@@ -8,6 +8,7 @@ import {
   STORED_ORDER_STATUSES,
   type OrderStatus,
   type PartialPaymentQuoteDto,
+  type PaymentInProgressDto,
   type OrderStatusSelection,
   type ProviderOrderListItemDto,
   type ProviderOrderListPageDto,
@@ -29,6 +30,7 @@ import {
   eq,
   inArray,
   isNotNull,
+  isNull,
   ne,
   or,
   sql,
@@ -60,6 +62,7 @@ import {
   orders,
   ordersWithStatus,
   patients,
+  paymentAttempts,
   payments,
   products,
   providers,
@@ -74,10 +77,22 @@ const providerUsers = alias(users, 'provider_users')
 /**
  * Order reads go through the orders_with_status view (revision 14.3b), whose
  * `effective_status` reports the derived awaiting_stock. `backorders` is the
- * order's direct child (at most one, by a unique index), for the link back.
+ * order's direct child (at most one, by a unique index), for the link back;
+ * `priorOrders` is the order it was split from (revision 15.3).
  */
 const view = ordersWithStatus
-const backorders = alias(orders, 'backorders')
+const backorders = alias(ordersWithStatus, 'backorders')
+const priorOrders = alias(orders, 'prior_orders')
+
+/**
+ * Revision 15.3: a back-order awaiting payment or stock is blocked by its
+ * direct parent until that parent is paid; the chain pays in order.
+ */
+const blockedByOrderId = sql<
+  number | null
+>`case when ${view.status} = 'pending_payment' and ${priorOrders.status} <> 'paid' then ${priorOrders.id} end`.mapWith(
+  (value: number | string | null) => (value === null ? null : Number(value)),
+)
 
 /**
  * A status filter on the view. Stored statuses compare the stored column, so
@@ -130,6 +145,8 @@ async function selectOrders(db: Reader, where: SQL | undefined) {
       revision: view.revision,
       splitFromOrderId: view.splitFromOrderId,
       backorderOrderId: backorders.id,
+      backorderStatus: backorders.effectiveStatus,
+      blockedByOrderId,
     })
     .from(view)
     .innerJoin(patients, eq(patients.id, view.patientId))
@@ -137,11 +154,24 @@ async function selectOrders(db: Reader, where: SQL | undefined) {
     .innerJoin(providers, eq(providers.id, view.providerId))
     .innerJoin(providerUsers, eq(providerUsers.id, providers.userId))
     .leftJoin(backorders, eq(backorders.splitFromOrderId, view.id))
+    .leftJoin(priorOrders, eq(priorOrders.id, view.splitFromOrderId))
     .where(where)
     .orderBy(desc(view.createdAt), desc(view.id))
 }
 
 type OrderRow = Awaited<ReturnType<typeof selectOrders>>[number]
+
+/**
+ * Revision 15.5: a draft shows its products as they are now; once sent, a line
+ * shows the name and SKU snapshotted on send, so renaming a product never
+ * changes what a sent or paid order says was sold.
+ */
+const lineProductName = sql<
+  string | null
+>`case when ${orders.status} = 'draft' then ${products.name} else ${orderItems.productName} end`
+const lineSku = sql<
+  string | null
+>`case when ${orders.status} = 'draft' then ${products.sku} else ${orderItems.productSku} end`
 
 async function selectLines(db: Reader, orderIds: number[]) {
   if (orderIds.length === 0) return []
@@ -150,18 +180,86 @@ async function selectLines(db: Reader, orderIds: number[]) {
       lineId: orderItems.id,
       orderId: orderItems.orderId,
       productId: orderItems.productId,
-      productName: products.name,
-      sku: products.sku,
+      productName: lineProductName,
+      sku: lineSku,
       quantity: orderItems.quantity,
       unitPriceCents: orderItems.unitPriceCents,
       unitCogsCents: orderItems.unitCogsCents,
       stockQuantity: products.stockQuantity,
     })
     .from(orderItems)
+    .innerJoin(orders, eq(orders.id, orderItems.orderId))
     .leftJoin(products, eq(products.id, orderItems.productId))
     .where(inArray(orderItems.orderId, orderIds))
     .orderBy(asc(orderItems.id))
 }
+
+/**
+ * Revision 15.5: a paid order's cost of goods, margin and fee as its ledger
+ * recorded them, keyed by order id. Paid splits come from here, never from a
+ * recomputation over the lines.
+ */
+async function selectLedgerSplits(db: Reader, orderIds: number[]) {
+  if (orderIds.length === 0) return new Map<number, LedgerSplit>()
+  const rows = await db
+    .select({
+      orderId: ledgerEntries.orderId,
+      type: ledgerEntries.type,
+      amountCents: ledgerEntries.amountCents,
+    })
+    .from(ledgerEntries)
+    .where(inArray(ledgerEntries.orderId, orderIds))
+  return rows.reduce((acc, row) => {
+    const split = acc.get(row.orderId) ?? {
+      cogsCents: 0,
+      providerMarginCents: 0,
+      platformFeeCents: 0,
+    }
+    const key = LEDGER_SPLIT_KEYS[row.type]
+    acc.set(row.orderId, { ...split, [key]: split[key] + row.amountCents })
+    return acc
+  }, new Map<number, LedgerSplit>())
+}
+
+interface LedgerSplit {
+  cogsCents: number
+  providerMarginCents: number
+  platformFeeCents: number
+}
+
+const LEDGER_SPLIT_KEYS = {
+  cogs: 'cogsCents',
+  provider_margin: 'providerMarginCents',
+  platform_fee: 'platformFeeCents',
+} as const satisfies Record<LedgerEntryDto['type'], keyof LedgerSplit>
+
+/**
+ * Revision 15.1: the order's latest unresolved payment attempt (pending,
+ * succeeded without a payment, or in conflict), or undefined. While one holds
+ * stock, the order's lines are exactly what it reserved.
+ */
+async function selectUnresolvedAttempt(db: Reader, orderId: number) {
+  const [attempt] = await db
+    .select({
+      revision: paymentAttempts.revision,
+      amountCents: paymentAttempts.amountCents,
+      stockHeld: paymentAttempts.stockHeld,
+    })
+    .from(paymentAttempts)
+    .leftJoin(payments, eq(payments.paymentAttemptId, paymentAttempts.id))
+    .where(
+      and(
+        eq(paymentAttempts.orderId, orderId),
+        inArray(paymentAttempts.status, ['pending', 'succeeded', 'conflict']),
+        isNull(payments.id),
+      ),
+    )
+    .orderBy(desc(paymentAttempts.revision), desc(paymentAttempts.execution))
+    .limit(1)
+  return attempt
+}
+
+type UnresolvedAttempt = Awaited<ReturnType<typeof selectUnresolvedAttempt>>
 
 type LineRow = Awaited<ReturnType<typeof selectLines>>[number]
 
@@ -171,7 +269,16 @@ type LineRow = Awaited<ReturnType<typeof selectLines>>[number]
  * line, or a price below its minimum): the server never reports a split it
  * would refuse to charge.
  */
-function splitFor(order: OrderRow, lines: LineRow[]): OrderSplitDto | null {
+function splitFor(
+  order: OrderRow,
+  lines: LineRow[],
+  ledger: LedgerSplit | undefined,
+): OrderSplitDto | null {
+  if (order.storedStatus === 'paid' && ledger !== undefined) {
+    const totalCents =
+      ledger.cogsCents + ledger.providerMarginCents + ledger.platformFeeCents
+    return { subtotalCents: totalCents, totalCents, ...ledger }
+  }
   if (
     order.subtotalCents !== null &&
     order.platformFeeCents !== null &&
@@ -220,18 +327,32 @@ function summaryBase(order: OrderRow) {
     revision: order.revision,
     splitFromOrderId: order.splitFromOrderId,
     backorderOrderId: order.backorderOrderId,
+    blockedByOrderId: order.blockedByOrderId,
   }
+}
+
+/**
+ * Revision 15.1: the stock each line can count on. Live stock, plus the line's
+ * own units while an unresolved attempt holds them: a reservation is the
+ * order's stock, not someone else's.
+ */
+function availableFor(l: LineRow, held: boolean) {
+  if (l.stockQuantity === null) return null
+  return held ? l.stockQuantity + l.quantity : l.stockQuantity
 }
 
 /**
  * Revision 14: what a pay can charge now, from live stock, while the order
  * awaits payment or stock; null otherwise. The same plan the pay makes, minus
  * the stock lock, so a pay with this quote succeeds unless stock moves first.
+ * Revision 15.1: while an attempt holds the stock, the quote is that attempt's
+ * reserved lines and amount.
  */
 function quoteFor(
   order: OrderRow,
   lines: LineRow[],
   view: OrderView,
+  held: boolean,
 ): PartialPaymentQuoteDto | null {
   if (order.storedStatus !== 'pending_payment' || order.totalCents === null) {
     return null
@@ -251,32 +372,35 @@ function quoteFor(
         ],
   )
   const stock = new Map(
-    lines.flatMap((l) =>
-      l.productId === null || l.stockQuantity === null
+    lines.flatMap((l) => {
+      const available = availableFor(l, held)
+      return l.productId === null || available === null
         ? []
-        : [[l.productId, l.stockQuantity] as const],
-    ),
+        : [[l.productId, available] as const]
+    }),
   )
   return partialPaymentQuoteDto(planPartialPayment(complete, stock), view)
 }
 
 /** Per-line availability (revision 14.3), null when stock no longer matters. */
-function lineAvailability(l: LineRow, open: boolean) {
-  if (!open || l.stockQuantity === null) {
+function lineAvailability(l: LineRow, open: boolean, held: boolean) {
+  const available = availableFor(l, held)
+  if (!open || available === null) {
     return { payableQuantity: null, shortQuantity: null }
   }
-  const payableQuantity = Math.min(l.quantity, Math.max(l.stockQuantity, 0))
+  const payableQuantity = Math.min(l.quantity, Math.max(available, 0))
   return { payableQuantity, shortQuantity: l.quantity - payableQuantity }
 }
 
 function providerSummary(
   order: OrderRow,
   lines: LineRow[],
+  ledger: LedgerSplit | undefined,
 ): ProviderOrderSummaryDto {
   return {
     ...summaryBase(order),
     view: 'provider',
-    split: splitFor(order, lines),
+    split: splitFor(order, lines, ledger),
   }
 }
 
@@ -309,8 +433,9 @@ function derived(compute: () => number | null): number | null {
   }
 }
 
-function providerLine(l: LineRow): ProviderOrderLineDto {
+function providerLine(l: LineRow, held: boolean): ProviderOrderLineDto {
   const { unitCogsCents, unitPriceCents } = l
+  const availableQuantity = availableFor(l, held)
   return {
     lineId: l.lineId,
     productId: l.productId,
@@ -328,8 +453,8 @@ function providerLine(l: LineRow): ProviderOrderLineDto {
         ? null
         : derived(() => markupBpsFromPrice(unitCogsCents, unitPriceCents)),
     stockQuantity: l.stockQuantity,
-    availableQuantity: l.stockQuantity,
-    ...lineAvailability(l, true),
+    availableQuantity,
+    ...lineAvailability(l, true, held),
     minUnitPriceCents:
       unitCogsCents === null
         ? null
@@ -337,7 +462,7 @@ function providerLine(l: LineRow): ProviderOrderLineDto {
   }
 }
 
-function patientLine(order: OrderRow, l: LineRow): OrderLineDto {
+function patientLine(order: OrderRow, l: LineRow, held: boolean): OrderLineDto {
   if (
     l.productId === null ||
     l.productName === null ||
@@ -357,8 +482,8 @@ function patientLine(order: OrderRow, l: LineRow): OrderLineDto {
     unitPriceCents: l.unitPriceCents,
     lineTotalCents: l.quantity * l.unitPriceCents,
     availableQuantity:
-      order.storedStatus === 'pending_payment' ? l.stockQuantity : null,
-    ...lineAvailability(l, order.storedStatus === 'pending_payment'),
+      order.storedStatus === 'pending_payment' ? availableFor(l, held) : null,
+    ...lineAvailability(l, order.storedStatus === 'pending_payment', held),
   }
 }
 
@@ -381,13 +506,15 @@ export async function listProviderOrders(
       patientId === undefined ? undefined : eq(view.patientId, patientId),
     ),
   )
-  const lines = groupLines(
-    await selectLines(
-      db,
-      rows.map((o) => o.id),
-    ),
+  const ids = rows.map((o) => o.id)
+  const lines = groupLines(await selectLines(db, ids))
+  const ledgers = await selectLedgerSplits(
+    db,
+    rows.filter((o) => o.storedStatus === 'paid').map((o) => o.id),
   )
-  return rows.map((o) => providerSummary(o, lines.get(o.id) ?? []))
+  return rows.map((o) =>
+    providerSummary(o, lines.get(o.id) ?? [], ledgers.get(o.id)),
+  )
 }
 
 /** Patients see only orders they were sent: never drafts or drafts cancelled unsent. */
@@ -438,7 +565,21 @@ async function loadOne(db: Reader, orderId: number, hooks: ReadHooks = {}) {
   if (!order) throw new Error(`Order ${orderId} disappeared`)
   await hooks.afterOrderHeader?.()
   const lines = await selectLines(db, [orderId])
-  return { order, lines, payment: await loadPayment(db, orderId) }
+  const attempt = await selectUnresolvedAttempt(db, orderId)
+  return { order, lines, attempt, payment: await loadPayment(db, orderId) }
+}
+
+/** Revision 15 detail fields; `held` is whether an attempt holds the stock. */
+function detailExtras(order: OrderRow, attempt: UnresolvedAttempt) {
+  const paymentInProgress: PaymentInProgressDto | null =
+    attempt === undefined
+      ? null
+      : { revision: attempt.revision, amountCents: attempt.amountCents }
+  return {
+    paymentInProgress,
+    backorderStatus: order.backorderStatus,
+    held: attempt?.stockHeld === true,
+  }
 }
 
 async function readProviderOrderDetail(
@@ -446,7 +587,8 @@ async function readProviderOrderDetail(
   orderId: number,
   hooks?: ReadHooks,
 ): Promise<ProviderOrderDetailDto> {
-  const { order, lines, payment } = await loadOne(db, orderId, hooks)
+  const { order, lines, attempt, payment } = await loadOne(db, orderId, hooks)
+  const { held, ...extras } = detailExtras(order, attempt)
   const ledgerRows = await db
     .select({
       id: ledgerEntries.id,
@@ -461,14 +603,16 @@ async function readProviderOrderDetail(
     ...e,
     createdAt: e.createdAt.toISOString(),
   }))
+  const ledgerSplit = (await selectLedgerSplits(db, [orderId])).get(orderId)
   return {
-    ...providerSummary(order, lines),
+    ...providerSummary(order, lines, ledgerSplit),
     patientDateOfBirth: order.patientDateOfBirth,
     patientAddress: order.patientAddress,
-    lines: lines.map(providerLine),
+    lines: lines.map((line) => providerLine(line, held)),
     payment,
     ledger,
-    partialPaymentQuote: quoteFor(order, lines, 'provider'),
+    partialPaymentQuote: quoteFor(order, lines, 'provider', held),
+    ...extras,
   }
 }
 
@@ -477,13 +621,15 @@ async function readPatientOrderDetail(
   orderId: number,
   hooks?: ReadHooks,
 ): Promise<PatientOrderDetailDto> {
-  const { order, lines, payment } = await loadOne(db, orderId, hooks)
+  const { order, lines, attempt, payment } = await loadOne(db, orderId, hooks)
+  const { held, ...extras } = detailExtras(order, attempt)
   return {
     ...patientSummary(order),
     patientAddress: order.patientAddress,
-    lines: lines.map((line) => patientLine(order, line)),
+    lines: lines.map((line) => patientLine(order, line, held)),
     payment,
-    partialPaymentQuote: quoteFor(order, lines, 'patient'),
+    partialPaymentQuote: quoteFor(order, lines, 'patient', held),
+    ...extras,
   }
 }
 
@@ -587,11 +733,13 @@ export async function listProviderOrderPage(
         cancelledAt: view.cancelledAt,
         splitFromOrderId: view.splitFromOrderId,
         backorderOrderId: backorders.id,
+        blockedByOrderId,
       })
       .from(view)
       .innerJoin(patients, eq(patients.id, view.patientId))
       .innerJoin(patientUsers, eq(patientUsers.id, patients.userId))
       .leftJoin(backorders, eq(backorders.splitFromOrderId, view.id))
+      .leftJoin(priorOrders, eq(priorOrders.id, view.splitFromOrderId))
       .where(where)
       .orderBy(...ordering)
       .limit(limit)

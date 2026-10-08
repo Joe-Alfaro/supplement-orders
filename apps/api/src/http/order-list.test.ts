@@ -2,7 +2,13 @@ import { providerOrderListPageDtoSchema } from '@supplement-orders/domain'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { orders } from '../db/schema'
-import { as, createDraft, createSentOrder, pay } from '../testing/flows'
+import {
+  as,
+  createDraft,
+  createSentOrder,
+  pay,
+  withPaidOrdersUnfrozen,
+} from '../testing/flows'
 import {
   createInternalTestContext,
   type InternalTestContext,
@@ -41,7 +47,10 @@ describe('revision 8: provider order list and patient latest-status filter', () 
     const set = Object.fromEntries(
       Object.entries(times).map(([key, value]) => [key, new Date(value)]),
     )
-    await ctx.db.update(orders).set(set).where(eq(orders.id, orderId))
+    // A paid order is frozen (revision 15.5); pinning its times is a fixture.
+    await withPaidOrdersUnfrozen(ctx.db, (tx) =>
+      tx.update(orders).set(set).where(eq(orders.id, orderId)),
+    )
   }
 
   /**

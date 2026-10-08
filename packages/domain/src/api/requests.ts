@@ -258,15 +258,30 @@ export const PAY_MODES = ['full', 'available'] as const
 export type PayMode = (typeof PAY_MODES)[number]
 
 /**
+ * Revision 15.2: one line of the in-stock portion the patient approved, by
+ * product. Lines with nothing payable are left out.
+ */
+export interface ExpectedPayableLine {
+  productId: number
+  quantity: number
+}
+
+/**
  * POST /api/orders/:id/pay (revision 9). The patient echoes the quote they saw;
  * if the order's revision or total has changed since, the server answers 409
  * ORDER_CHANGED and charges nothing. `simulateFailure` forces the fake gateway
  * to decline; ignored when NODE_ENV is production.
  *
  * Revision 14: with `mode: 'available'`, `expectedTotalCents` is the in-stock
- * total the patient saw (PaymentQuoteDto.availableTotalCents). The response is
- * the paid order, whose `backorderOrderId` names the back-order (or is null)
+ * total the patient saw (`partialPaymentQuote.pay.totalCents`). The response
+ * is the paid order, whose `backorderOrderId` names the back-order (or is null)
  * and whose `revision` is the new one after a split.
+ *
+ * Revision 15.2: `mode: 'available'` also requires `expectedPayableLines`,
+ * exactly the in-stock lines the patient saw (any order, one per product,
+ * zero-quantity lines omitted; see `expectedPayableLinesOf`). If the server's
+ * plan differs, the answer is 409 ORDER_CHANGED even when the revision and
+ * total match. It is rejected with `mode: 'full'`.
  */
 export interface PayOrderRequest {
   /** The order's `revision` as shown to the patient. */
@@ -275,16 +290,86 @@ export interface PayOrderRequest {
   expectedTotalCents: number
   simulateFailure?: boolean
   mode?: PayMode
+  /** Required with `mode: 'available'`, rejected otherwise (revision 15.2). */
+  expectedPayableLines?: ExpectedPayableLine[]
 }
 
-export const payOrderRequestSchema: z.ZodType<PayOrderRequest> = z.strictObject(
-  {
+const expectedPayableLineSchema: z.ZodType<ExpectedPayableLine> =
+  z.strictObject({
+    productId: id,
+    quantity: z.int().min(1).max(MAX_LINE_QUANTITY),
+  })
+
+export const payOrderRequestSchema: z.ZodType<PayOrderRequest> = z
+  .strictObject({
     expectedRevision: z.int().min(1).max(Number.MAX_SAFE_INTEGER),
     expectedTotalCents: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
     simulateFailure: z.boolean().optional(),
     mode: z.enum(PAY_MODES).optional(),
-  },
-)
+    expectedPayableLines: z.array(expectedPayableLineSchema).optional(),
+  })
+  .superRefine(({ mode, expectedPayableLines }, ctx) => {
+    if (mode !== 'available') {
+      if (expectedPayableLines !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['expectedPayableLines'],
+          message: '`expectedPayableLines` is only allowed with mode available',
+        })
+      }
+      return
+    }
+    if (expectedPayableLines === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['expectedPayableLines'],
+        message: '`expectedPayableLines` is required with mode available',
+      })
+      return
+    }
+    const seen = new Set<number>()
+    expectedPayableLines.forEach(({ productId }, index) => {
+      if (seen.has(productId)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['expectedPayableLines', index, 'productId'],
+          message: 'A product can appear on only one line',
+        })
+      }
+      seen.add(productId)
+    })
+  })
+
+/**
+ * The `expectedPayableLines` for a displayed order: each line's
+ * `payableQuantity`, omitting lines with none (revision 15.2).
+ */
+export function expectedPayableLinesOf(
+  lines: readonly { productId: number; payableQuantity: number | null }[],
+): ExpectedPayableLine[] {
+  return lines.flatMap(({ productId, payableQuantity }) =>
+    payableQuantity === null || payableQuantity <= 0
+      ? []
+      : [{ productId, quantity: payableQuantity }],
+  )
+}
+
+/**
+ * True when two sets of payable lines name the same products at the same
+ * quantities, in any order (revision 15.2). Zero quantities are ignored.
+ */
+export function samePayableLines(
+  a: readonly ExpectedPayableLine[],
+  b: readonly ExpectedPayableLine[],
+): boolean {
+  const key = (lines: readonly ExpectedPayableLine[]) =>
+    lines
+      .filter((l) => l.quantity > 0)
+      .map((l) => `${l.productId}:${l.quantity}`)
+      .sort()
+      .join(',')
+  return key(a) === key(b)
+}
 
 /**
  * POST /api/orders/:id/send (revision 14). Sending quantities above available
@@ -327,12 +412,15 @@ export interface SetStockRequest {
   expectedStockQuantity: number
 }
 
-const stockQuantity = z.int().min(0).max(STOCK_QUANTITY_MAX)
-
+/**
+ * Revision 15.4: the new value is bounded, but the expected one is any
+ * non-negative integer, so an admin can always correct a stored value above
+ * the bound (stock released by a declined payment is never clamped).
+ */
 export const setStockRequestSchema: z.ZodType<SetStockRequest> = z.strictObject(
   {
-    stockQuantity,
-    expectedStockQuantity: stockQuantity,
+    stockQuantity: z.int().min(0).max(STOCK_QUANTITY_MAX),
+    expectedStockQuantity: z.int().min(0),
   },
 )
 

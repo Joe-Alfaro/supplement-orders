@@ -56,6 +56,9 @@ const original: ProviderOrderDetailDto = {
   splitFromOrderId: null,
   backorderOrderId: 77,
   partialPaymentQuote: null,
+  blockedByOrderId: null,
+  paymentInProgress: null,
+  backorderStatus: null,
 }
 
 async function openOrder(order: ProviderOrderDetailDto) {
@@ -104,6 +107,7 @@ describe('ProviderOrderView back-order chains (15.3)', () => {
       ...original,
       status: 'cancelled',
       cancelledAt: '2026-10-06T09:00:00.000Z',
+      backorderStatus: 'cancelled',
     })
 
     expect(

@@ -91,7 +91,10 @@ const base: PatientOrderDetailDto = {
   payment: null,
   splitFromOrderId: null,
   backorderOrderId: null,
+  blockedByOrderId: null,
   partialPaymentQuote: quoteOf(15000, 3000),
+  paymentInProgress: null,
+  backorderStatus: null,
 }
 
 const limited = base

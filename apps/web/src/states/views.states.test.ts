@@ -121,6 +121,7 @@ const paidSplit = {
 const providerSummary: ProviderOrderSummaryDto = {
   splitFromOrderId: null,
   backorderOrderId: null,
+  blockedByOrderId: null,
   id: 7,
   view: 'provider',
   status: 'paid',
@@ -138,6 +139,8 @@ const providerSummary: ProviderOrderSummaryDto = {
 
 const providerOrder: ProviderOrderDetailDto = {
   partialPaymentQuote: null,
+  paymentInProgress: null,
+  backorderStatus: null,
   ...providerSummary,
   patientDateOfBirth: '1984-03-14',
   patientAddress: '214 Alder St, Portland, OR 97205',
@@ -206,8 +209,11 @@ const draftWithLine: ProviderOrderDetailDto = {
 
 const patientOrder: PatientOrderDetailDto = {
   partialPaymentQuote: null,
+  paymentInProgress: null,
+  backorderStatus: null,
   splitFromOrderId: null,
   backorderOrderId: null,
+  blockedByOrderId: null,
   id: 42,
   view: 'patient',
   status: 'pending_payment',
@@ -242,6 +248,7 @@ const patientOrder: PatientOrderDetailDto = {
 const myOrder: PatientOrderSummaryDto = {
   splitFromOrderId: null,
   backorderOrderId: null,
+  blockedByOrderId: null,
   id: 11,
   view: 'patient',
   status: 'pending_payment',

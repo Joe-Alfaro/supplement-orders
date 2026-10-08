@@ -67,6 +67,7 @@ const PROVIDER_SUMMARY_KEYS = [
   'revision',
   'splitFromOrderId',
   'backorderOrderId',
+  'blockedByOrderId',
   'view',
   'split',
 ]
@@ -85,6 +86,7 @@ const PATIENT_SUMMARY_KEYS = [
   'revision',
   'splitFromOrderId',
   'backorderOrderId',
+  'blockedByOrderId',
   'view',
   'totalCents',
 ]
@@ -96,6 +98,8 @@ const PROVIDER_DETAIL_KEYS = [
   'lines',
   'payment',
   'partialPaymentQuote',
+  'paymentInProgress',
+  'backorderStatus',
   'ledger',
 ]
 
@@ -105,6 +109,8 @@ const PATIENT_DETAIL_KEYS = [
   'lines',
   'payment',
   'partialPaymentQuote',
+  'paymentInProgress',
+  'backorderStatus',
 ]
 
 const SPLIT_KEYS = [
@@ -175,6 +181,7 @@ const AWAITING_KEYS = [
   'cancelledAt',
   'splitFromOrderId',
   'backorderOrderId',
+  'blockedByOrderId',
 ]
 
 const DASHBOARD_KEYS = [
@@ -493,6 +500,7 @@ function awaitingRow(detail: ProviderOrderDetailDto): AwaitingPaymentOrderDto {
     cancelledAt: null,
     splitFromOrderId: null,
     backorderOrderId: null,
+    blockedByOrderId: null,
   }
 }
 
@@ -967,6 +975,7 @@ describe('GET /api/orders', () => {
       revision: cancelled.revision,
       splitFromOrderId: null,
       backorderOrderId: null,
+      blockedByOrderId: null,
       view: 'patient',
       totalCents: split.totalCents,
     })
@@ -1146,6 +1155,7 @@ describe('GET /api/orders?status=pending_payment', () => {
       cancelledAt: null,
       splitFromOrderId: null,
       backorderOrderId: null,
+      blockedByOrderId: null,
     })
 
     const paidPage = await statusPage('paid')
@@ -1163,6 +1173,7 @@ describe('GET /api/orders?status=pending_payment', () => {
       cancelledAt: null,
       splitFromOrderId: null,
       backorderOrderId: null,
+      blockedByOrderId: null,
     })
 
     const cancelledPage = await statusPage('cancelled')
@@ -1180,6 +1191,7 @@ describe('GET /api/orders?status=pending_payment', () => {
       cancelledAt: cancelled.cancelledAt,
       splitFromOrderId: null,
       backorderOrderId: null,
+      blockedByOrderId: null,
     })
 
     const all = await statusPage('all')

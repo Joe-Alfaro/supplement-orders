@@ -27,6 +27,7 @@ import type {
   ProviderOrderSummaryDto,
   UserDto,
 } from '@supplement-orders/domain'
+import { withPaidOrdersUnfrozen } from '../testing/flows'
 import { orders } from '../db/schema'
 import { createInternalTestContext } from '../testing/harness'
 import type { InternalTestContext } from '../testing/harness'
@@ -101,6 +102,7 @@ const PROVIDER_SUMMARY_KEYS = [
   'revision',
   'splitFromOrderId',
   'backorderOrderId',
+  'blockedByOrderId',
   'view',
   'split',
 ]
@@ -119,6 +121,7 @@ const PATIENT_SUMMARY_KEYS = [
   'revision',
   'splitFromOrderId',
   'backorderOrderId',
+  'blockedByOrderId',
   'view',
   'totalCents',
 ]
@@ -130,6 +133,8 @@ const PROVIDER_DETAIL_KEYS = [
   'lines',
   'payment',
   'partialPaymentQuote',
+  'paymentInProgress',
+  'backorderStatus',
   'ledger',
 ]
 
@@ -188,6 +193,7 @@ const ORDER_LIST_ITEM_KEYS = [
   'cancelledAt',
   'splitFromOrderId',
   'backorderOrderId',
+  'blockedByOrderId',
 ]
 
 interface ContextHolder {
@@ -746,19 +752,26 @@ async function markCancelledUnsent(
 }
 
 async function stampOrder(orderId: number, clock: OrderClock): Promise<void> {
-  await context()
-    .db.update(orders)
-    .set({
-      ...(clock.createdAt === undefined
-        ? {}
-        : { createdAt: new Date(clock.createdAt) }),
-      ...(clock.sentAt === undefined ? {} : { sentAt: new Date(clock.sentAt) }),
-      ...(clock.paidAt === undefined ? {} : { paidAt: new Date(clock.paidAt) }),
-      ...(clock.cancelledAt === undefined
-        ? {}
-        : { cancelledAt: new Date(clock.cancelledAt) }),
-    })
-    .where(eq(orders.id, orderId))
+  // A paid order is frozen (revision 15.5); pinning its times is a fixture.
+  await withPaidOrdersUnfrozen(context().db, (tx) =>
+    tx
+      .update(orders)
+      .set({
+        ...(clock.createdAt === undefined
+          ? {}
+          : { createdAt: new Date(clock.createdAt) }),
+        ...(clock.sentAt === undefined
+          ? {}
+          : { sentAt: new Date(clock.sentAt) }),
+        ...(clock.paidAt === undefined
+          ? {}
+          : { paidAt: new Date(clock.paidAt) }),
+        ...(clock.cancelledAt === undefined
+          ? {}
+          : { cancelledAt: new Date(clock.cancelledAt) }),
+      })
+      .where(eq(orders.id, orderId)),
+  )
 }
 
 async function storedTotals(orderId: number): Promise<StoredTotals> {

@@ -295,6 +295,10 @@ export const orderItems = pgTable(
     quantity: integer('quantity').notNull(),
     unitPriceCents: cents('unit_price_cents'),
     unitCogsCents: cents('unit_cogs_cents'),
+    // Revision 15.5: the product's name and SKU, snapshotted when the line is
+    // saved and refreshed on send, so a sent or paid order keeps what was sold.
+    productName: text('product_name'),
+    productSku: text('product_sku'),
   },
   (t) => [
     // Postgres treats NULLs as distinct, so several product-less lines may coexist.
@@ -305,6 +309,10 @@ export const orderItems = pgTable(
     check(
       'order_items_cogs_iff_product',
       sql`(${t.productId} is null) = (${t.unitCogsCents} is null)`,
+    ),
+    check(
+      'order_items_snapshot_iff_product',
+      sql`(${t.productId} is null) = (${t.productName} is null) and (${t.productId} is null) = (${t.productSku} is null)`,
     ),
   ],
 )

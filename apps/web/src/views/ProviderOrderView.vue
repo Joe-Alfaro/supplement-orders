@@ -217,7 +217,11 @@ async function perform(chosen: OrderAction, current: ProviderOrderDetailDto) {
       base-path="/orders"
     />
     <p
-      v-if="order.status === 'cancelled' && order.backorderOrderId"
+      v-if="
+        order.status === 'cancelled' &&
+        order.backorderOrderId &&
+        order.backorderStatus === 'cancelled'
+      "
       class="banner"
       role="status"
     >

@@ -1,13 +1,13 @@
 <script setup lang="ts">
+import {
+  expectedPayableLinesOf,
+  type PatientOrderDetailDto,
+  type PayOrderRequest,
+} from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import Message from 'primevue/message'
 import { computed, onMounted, ref, watch } from 'vue'
 import { ApiRequestError, handleApiError, getOrder, payOrder } from '../api'
-import {
-  PRIOR_ORDER_UNPAID,
-  type PatientOrder,
-  type PayRequest,
-} from '../api/rev15'
 import {
   BackorderLinks,
   ErrorBanner,
@@ -30,7 +30,7 @@ const {
   loading,
   error,
   load,
-} = useResource(async (): Promise<PatientOrder> => {
+} = useResource(async (): Promise<PatientOrderDetailDto> => {
   const detail = await getOrder(Number(props.orderId))
   if (detail.view !== 'patient') {
     throw new ApiRequestError(403, 'FORBIDDEN', 'This is not your order')
@@ -44,7 +44,7 @@ watch(() => props.orderId, load)
 /** The server's quote for the in-stock part (14.5); the UI renders it, never recomputes it. */
 const quote = computed(() => order.value?.partialPaymentQuote ?? null)
 /** 15.1: an unresolved attempt holds this order's stock, so it is never awaiting stock. */
-const attempt = computed(() => order.value?.unresolvedAttempt ?? null)
+const attempt = computed(() => order.value?.paymentInProgress ?? null)
 const status = computed(() => {
   const current = order.value
   if (!current) return null
@@ -57,8 +57,7 @@ const status = computed(() => {
 /** 15.3: set from a 409 PRIOR_ORDER_UNPAID when the reloaded order lacks it. */
 const priorFromError = ref<number | null>(null)
 const blockedByOrderId = computed(() => {
-  const fromOrder = order.value?.blockedByOrderId
-  return fromOrder === undefined ? priorFromError.value : fromOrder
+  return order.value?.blockedByOrderId ?? priorFromError.value
 })
 
 const limited = computed(
@@ -87,9 +86,7 @@ const STOCK_CHANGED = 'Stock changed; please review the updated amounts.'
 const STOCK_CODES = ['INSUFFICIENT_STOCK', 'AWAITING_STOCK']
 
 function priorOrderIdOf(err: ApiRequestError) {
-  const id: unknown = (err.details as { priorOrderId?: unknown } | undefined)
-    ?.priorOrderId
-  return typeof id === 'number' ? id : null
+  return err.details?.priorOrderId ?? null
 }
 
 /** Set when pay was refused because the order changed after it was shown. */
@@ -106,16 +103,6 @@ async function reloadChangedOrder(id: number) {
   } catch (err) {
     payError.value = handleApiError(err)
   }
-}
-
-/** Exactly the in-stock portion the patient saw (15.2). */
-function displayedPayableLines(shown: PatientOrder) {
-  return shown.lines
-    .filter((line) => (line.payableQuantity ?? 0) > 0)
-    .map((line) => ({
-      productId: line.productId,
-      quantity: line.payableQuantity ?? 0,
-    }))
 }
 
 const payLabel = computed(() => {
@@ -139,7 +126,7 @@ async function pay() {
     // An unresolved attempt is retried as it was charged (15.1), never re-quoted.
     const partial = limited.value
     const retry = attempt.value
-    const body: PayRequest = retry
+    const body: PayOrderRequest = retry
       ? {
           expectedRevision: retry.revision,
           expectedTotalCents: retry.amountCents,
@@ -148,7 +135,7 @@ async function pay() {
           ...(partial
             ? {
                 mode: 'available' as const,
-                expectedPayableLines: displayedPayableLines(shown),
+                expectedPayableLines: expectedPayableLinesOf(shown.lines),
               }
             : {}),
           expectedRevision: shown.revision,
@@ -159,7 +146,7 @@ async function pay() {
     order.value = await payOrder(shown.id, body)
     priorFromError.value = null
   } catch (err) {
-    if (err instanceof ApiRequestError && err.code === PRIOR_ORDER_UNPAID) {
+    if (err instanceof ApiRequestError && err.code === 'PRIOR_ORDER_UNPAID') {
       priorFromError.value = priorOrderIdOf(err)
       await reloadChangedOrder(shown.id)
       return

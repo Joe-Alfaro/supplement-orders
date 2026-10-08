@@ -1,4 +1,8 @@
-import { STOCK_QUANTITY_MAX, type AdminProductDto } from '@supplement-orders/domain'
+import {
+  POSTGRES_INTEGER_MAX,
+  STOCK_QUANTITY_MAX,
+  type AdminProductDto,
+} from '@supplement-orders/domain'
 import { and, eq, lte, sql } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import { inventoryAdjustments, products } from '../db/schema'
@@ -69,7 +73,8 @@ export function incrementStock(
 
 /**
  * Compare-and-set: stock becomes `stockQuantity` only if it still equals
- * `expected`. Otherwise 409 STOCK_CHANGED with the current value, e.g. when a
+ * `expected`, which may be any non-negative integer (revision 15.4), so a value
+ * above the bound, left by a released reservation, can always be corrected. Otherwise 409 STOCK_CHANGED with the current value, e.g. when a
  * payment reserved stock or another admin changed it after the admin loaded it.
  */
 export function setStock(
@@ -80,13 +85,21 @@ export function setStock(
   expected: number,
 ): Promise<AdminProductDto> {
   return db.transaction(async (tx) => {
-    const [row] = await tx
-      .update(products)
-      .set({ stockQuantity })
-      .where(
-        and(eq(products.id, productId), eq(products.stockQuantity, expected)),
-      )
-      .returning(adminProductColumns)
+    // Revision 15.4: `expected` is unbounded, but no stored stock can exceed
+    // the integer column, so a larger value simply doesn't match.
+    const [row] =
+      expected > POSTGRES_INTEGER_MAX
+        ? []
+        : await tx
+            .update(products)
+            .set({ stockQuantity })
+            .where(
+              and(
+                eq(products.id, productId),
+                eq(products.stockQuantity, expected),
+              ),
+            )
+            .returning(adminProductColumns)
     if (!row) {
       const current = await currentStock(tx, productId)
       throw new ApiError(
