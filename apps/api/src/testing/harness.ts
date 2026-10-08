@@ -88,15 +88,19 @@ function toSeedIds(result: SeedResult): SeedIds {
 export interface InternalTestOptions {
   /** NODE_ENV the app sees; defaults to 'test'. */
   nodeEnv?: string
+  /** Migration tests only: a scratch database instead of the test database. */
+  databaseUrl?: string
+  /** Migration tests only: migrate this folder (see migrationsThrough). */
+  migrationsFolder?: string
 }
 
 export async function createInternalTestContext(
   options: InternalTestOptions = {},
 ): Promise<InternalTestContext> {
-  const url = testDatabaseUrl(process.env, REPO_ROOT)
+  const url = options.databaseUrl ?? testDatabaseUrl(process.env, REPO_ROOT)
   await ensureDatabase(url)
   const { db, pool, ping } = createDb(url)
-  await runMigrations(db)
+  await runMigrations(db, options.migrationsFolder)
 
   // A gateway constructed without a database (as after a restart) uses this one.
   useFakeGatewayDatabase(db)

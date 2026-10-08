@@ -23,19 +23,26 @@ import type {
   ProductPageDto,
   ProviderOrderDetailDto,
   ReplaceOrderLinesRequest,
+  SignInOptionDto,
   UserDto,
 } from '@supplement-orders/domain'
+import { readStoredUserId } from '../user/storage'
 import { request } from './client'
 
 // One typed function per endpoint in FRONTEND_DESIGN.md §7.
 
-export function listUsers() {
-  return request<UserDto[]>('GET', '/users')
+/**
+ * Revision 17.1: there is no user directory. This returns the signed-in user
+ * from GET /api/users/me as a one-item list, or none when nobody is signed in.
+ */
+export async function listUsers(): Promise<UserDto[]> {
+  if (readStoredUserId() === null) return []
+  return [await request<UserDto>('GET', '/users/me')]
 }
 
-/** The curated login list, already in display order. */
+/** The curated login list, already in display order: id, name and role only. */
 export function listSignInOptions() {
-  return request<UserDto[]>('GET', '/users/sign-in-options')
+  return request<SignInOptionDto[]>('GET', '/users/sign-in-options')
 }
 
 /** Query string for a paged list; empty values are omitted. */

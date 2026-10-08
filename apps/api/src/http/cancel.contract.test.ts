@@ -10,7 +10,6 @@ import {
   patientPageDtoSchema,
   productDtoSchema,
   providerOrderDetailDtoSchema,
-  userDtoSchema,
 } from '@supplement-orders/domain'
 import type {
   ApiErrorCode,
@@ -25,7 +24,6 @@ import type {
   PatientPageDto,
   ProductDto,
   ProviderOrderDetailDto,
-  UserDto,
 } from '@supplement-orders/domain'
 import { createTestContext } from '../testing/harness'
 import type { TestContext } from '../testing/harness'
@@ -48,8 +46,6 @@ import type { TestContext } from '../testing/harness'
 
 const ISO_TIMESTAMP =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
-
-const USER_KEYS = ['id', 'name', 'role', 'providerId', 'patientId']
 
 const PAGE_KEYS = ['items', 'total', 'offset', 'limit']
 
@@ -570,17 +566,8 @@ function expectPaidJournal(detail: ProviderOrderDetailDto): void {
   expect(detail.payment.amountCents).toBe(split.totalCents)
 }
 
-async function listUsers(): Promise<UserDto[]> {
-  const response = await context().request.get('/api/users')
-  expect(response.status).toBe(200)
-  if (!Array.isArray(response.body)) {
-    throw new Error('user list must be an array')
-  }
-  response.body.forEach((user) => {
-    expectExactKeys(user, USER_KEYS)
-  })
-  return z.array(userDtoSchema).parse(response.body)
-}
+/** No seeded user has this id (the largest Postgres integer). */
+const UNKNOWN_USER_ID = 2_147_483_647
 
 async function listProducts(): Promise<ProductDto[]> {
   const response = await context()
@@ -914,9 +901,7 @@ describe('POST /api/orders/:id/cancel', () => {
       'UNAUTHENTICATED',
     )
 
-    const users = await listUsers()
-    const unknownId =
-      users.reduce((highest, user) => Math.max(highest, user.id), 0) + 1
+    const unknownId = UNKNOWN_USER_ID
     const unknown = await cancelAs(placed.detail.id, unknownId)
     expectError(
       { status: unknown.status, body: unknown.body },

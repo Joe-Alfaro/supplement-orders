@@ -53,7 +53,7 @@ export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   cancelled: 'Cancelled',
 }
 
-/** GET /api/users returns UserDto[] (no X-User-Id required). */
+/** GET /api/users/me returns the caller's own UserDto (401 without a known X-User-Id). */
 export interface UserDto {
   id: number
   name: string
@@ -71,6 +71,22 @@ export const userDtoSchema: z.ZodType<UserDto> = z.object({
   role: z.enum(ROLES),
   providerId: id.nullable(),
   patientId: id.nullable(),
+})
+
+/**
+ * GET /api/users/sign-in-options returns SignInOptionDto[] (no X-User-Id
+ * required): the curated demo personas, with no profile ids.
+ */
+export interface SignInOptionDto {
+  id: number
+  name: string
+  role: Role
+}
+
+export const signInOptionDtoSchema: z.ZodType<SignInOptionDto> = z.object({
+  id,
+  name: z.string(),
+  role: z.enum(ROLES),
 })
 
 /**

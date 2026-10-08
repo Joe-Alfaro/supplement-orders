@@ -209,6 +209,23 @@ export async function insertPaymentJournal(
   return journalId
 }
 
+/**
+ * Test fixtures only: a succeeded payment attempt for the order's current
+ * revision, the provenance migration 0015 requires of every payment.
+ */
+export async function insertSucceededAttempt(
+  tx: Pick<Db, 'execute'>,
+  input: { orderId: number; amountCents: number | string; key: string },
+) {
+  const attempt = await tx.execute<{ id: number }>(sql`
+    insert into payment_attempts (order_id, revision, execution, idempotency_key, amount_cents, status, gateway_reference, stock_held)
+    select id, revision, 1 + (select count(*) from payment_attempts where order_id = ${input.orderId}),
+      ${input.key}, ${String(input.amountCents)}::bigint, 'succeeded', ${`ref-${input.key}`}, true
+    from orders where id = ${input.orderId}
+    returning id`)
+  return attempt.rows[0]!.id
+}
+
 /** Stock is read-only over HTTP, so tests set it directly. */
 export async function setStock(
   ctx: InternalTestContext,

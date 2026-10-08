@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { USER_ID_HEADER } from '@supplement-orders/domain'
 import { createTestContext, type TestContext } from './harness'
 
 describe('test harness', () => {
@@ -24,15 +25,21 @@ describe('test harness', () => {
   })
 
   it('serves the seeded users with their stored roles', async () => {
-    const res = await ctx.request.get('/api/users')
-
-    expect(res.status).toBe(200)
-    const roles = new Map(
-      res.body.map((u: { id: number; role: string }) => [u.id, u.role]),
+    const roles = await Promise.all(
+      [
+        ctx.seed.providerUserId,
+        ctx.seed.otherProviderUserId,
+        ctx.seed.patientUserId,
+        ctx.seed.otherPatientUserId,
+      ].map(async (userId) => {
+        const res = await ctx.request
+          .get('/api/users/me')
+          .set(USER_ID_HEADER, String(userId))
+        expect(res.status).toBe(200)
+        return res.body.role
+      }),
     )
-    expect(roles.get(ctx.seed.providerUserId)).toBe('provider')
-    expect(roles.get(ctx.seed.otherProviderUserId)).toBe('provider')
-    expect(roles.get(ctx.seed.patientUserId)).toBe('patient')
-    expect(roles.get(ctx.seed.otherPatientUserId)).toBe('patient')
+
+    expect(roles).toEqual(['provider', 'provider', 'patient', 'patient'])
   })
 })

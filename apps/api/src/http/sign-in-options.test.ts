@@ -1,3 +1,4 @@
+import { USER_ID_HEADER } from '@supplement-orders/domain'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { patients, providers, users } from '../db/schema'
 import {
@@ -67,15 +68,12 @@ describe('GET /api/users/sign-in-options', () => {
     ])
   })
 
-  it('needs no sign-in and returns the same shape as GET /api/users', async () => {
-    const [options, all] = await Promise.all([
-      ctx.request.get('/api/users/sign-in-options'),
-      ctx.request.get('/api/users'),
-    ])
+  it('needs no sign-in and returns only id, name and role', async () => {
+    const res = await ctx.request.get('/api/users/sign-in-options')
 
-    expect(options.status).toBe(200)
-    options.body.forEach((row: { id: number }) =>
-      expect(all.body).toContainEqual(row),
+    expect(res.status).toBe(200)
+    res.body.forEach((row: object) =>
+      expect(Object.keys(row).sort()).toEqual(['id', 'name', 'role']),
     )
   })
 
@@ -107,9 +105,57 @@ describe('GET /api/users/sign-in-options', () => {
     expect(jordan.id).toBe(ctx.seed.patientUserId)
   })
 
-  it('leaves GET /api/users returning every user', async () => {
+  it('has no user directory behind it', async () => {
     const res = await ctx.request.get('/api/users')
 
-    expect(res.body).toHaveLength(7)
+    expect(res.status).toBe(404)
+  })
+})
+
+describe('GET /api/users/me', () => {
+  let ctx: InternalTestContext
+
+  beforeAll(async () => {
+    ctx = await createInternalTestContext()
+  })
+  beforeEach(async () => {
+    await ctx.reset()
+  })
+  afterAll(async () => {
+    await ctx.close()
+  })
+
+  it('restores every sign-in persona as itself, with its profile id', async () => {
+    const options = await ctx.request.get('/api/users/sign-in-options')
+    const restored = await Promise.all(
+      options.body.map(async (option: OptionRow & { id: number }) => {
+        const res = await ctx.request
+          .get('/api/users/me')
+          .set(USER_ID_HEADER, String(option.id))
+        expect(res.status).toBe(200)
+        return res.body
+      }),
+    )
+
+    expect(restored.map(({ id, name, role }) => ({ id, name, role }))).toEqual(
+      options.body,
+    )
+    const patient = restored.find((user) => user.id === ctx.seed.patientUserId)
+    expect(patient).toMatchObject({
+      providerId: null,
+      patientId: ctx.seed.patientId,
+    })
+  })
+
+  it('returns 401 for a missing or unknown X-User-Id', async () => {
+    const missing = await ctx.request.get('/api/users/me')
+    const unknown = await ctx.request
+      .get('/api/users/me')
+      .set(USER_ID_HEADER, '2147483647')
+
+    expect(missing.status).toBe(401)
+    expect(missing.body.error.code).toBe('UNAUTHENTICATED')
+    expect(unknown.status).toBe(401)
+    expect(unknown.body.error.code).toBe('UNAUTHENTICATED')
   })
 })

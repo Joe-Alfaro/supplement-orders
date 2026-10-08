@@ -2,6 +2,7 @@ import { eq, sql } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
   createSentOrder,
+  insertSucceededAttempt,
   journalSplitOf,
   moneyState,
   pay,
@@ -15,6 +16,7 @@ import {
   journals,
   payments,
   postings,
+  products,
   providers,
   users,
 } from './schema'
@@ -88,6 +90,11 @@ describe('database-enforced double-entry ledger', () => {
   ) {
     return ctx.db.transaction(async (tx) => {
       const key = `manual-${orderId}-${Date.now()}`
+      const paymentAttemptId = await insertSucceededAttempt(tx, {
+        orderId,
+        amountCents,
+        key,
+      })
       const [payment] = await tx
         .insert(payments)
         .values({
@@ -95,6 +102,7 @@ describe('database-enforced double-entry ledger', () => {
           amountCents,
           idempotencyKey: key,
           gatewayReference: `ref-${key}`,
+          paymentAttemptId,
         })
         .returning({ id: payments.id })
       if (options.withJournal === false) return
@@ -116,6 +124,26 @@ describe('database-enforced double-entry ledger', () => {
         ),
       )
     })
+  }
+
+  /**
+   * Revision 17.3: the database checks a journal's split against the order's
+   * lines, so hand-built journals are written for an order whose split is
+   * exactly BALANCED: one $10.00 line of a product costing $8.00 (fee 8).
+   */
+  async function balancedOrder() {
+    const [product] = await ctx.db
+      .insert(products)
+      .values({
+        sku: `LEDGER-${Date.now()}-${Math.random()}`,
+        name: 'Ledger fixture',
+        cogsCents: 800,
+        stockQuantity: 10,
+      })
+      .returning({ id: products.id })
+    return createSentOrder(ctx, [
+      { productId: product!.id, quantity: 1, unitPriceCents: 1000 },
+    ])
   }
 
   // The seeded order belongs to provider 1, whose payable is 2100-1.
@@ -247,7 +275,7 @@ describe('database-enforced double-entry ledger', () => {
   })
 
   it('accepts a balanced payment journal written by hand', async () => {
-    const orderId = await createSentOrder(ctx)
+    const orderId = await balancedOrder()
 
     await insertPayment(orderId, 1000, BALANCED)
 
@@ -255,7 +283,7 @@ describe('database-enforced double-entry ledger', () => {
   })
 
   it('rejects at commit a payment without its journal', async () => {
-    const orderId = await createSentOrder(ctx)
+    const orderId = await balancedOrder()
 
     await expectIntegrityViolation(
       insertPayment(orderId, 1000, [], { withJournal: false }),
@@ -264,7 +292,7 @@ describe('database-enforced double-entry ledger', () => {
   })
 
   it('rejects at commit an unbalanced journal', async () => {
-    const orderId = await createSentOrder(ctx)
+    const orderId = await balancedOrder()
 
     await expectIntegrityViolation(
       insertPayment(orderId, 1000, [
@@ -278,7 +306,7 @@ describe('database-enforced double-entry ledger', () => {
   })
 
   it('rejects at commit a single-posting journal', async () => {
-    const orderId = await createSentOrder(ctx)
+    const orderId = await balancedOrder()
 
     await expectIntegrityViolation(
       insertPayment(orderId, 1000, [{ code: '1000', amountCents: 1000 }]),
@@ -286,7 +314,7 @@ describe('database-enforced double-entry ledger', () => {
   })
 
   it('rejects at commit a zero posting', async () => {
-    const orderId = await createSentOrder(ctx)
+    const orderId = await balancedOrder()
 
     await expectIntegrityViolation(
       insertPayment(orderId, 1000, [
@@ -298,7 +326,7 @@ describe('database-enforced double-entry ledger', () => {
   })
 
   it("rejects a Cash posting that doesn't match the payment", async () => {
-    const orderId = await createSentOrder(ctx)
+    const orderId = await balancedOrder()
 
     await expectIntegrityViolation(
       insertPayment(orderId, 1000, [
@@ -310,7 +338,7 @@ describe('database-enforced double-entry ledger', () => {
   })
 
   it('rejects a debit to an account other than Cash', async () => {
-    const orderId = await createSentOrder(ctx)
+    const orderId = await balancedOrder()
 
     await expectIntegrityViolation(
       insertPayment(orderId, 1000, [
@@ -322,7 +350,7 @@ describe('database-enforced double-entry ledger', () => {
   })
 
   it("rejects crediting another provider's payable", async () => {
-    const orderId = await createSentOrder(ctx)
+    const orderId = await balancedOrder()
 
     await expectIntegrityViolation(
       insertPayment(orderId, 1000, [
@@ -335,8 +363,8 @@ describe('database-enforced double-entry ledger', () => {
   })
 
   it("rejects a journal on another order than its payment's", async () => {
-    const orderId = await createSentOrder(ctx)
-    const otherOrderId = await createSentOrder(ctx)
+    const orderId = await balancedOrder()
+    const otherOrderId = await balancedOrder()
 
     await expectIntegrityViolation(
       insertPayment(orderId, 1000, BALANCED, { journalOrderId: otherOrderId }),

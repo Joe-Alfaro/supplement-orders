@@ -295,6 +295,15 @@ export async function sendOrder(
       }
     })
     const split = computeSplitOrThrow(lines)
+    // A $0 line is fine in a draft; a $0 order is not (revision 17.2).
+    if (split.totalCents <= 0) {
+      throw new ApiError(
+        400,
+        'VALIDATION_ERROR',
+        'Order total must be greater than $0.00',
+        'lines',
+      )
+    }
     const lowStock = lines
       .filter((line) => line.quantity > line.stockQuantity)
       .map((line): LowStockLineDto => ({
@@ -534,6 +543,19 @@ function idempotencyKeyFor(
   execution: number,
 ) {
   return `order-${orderId}-r${revision}-e${execution}`
+}
+
+/**
+ * Revision 17.2: a payable total of 0 (a legacy order, or an available-mode
+ * plan whose in-stock lines cost nothing) is refused before any reservation
+ * or charge. No quote is attached: retrying it could only pay $0 again.
+ */
+function nothingToPay() {
+  return new ApiError(
+    409,
+    'ORDER_CHANGED',
+    'This order has nothing to pay: its total is $0.00.',
+  )
 }
 
 function orderChanged(partialPaymentQuote?: PartialPaymentQuoteDto) {
@@ -1004,6 +1026,7 @@ async function preparePayment(
       !approvesLines(request, plan.payLines)
     if (mode === 'full') {
       if (stale) throw orderChanged()
+      if (order.totalCents <= 0) throw nothingToPay()
       if (plan.hasShortfall) throw insufficientStock(lines, stock, quote)
     } else {
       if (!plan.payable) {
@@ -1014,6 +1037,7 @@ async function preparePayment(
         )
       }
       if (stale) throw orderChanged(quote)
+      if (quote.pay.totalCents <= 0) throw nothingToPay()
     }
     // An order splits at most once: a reduced order that came up short again
     // (say, after a decline) can only be paid once restocked.

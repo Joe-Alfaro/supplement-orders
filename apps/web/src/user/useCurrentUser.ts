@@ -1,6 +1,7 @@
-import type { Role, UserDto } from '@supplement-orders/domain'
+import type { Role, SignInOptionDto, UserDto } from '@supplement-orders/domain'
 import { computed, ref } from 'vue'
 import {
+  ApiRequestError,
   handleApiError,
   listSignInOptions,
   listUsers,
@@ -10,10 +11,11 @@ import { showNotice } from './notice'
 import { readStoredUserId, writeStoredUserId } from './storage'
 
 // Module-level state: the current user is the app's only cross-screen client state.
+// Revision 17.1: `users` holds only the signed-in user, from GET /api/users/me,
+// so a restored session works for any user, listed at sign-in or not.
 const users = ref<UserDto[]>([])
-// The curated login list. `users` stays the full list so a restored session
-// works for any user, listed here or not.
-const signInOptions = ref<UserDto[]>([])
+// The curated login list.
+const signInOptions = ref<SignInOptionDto[]>([])
 const selectedUserId = ref<number | null>(readStoredUserId())
 const loadError = ref<string | null>(null)
 let pendingLoad: Promise<void> | null = null
@@ -30,6 +32,12 @@ async function loadUsers() {
     // Forget a stored id that no longer matches a seeded user.
     if (selectedUserId.value !== null && !currentUser.value) signOut()
   } catch (err) {
+    // A stored id the server no longer knows: forget it quietly.
+    if (err instanceof ApiRequestError && err.status === 401) {
+      users.value = []
+      signOut()
+      return
+    }
     loadError.value = handleApiError(err)
     pendingLoad = null
   }
@@ -60,6 +68,8 @@ function ensureSignInOptionsLoaded() {
 function signIn(id: number) {
   selectedUserId.value = id
   writeStoredUserId(id)
+  // The next navigation loads the new user from GET /api/users/me.
+  pendingLoad = null
 }
 
 function signOut() {
@@ -99,7 +109,7 @@ export function roleLabel(role: Role) {
  * Login picker options. Seeded users can share a name, so the user id is added
  * to tell them apart.
  */
-export function userOptions(users: readonly UserDto[]) {
+export function userOptions(users: readonly SignInOptionDto[]) {
   return users.map((user) => {
     const label = `${user.name} (${roleLabel(user.role)})`
     const shared = users.some(
