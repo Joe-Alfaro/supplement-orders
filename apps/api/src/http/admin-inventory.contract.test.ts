@@ -1,5 +1,6 @@
 import {
   STOCK_QUANTITY_MAX,
+  USER_ID_HEADER,
   adminProductDtoSchema,
   adminProductPageDtoSchema,
   stockChangedErrorResponseSchema,
@@ -82,11 +83,13 @@ function expectError(
 }
 
 describe('admin persona', () => {
-  it('lists Ada Admin among the users with no provider or patient id', async () => {
-    const res = await ctx.request.get('/api/users')
+  it('identifies Ada Admin with no provider or patient id', async () => {
+    const res = await ctx.request
+      .get('/api/users/me')
+      .set(USER_ID_HEADER, String(ctx.seed.adminUserId))
 
     expect(res.status).toBe(200)
-    expect(res.body).toContainEqual({
+    expect(res.body).toEqual({
       id: ctx.seed.adminUserId,
       name: 'Ada Admin',
       role: 'admin',
@@ -254,7 +257,11 @@ describe('POST /api/admin/products/:id/stock/increment', () => {
     expect(await adjustments()).toHaveLength(1)
   })
 
-  it('never loses a concurrent increment', async () => {
+  // Revision 17.4: the n increments are serialized by the product row lock by
+  // design, so this test's runtime is n commits back to back (about 130 ms
+  // idle, 300-500 ms on a CPU-starved machine). The timeout only catches a
+  // hang; every assertion below stays exact, so a lost update still fails.
+  it('never loses a concurrent increment', { timeout: 15_000 }, async () => {
     const product = firstProduct()
     const n = 25
 

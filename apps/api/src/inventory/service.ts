@@ -3,7 +3,7 @@ import {
   STOCK_QUANTITY_MAX,
   type AdminProductDto,
 } from '@supplement-orders/domain'
-import { and, eq, lte, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import { inventoryAdjustments, products } from '../db/schema'
 import { ApiError, notFound } from '../http/errors'
@@ -21,8 +21,8 @@ export const adminProductColumns = {
   stockQuantity: products.stockQuantity,
 }
 
-async function currentStock(tx: Tx, productId: number) {
-  const [row] = await tx
+async function currentStock(reader: Db | Tx, productId: number) {
+  const [row] = await reader
     .select({ stockQuantity: products.stockQuantity })
     .from(products)
     .where(eq(products.id, productId))
@@ -33,42 +33,48 @@ async function currentStock(tx: Tx, productId: number) {
 /**
  * Adds `by` atomically: concurrent increments queue on the row lock and each
  * applies on top of the last. 400 on `by` if the result would pass the bound.
+ *
+ * Revision 17.4: one statement, so the row lock is held for a single round
+ * trip. The update and its audit row commit together as before (a statement
+ * is atomic), but a burst of increments no longer queues behind a
+ * BEGIN/UPDATE/INSERT/COMMIT exchange per caller.
  */
-export function incrementStock(
+export async function incrementStock(
   db: Db,
   adminUserId: number,
   productId: number,
   by: number,
 ): Promise<AdminProductDto> {
-  return db.transaction(async (tx) => {
-    const [row] = await tx
-      .update(products)
-      .set({ stockQuantity: sql`${products.stockQuantity} + ${by}` })
-      .where(
-        and(
-          eq(products.id, productId),
-          lte(products.stockQuantity, STOCK_QUANTITY_MAX - by),
-        ),
-      )
-      .returning(adminProductColumns)
-    if (!row) {
-      const stock = await currentStock(tx, productId)
-      throw new ApiError(
-        400,
-        'VALIDATION_ERROR',
-        `Stock is ${stock}; adding ${by} would exceed ${STOCK_QUANTITY_MAX}`,
-        'by',
-      )
-    }
-    await tx.insert(inventoryAdjustments).values({
-      productId,
-      userId: adminUserId,
-      kind: 'increment',
-      previousQuantity: row.stockQuantity - by,
-      newQuantity: row.stockQuantity,
-    })
-    return row
-  })
+  const result = await db.execute<{
+    id: number
+    name: string
+    wholesaleCostCents: string
+    stockQuantity: number
+  }>(sql`
+    with updated as (
+      update ${products}
+      set stock_quantity = stock_quantity + ${by}
+      where id = ${productId} and stock_quantity <= ${STOCK_QUANTITY_MAX - by}
+      returning id, name, cogs_cents, stock_quantity
+    ), audit as (
+      insert into ${inventoryAdjustments}
+        (product_id, user_id, kind, previous_quantity, new_quantity)
+      select id, ${adminUserId}, 'increment', stock_quantity - ${by}, stock_quantity
+      from updated
+    )
+    select id, name, cogs_cents::text as "wholesaleCostCents",
+      stock_quantity as "stockQuantity"
+    from updated`)
+  const [row] = result.rows
+  if (row) return { ...row, wholesaleCostCents: Number(row.wholesaleCostCents) }
+
+  const stock = await currentStock(db, productId)
+  throw new ApiError(
+    400,
+    'VALIDATION_ERROR',
+    `Stock is ${stock}; adding ${by} would exceed ${STOCK_QUANTITY_MAX}`,
+    'by',
+  )
 }
 
 /**

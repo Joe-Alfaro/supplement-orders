@@ -23,18 +23,16 @@ import type {
   ProductPageDto,
   ProviderOrderDetailDto,
   ReplaceOrderLinesRequest,
+  SignInOptionDto,
   UserDto,
 } from '@supplement-orders/domain'
 import { request } from './client'
 
 // One typed function per endpoint in FRONTEND_DESIGN.md §7.
 
-/** A demo persona on the login screen: no patient or provider ids. */
-export type SignInOptionDto = Pick<UserDto, 'id' | 'name' | 'role'>
-
 /** GET /api/users/me: the caller's own identity; 401 when X-User-Id is unknown. */
 export function getCurrentUser() {
-  return request<SignInOptionDto>('GET', '/users/me')
+  return request<UserDto>('GET', '/users/me')
 }
 
 /** The curated login list, already in display order. */

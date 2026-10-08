@@ -2,7 +2,7 @@ import userEvent from '@testing-library/user-event'
 import { screen } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
-import type { SignInOptionDto } from '../api'
+import type { SignInOptionDto } from '@supplement-orders/domain'
 import { renderWithRouter } from '../test/renderWithRouter'
 import LoginView from './LoginView.vue'
 

@@ -519,17 +519,33 @@ function expectPatientNames(
   })
 }
 
+/**
+ * Revision 17.1: there is no user directory, so this reads each seeded user
+ * through GET /api/users/me as that user.
+ */
 async function listUsers(): Promise<UserDto[]> {
-  const response = await context().request.get('/api/users')
-  expect(response.status).toBe(200)
-  if (!Array.isArray(response.body)) {
-    throw new Error('user list must be an array')
-  }
-  response.body.forEach((user) => {
-    expectExactKeys(user, USER_KEYS)
-  })
-  return z.array(userDtoSchema).parse(response.body)
+  const { seed } = context()
+  const ids = [
+    seed.providerUserId,
+    seed.otherProviderUserId,
+    seed.patientUserId,
+    seed.otherPatientUserId,
+    seed.adminUserId,
+  ]
+  return Promise.all(
+    ids.map(async (userId) => {
+      const response = await context()
+        .request.get('/api/users/me')
+        .set(USER_ID_HEADER, String(userId))
+      expect(response.status).toBe(200)
+      expectExactKeys(response.body, USER_KEYS)
+      return userDtoSchema.parse(response.body)
+    }),
+  )
 }
+
+/** No seeded user has this id (the largest Postgres integer). */
+const UNKNOWN_USER_ID = 2_147_483_647
 
 async function listProducts(): Promise<ProductDto[]> {
   const response = await context()
@@ -956,9 +972,7 @@ describe('DELETE /api/orders/:id', () => {
       'UNAUTHENTICATED',
     )
 
-    const users = await listUsers()
-    const unknownId =
-      users.reduce((highest, user) => Math.max(highest, user.id), 0) + 1
+    const unknownId = UNKNOWN_USER_ID
     const unknown = await deleteOrder(draft.id, unknownId)
     expectError(
       { status: unknown.status, body: unknown.body },
@@ -1123,9 +1137,7 @@ describe('POST /api/orders/:id/reopen', () => {
       'UNAUTHENTICATED',
     )
 
-    const users = await listUsers()
-    const unknownId =
-      users.reduce((highest, user) => Math.max(highest, user.id), 0) + 1
+    const unknownId = UNKNOWN_USER_ID
     const unknown = await reopenOrder(cancelled.id, unknownId)
     expectError(
       { status: unknown.status, body: unknown.body },

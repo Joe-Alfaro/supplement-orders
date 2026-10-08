@@ -1,68 +1,29 @@
-import {
-  cpSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { rmSync } from 'node:fs'
 import {
   adminTrialBalanceDtoSchema,
   USER_ID_HEADER,
 } from '@supplement-orders/domain'
 import { sql } from 'drizzle-orm'
-import pg from 'pg'
+import type pg from 'pg'
 import supertest from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { FakePaymentGateway, RecordingNotifier } from '../seams'
 import { createApp } from '../server'
 import { createDb, type Db } from './client'
-import { ensureDatabase, testDatabaseUrl } from './databases'
-import { MIGRATIONS_FOLDER, runMigrations } from './migrate'
+import {
+  migrationsThrough,
+  recreateDatabase,
+  scratchUrl,
+} from '../testing/scratch-db'
+import { runMigrations } from './migrate'
 
 // Revision 16.7: the real 0014 backfill. A scratch database is migrated to
 // 0013 only, given pre-0014 payments and ledger rows, then migrated to 0014.
+// (These hand-built payments predate attempts, so 0015 would reject them; its
+// own test covers that.)
 
-const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url))
 const LAST_PRE_JOURNAL_MIGRATION = 13
-
-/** This checkout's test database name with a suffix, kept a valid identifier. */
-function scratchUrl() {
-  const url = new URL(testDatabaseUrl(process.env, REPO_ROOT))
-  url.pathname = `/${url.pathname.slice(1).slice(0, 55)}_mig0014`
-  return url.toString()
-}
-
-async function recreateDatabase(url: string) {
-  const admin = new URL(url)
-  const name = admin.pathname.slice(1)
-  admin.pathname = '/postgres'
-  const client = new pg.Client({ connectionString: admin.toString() })
-  await client.connect()
-  try {
-    await client.query(
-      `drop database if exists "${name.replaceAll('"', '""')}" with (force)`,
-    )
-  } finally {
-    await client.end()
-  }
-  await ensureDatabase(url)
-}
-
-/** A copy of the migrations folder whose journal stops at migration `last`. */
-function migrationsThrough(last: number) {
-  const folder = mkdtempSync(join(tmpdir(), 'supplement-orders-migrations-'))
-  cpSync(MIGRATIONS_FOLDER, folder, { recursive: true })
-  const journalPath = join(folder, 'meta', '_journal.json')
-  const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as {
-    entries: { idx: number }[]
-  }
-  journal.entries = journal.entries.filter((entry) => entry.idx <= last)
-  writeFileSync(journalPath, JSON.stringify(journal))
-  return folder
-}
+const JOURNAL_MIGRATION = 14
 
 interface OldPayment {
   orderId: number
@@ -173,9 +134,10 @@ async function oldDashboard(db: Db, providerId: number) {
 }
 
 describe('migration 0014: ledger_entries backfilled into journals', () => {
-  const url = scratchUrl()
+  const url = scratchUrl('mig0014')
   const scratch = { db: null as Db | null, pool: null as pg.Pool | null }
   const partial = migrationsThrough(LAST_PRE_JOURNAL_MIGRATION)
+  const throughJournal = migrationsThrough(JOURNAL_MIGRATION)
   const before = {
     dashboards: [] as Awaited<ReturnType<typeof oldDashboard>>[],
   }
@@ -196,12 +158,13 @@ describe('migration 0014: ledger_entries backfilled into journals', () => {
       await oldDashboard(created.db, 1),
       await oldDashboard(created.db, 2),
     ]
-    await runMigrations(created.db)
+    await runMigrations(created.db, throughJournal)
   }, 120_000)
 
   afterAll(async () => {
     await scratch.pool?.end()
     rmSync(partial, { recursive: true, force: true })
+    rmSync(throughJournal, { recursive: true, force: true })
   })
 
   async function rows<T extends Record<string, unknown>>(

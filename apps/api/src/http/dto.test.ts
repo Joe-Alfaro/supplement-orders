@@ -8,6 +8,7 @@ import {
   productPageDtoSchema,
   providerOrderDetailDtoSchema,
   providerOrderSummaryDtoSchema,
+  signInOptionDtoSchema,
   userDtoSchema,
 } from '@supplement-orders/domain'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -44,8 +45,12 @@ describe('responses match the shared DTO schemas', () => {
     const paid = await pay(ctx, paidId)
 
     expectShape(
-      z.array(userDtoSchema),
-      (await ctx.request.get('/api/users')).body,
+      userDtoSchema,
+      (await ctx.request.get('/api/users/me').set(provider)).body,
+    )
+    expectShape(
+      z.array(signInOptionDtoSchema),
+      (await ctx.request.get('/api/users/sign-in-options')).body,
     )
     expectShape(
       productPageDtoSchema,

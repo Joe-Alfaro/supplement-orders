@@ -1,11 +1,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { z } from 'zod'
 import {
   USER_ID_HEADER,
   apiErrorResponseSchema,
   patientPageDtoSchema,
   productPageDtoSchema,
-  userDtoSchema,
 } from '@supplement-orders/domain'
 import type {
   ApiErrorCode,
@@ -14,7 +12,6 @@ import type {
   PatientPageDto,
   ProductDto,
   ProductPageDto,
-  UserDto,
 } from '@supplement-orders/domain'
 import { createTestContext } from '../testing/harness'
 import type { TestContext } from '../testing/harness'
@@ -456,11 +453,8 @@ async function expectInvalidPages(path: string): Promise<void> {
   )
 }
 
-async function listUsers(): Promise<UserDto[]> {
-  const response = await context().request.get('/api/users')
-  expect(response.status).toBe(200)
-  return z.array(userDtoSchema).parse(response.body)
-}
+/** No seeded user has this id (the largest Postgres integer). */
+const UNKNOWN_USER_ID = 2_147_483_647
 
 beforeAll(async () => {
   holder.ctx = await createTestContext()
@@ -737,10 +731,7 @@ describe('GET /api/patients', () => {
 
 describe('list access', () => {
   it('rejects an unknown X-User-Id', async () => {
-    const users = await listUsers()
-    const unknownId = String(
-      users.reduce((highest, user) => Math.max(highest, user.id), 0) + 1,
-    )
+    const unknownId = String(UNKNOWN_USER_ID)
     expectError(
       await getRaw('/api/products', {}, unknownId),
       401,

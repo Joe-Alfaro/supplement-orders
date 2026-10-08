@@ -294,16 +294,29 @@ function exampleLine(products: TestContext['seed']['products']): ExampleLine {
   }
 }
 
+/**
+ * Revision 17.1: there is no user directory, so this reads each seeded user
+ * through GET /api/users/me as that user.
+ */
 async function listUsers(): Promise<UserDto[]> {
-  const response = await context().request.get('/api/users')
-  expect(response.status).toBe(200)
-  if (!Array.isArray(response.body)) {
-    throw new Error('user list must be an array')
-  }
-  response.body.forEach((user) => {
-    expectExactKeys(user, USER_KEYS)
-  })
-  return z.array(userDtoSchema).parse(response.body)
+  const { seed } = context()
+  const ids = [
+    seed.providerUserId,
+    seed.otherProviderUserId,
+    seed.patientUserId,
+    seed.otherPatientUserId,
+    seed.adminUserId,
+  ]
+  return Promise.all(
+    ids.map(async (userId) => {
+      const response = await context()
+        .request.get('/api/users/me')
+        .set(USER_ID_HEADER, String(userId))
+      expect(response.status).toBe(200)
+      expectExactKeys(response.body, USER_KEYS)
+      return userDtoSchema.parse(response.body)
+    }),
+  )
 }
 
 async function listProducts(): Promise<ProductDto[]> {

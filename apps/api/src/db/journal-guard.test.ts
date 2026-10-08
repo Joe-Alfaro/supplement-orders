@@ -1,6 +1,11 @@
 import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { as, createSentOrder, pay } from '../testing/flows'
+import {
+  as,
+  createSentOrder,
+  insertSucceededAttempt,
+  pay,
+} from '../testing/flows'
 import {
   createInternalTestContext,
   type InternalTestContext,
@@ -57,14 +62,30 @@ describe('revision 16 direct SQL journal guards', () => {
       | 'zero'
       | 'unbalanced'
       | 'cash'
-      | 'provider',
+      | 'provider'
+      | 'all_fee'
+      | 'no_attempt'
+      | 'declined_attempt',
   ) {
     const { id, split, providerId } = await fixture()
     const reached = { end: false }
     const work = ctx.db.transaction(async (tx) => {
+      const attemptId =
+        mode === 'no_attempt'
+          ? null
+          : await insertSucceededAttempt(tx, {
+              orderId: id,
+              amountCents: split.totalCents,
+              key: `manual-${id}`,
+            })
+      if (mode === 'declined_attempt') {
+        await tx.execute(
+          sql`update payment_attempts set status = 'declined', gateway_reference = null where id = ${attemptId}`,
+        )
+      }
       const payment = (
         await tx.execute<{ id: number }>(
-          sql`insert into payments (order_id, amount_cents, idempotency_key, gateway_reference) values (${id}, ${split.totalCents}, ${`manual-${id}`}, ${`ref-${id}`}) returning id`,
+          sql`insert into payments (order_id, amount_cents, idempotency_key, gateway_reference, payment_attempt_id) values (${id}, ${split.totalCents}, ${`manual-${id}`}, ${`ref-${id}`}, ${attemptId}) returning id`,
         )
       ).rows[0]!
       if (mode !== 'missing') {
@@ -73,21 +94,27 @@ describe('revision 16 direct SQL journal guards', () => {
             sql`insert into journals (kind, payment_id, order_id, memo) values ('patient_payment', ${payment.id}, ${id}, 'Direct SQL fixture') returning id`,
           )
         ).rows[0]!
-        const values =
-          mode === 'empty'
-            ? []
-            : ([
-                ['1000', split.totalCents + (mode === 'cash' ? 1 : 0)],
-                ['4000', -split.cogsCents],
-                [
-                  `2100-${mode === 'provider' ? providerId + 1 : providerId}`,
-                  -split.providerMarginCents - (mode === 'cash' ? 1 : 0),
-                ],
-                [
-                  '4100',
-                  -split.platformFeeCents + (mode === 'unbalanced' ? 1 : 0),
-                ],
-              ] as [string, number][])
+        function postingValues(): [string, number][] {
+          if (mode === 'empty') return []
+          // Revision 17.3: balanced, but every dollar after cost booked as fee.
+          if (mode === 'all_fee') {
+            return [
+              ['1000', split.totalCents],
+              ['4000', -split.cogsCents],
+              ['4100', -(split.totalCents - split.cogsCents)],
+            ]
+          }
+          return [
+            ['1000', split.totalCents + (mode === 'cash' ? 1 : 0)],
+            ['4000', -split.cogsCents],
+            [
+              `2100-${mode === 'provider' ? providerId + 1 : providerId}`,
+              -split.providerMarginCents - (mode === 'cash' ? 1 : 0),
+            ],
+            ['4100', -split.platformFeeCents + (mode === 'unbalanced' ? 1 : 0)],
+          ]
+        }
+        const values = postingValues()
         const selected = mode === 'single' ? values.slice(0, 1) : values
         await selected.reduce(async (previous, [code, amount]) => {
           await previous
@@ -122,6 +149,9 @@ describe('revision 16 direct SQL journal guards', () => {
     'unbalanced',
     'cash',
     'provider',
+    'all_fee',
+    'no_attempt',
+    'declined_attempt',
   ] as const)('rejects %s at commit (zero may fail earlier)', async (mode) => {
     await manual(mode)
   })

@@ -22,6 +22,7 @@ import {
   createDraft,
   createSentOrder,
   insertPaymentJournal,
+  insertSucceededAttempt,
   moneyState,
   pay,
   patientQuote,
@@ -755,14 +756,26 @@ describe('revision 9: payment integrity and hardening', () => {
         const inserted = await tx.execute<{ id: number }>(sql`
           insert into orders (provider_id, patient_id, status, subtotal_cents,
             platform_fee_cents, total_cents, sent_at, paid_at, revision)
-          select provider_id, patient_id, 'paid', ${huge}::bigint, 0,
-            ${huge}::bigint, now(), now(), 1
+          select provider_id, patient_id, 'pending_payment', ${huge}::bigint, 0,
+            ${huge}::bigint, now(), null, 1
           from orders where id = ${orderId}
           returning id`)
         const bigOrder = inserted.rows[0]!.id
+        // Revision 17.3: the journal's cost must match the line snapshots, and
+        // the payment must come from a succeeded attempt.
+        await tx.execute(sql`
+          insert into order_items (order_id, product_id, quantity, unit_price_cents,
+            unit_cogs_cents, product_name, product_sku)
+          select ${bigOrder}, id, 1, ${huge}::bigint, ${huge}::bigint, name, sku
+          from products where id = ${ctx.seed.products[0]!.id}`)
+        const paymentAttemptId = await insertSucceededAttempt(tx, {
+          orderId: bigOrder,
+          amountCents: huge,
+          key: 'huge-order',
+        })
         const payment = await tx.execute<{ id: number }>(sql`
-          insert into payments (order_id, amount_cents, idempotency_key, gateway_reference)
-          values (${bigOrder}, ${huge}::bigint, 'huge-order', 'ref-huge-order')
+          insert into payments (order_id, amount_cents, idempotency_key, gateway_reference, payment_attempt_id)
+          values (${bigOrder}, ${huge}::bigint, 'huge-order', 'ref-huge-order', ${paymentAttemptId})
           returning id`)
         const paymentId = payment.rows[0]!.id
         await insertPaymentJournal(tx, {
@@ -772,6 +785,9 @@ describe('revision 9: payment integrity and hardening', () => {
           marginCents: 0,
           feeCents: 0,
         })
+        await tx.execute(
+          sql`update orders set status = 'paid', paid_at = now() where id = ${bigOrder}`,
+        )
       })
 
       const res = await ctx.request.get('/api/dashboard').set(provider())

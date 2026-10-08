@@ -28,7 +28,20 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 - **Backfill:** in the same migration transaction, each existing payment and its three ledger rows become one journal (posted at the payment's time, zero amounts omitted). The migration then fires the deferred checks immediately (`SET CONSTRAINTS ALL IMMEDIATE`) so a bad historical row fails the migration before `ledger_entries` is dropped. A test migrates a scratch database to 0013, writes pre-revision-16 payments (including a zero-margin one and a back-order chain), applies 0014 and checks the journals, the trial balance and that the dashboard figures are unchanged.
 - **Domain:** `paymentJournal`, `assertJournalBalances` and `splitFromPostings` in `packages/domain/src/money/journal.ts`, with seeded property tests that every journal balances and round-trips its split. `assertJournalBalances` throws the existing `LedgerImbalanceError` (expected 0). `toLedgerEntries` and `assertLedgerBalances` are removed.
 - **API:** the provider order detail's `ledger` array is replaced by `journal` (null until paid), and a paid split is read from its postings. The dashboard reads postings for GMV, margin and fees, still filtered on `orders.paid_at` in one statement, and adds the all-time `owedToYouCents`. Admins get `GET /api/admin/accounts` (trial balance) and `GET /api/admin/journals` (paged, newest first).
-- **Tradeoff:** a zero-total payment can no longer be recorded (it would have no non-zero postings). No seeded or creatable product has a zero cost in the demo, and every paid order so far has a positive total. Test and seed resets must restore the system accounts after `TRUNCATE`, which they do, keeping their ids at 1-3.
+- **Tradeoff:** a zero-total payment can no longer be recorded (it would have no non-zero postings); revision 17.2 refuses such orders at send and pay, before anything is held or charged. Test and seed resets must restore the system accounts after `TRUNCATE`, which they do, keeping their ids at 1-3.
+
+**The database checks the split, not only the balance (revision 17.3)**
+
+- **Decision:** migration 0015 extends the deferred payment-journal check (`check_payment_journal`, now calling `assert_payment_journal(payment_id)`): the Product sales credit must equal the order lines' `quantity × unit_cogs_cents`, the fee credit the order's stored `platform_fee_cents`, the order's provider payable credit the rest, and the payment must reference a `succeeded` attempt on the same order. The migration runs the check over every existing payment.
+- **Why:** audit 5 showed a balanced journal could still book every dollar after cost as platform fee and pass. The split is the PRD's core money rule, so the database proves it from the order's own snapshots, independent of the application's arithmetic.
+- **Fee source:** the stored fee snapshot, not the fee formula. Every sent order has stored it since the first migration (`orders_totals_present_once_sent`), so no fallback was needed, and a historical fee that differs from today's formula still passes as long as the journal matches what the order recorded.
+- **Existing data:** a payment that can't pass (for example one without an attempt, from before revision 9) fails the migration, which rolls back and leaves the database at 0014. The check is never loosened to let old rows through. The demo and e2e seeds create no payments, and every app-made payment since revision 10 has an attempt.
+- **Tradeoff:** hand-built test fixtures must now create a succeeded attempt and match the order's real lines; the 0014 backfill test stops at 0014 because its pre-revision-9 payments have no attempts.
+
+**No orders with a zero total (revision 17.2)**
+
+- **Decision:** send refuses an order whose total is 0 (400 `VALIDATION_ERROR` on `lines`); pay refuses a payable total of 0 with 409 `ORDER_CHANGED` and no quote, before any split, reservation or charge. A $0 line is still allowed.
+- **Why:** a $0 payment can't be journaled (it has no non-zero postings), so without this an order could be sent, reserve stock and "charge" $0, then fail at commit. Pay checks too because orders sent before this rule, or an `available` plan whose in-stock lines are all free, can still reach it.
 
 **The fee is computed once, on the order subtotal**
 
@@ -147,6 +160,12 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 - **Decision:** `/login` with a user dropdown and a visible "authentication is stubbed" notice, replacing an "Acting as" dropdown in the header, so it's obvious to anyone looking at the demo that auth is fake.
 
+**No public user directory (revision 17.1)**
+
+- **Decision:** `GET /api/users`, which listed every user with their profile ids, is removed. The login dropdown reads `GET /api/users/sign-in-options`, the curated demo personas (each provider, their first two patients, then the admin) with only `id`, `name` and `role`. Session restore reads `GET /api/users/me`, which returns only the caller and is 401 for a missing or unknown `X-User-Id`.
+- **Why:** audit 5 (M1) found the public endpoint exposed the whole patient list, names included, to anyone. Patient names are PHI even in a demo, and nothing needs the full list: the login screen needs a handful of personas and a reloaded page needs only its own user.
+- **Tradeoff:** a generated patient can no longer be picked at sign-in; testing as one means setting its id in local storage, which `/me` then restores.
+
 **Patients are identified by name and date of birth**
 
 - **Decision:** patient search matches the name as a substring, plus an exact date of birth in `MM/DD/YYYY` or `YYYY-MM-DD`. Address isn't searched.
@@ -217,7 +236,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 **Reversed: manual end-to-end checks -> Playwright**
 
 - **First decision:** the end-to-end flow was checked by hand in a browser, to keep the suite small.
-- **Final decision:** six Playwright specs (happy path, gateway failure, cancel, order lifecycle, a stale patient page, and URL-state navigation) on a dedicated `supplement_orders_e2e` database, run with `npm run test:e2e` and kept out of `npm test`.
+- **Final decision:** six Playwright specs at first (happy path, gateway failure, cancel, order lifecycle, a stale patient page, and URL-state navigation), now ten spec files with 25 tests after admin stock, dashboard range, back-order and revision 15 specs were added, on a dedicated `supplement_orders_e2e` database, run with `npm run test:e2e` and kept out of `npm test`.
 - **Why it changed:** the product owner asked whether there was an end-to-end test. After half a dozen revisions to pricing rules, manual checks clearly weren't catching regressions. The happy path asserts exact dashboard and stock deltas, not just "something changed".
 - **Tradeoff:** a browser download and about 30 seconds per run.
 
@@ -225,6 +244,12 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 - **Decision:** API tests run against a real Postgres database, truncated and reseeded per test, with test files run serially. Each checkout gets its own test database.
 - **Why:** per-test transactions that roll back can't test the app's own transaction rollback or concurrent pays. Per-checkout databases fixed a flake where parallel worktrees truncated each other's data.
+
+**The concurrent-increment test (revision 17.4)**
+
+- **Problem:** "never loses a concurrent increment" (25 parallel admin increments of one product) once timed out at 5 s under full-suite load. It takes about 130 ms on an idle machine; with the CPU twice oversubscribed it took 460-920 ms, and a second suite on another database didn't slow it. The increments are serialized by the product row lock by design, and each one held that lock across a BEGIN/UPDATE/INSERT/COMMIT exchange through Docker's port proxy, so any stall of the Postgres VM is paid by all 25 in a row.
+- **Decision:** the increment is now one statement (an `UPDATE ... RETURNING` with the audit `INSERT` in a CTE), so the lock is held for a single round trip and the update and audit row still commit together. Under the same CPU stress it took 280-520 ms. The test also gets an explicit 15 s timeout, because its runtime is n back-to-back commits by design and the timeout only needs to catch a hang.
+- **Why this doesn't hide a lost update:** every assertion is unchanged and exact: final stock is the start plus 25, there are 25 audit rows, each `new = previous + 1`, and the 25 previous values are all distinct. A larger pool wouldn't help, since the row lock serializes the work anyway.
 
 **Style rules as lint rules**
 
@@ -235,10 +260,10 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 **Railway, one service plus Postgres**
 
-- **Decision:** deploy to Railway as a single Node service that serves both the API and the built SPA, plus a Railway Postgres service. Node 22 LTS, built with Railpack. Deploys run `railway up` from `main`.
+- **Decision:** deploy to Railway as a single Node service that serves both the API and the built SPA, plus a Railway Postgres service. Node 22 LTS, built with Railpack. GitLab CI deploys every push to `main` (the `deploy` job in `.gitlab-ci.yml` runs `railway up --ci --service web` with a project token stored as a masked CI/CD variable).
 - **Why:** one deployable, one origin, no CORS, matching the architecture's single-service plan. Railway Postgres supports the `pg_trgm` extension the search migration needs.
 - **Alternatives:** separate static hosting for the SPA (two deploys and CORS); Neon for Postgres (also supports `pg_trgm`, but one more account and provider).
-- **Tradeoff:** Railway's repo auto-deploy supports only GitHub and this repository is on GitLab, so deploys are manual. Railway has deprecated Config as Code, so `railway.json` is a record and the settings live on the service; recreating the service means applying them again.
+- **Tradeoff:** Railway's repo auto-deploy supports only GitHub and this repository is on GitLab, so the deploy is a CI job holding a Railway token rather than Railway watching the repository. Railway has deprecated Config as Code, so `railway.json` is a record and the settings live on the service; recreating the service means applying them again.
 
 **Simulated gateway failure off in production**
 
@@ -259,7 +284,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 **Stubbed auth on a public URL (accepted risk)**
 
-- **Decision:** the public demo uses the same stub login: anyone with the URL can sign in as any seeded user.
+- **Decision:** the public demo uses the same stub login: anyone with the URL can sign in as any demo persona (and, by setting a user id, as any seeded user).
 - **Why:** real auth is out of scope for the brief, and all the data is fake. The README and the login screen both say auth is stubbed.
 - **Tradeoff:** visitors can create, pay or cancel orders as anyone, so the live data isn't trustworthy and the dashboard totals can change between visits.
 
@@ -335,17 +360,15 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 - Real payments, auth, email, shipping, tax.
 - CSV export and charts on the dashboard. A platform-wide revenue report (the admin trial balance shows the fee revenue balance, but not by period).
 - Warehouses, purchase orders and receiving. Revision 13 added admin stock editing (see Inventory above), but there's still no model of where stock comes from, and the adjustment audit isn't shown in the UI.
-- Automated deploys. Deploys run `railway up` by hand because Railway's auto-deploy supports only GitHub.
 - Order status history. Reopen overwrites the earlier send and cancel times.
 - Dark mode, responsive layout work beyond the centered column, internationalization.
 
 ## What we'd do next
 
-1. Deploy from CI (a GitHub mirror or a CI job with a Railway token) instead of `railway up` by hand.
-2. A reconciliation job or support tool for unresolved payment attempts (including `conflict`), backed by a real processor's lookup and webhooks.
-3. Refunds as reversing journals, and payouts as journals debiting the provider payable.
-4. Real authentication and role-based access behind the existing `Auth` interface, with audit logging on PHI reads.
-5. Rate limiting, structured logging with order and payment ids, and alerting on ledger imbalance or post-charge rollback.
-6. A platform-level GMV and fee report.
-7. Remove the unused `lower(name)` indexes.
-8. An order events table, so reopen and cancel keep a full status history.
+1. A reconciliation job or support tool for unresolved payment attempts (including `conflict`), backed by a real processor's lookup and webhooks.
+2. Refunds as reversing journals, and payouts as journals debiting the provider payable.
+3. Real authentication and role-based access behind the existing `Auth` interface, with audit logging on PHI reads.
+4. Rate limiting, structured logging with order and payment ids, and alerting on ledger imbalance or post-charge rollback.
+5. A platform-level GMV and fee report.
+6. Remove the unused `lower(name)` indexes.
+7. An order events table, so reopen and cancel keep a full status history.

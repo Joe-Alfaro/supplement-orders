@@ -4,6 +4,7 @@ import {
   as,
   createSentOrder,
   insertPaymentJournal,
+  insertSucceededAttempt,
   journalSplitOf,
   moneyState,
   pay,
@@ -122,15 +123,22 @@ describe('revision 15 frozen paid records', () => {
   it('L1 paid split equals the immutable journal, including legacy fee rounding', async () => {
     const id = await createSentOrder(ctx)
     // Construct a balanced historical payment with a different fee from the
-    // current formula and a historical cost adjustment BEFORE paid freezes it. This distinguishes a journal read
-    // from recomputation without disabling any production integrity trigger.
+    // current formula, stored on the order BEFORE paid freezes it. This
+    // distinguishes a journal read from recomputation without disabling any
+    // production integrity trigger. (Revision 17.3: the journal's cost must
+    // match the order's line snapshots, so only the fee differs.)
     const before = await detail(id)
     const total: number = before.body.split.totalCents
-    const cogs: number = before.body.split.cogsCents - 1
+    const cogs: number = before.body.split.cogsCents
     const fee: number = before.body.split.platformFeeCents - 1
     await ctx.db.transaction(async (tx) => {
+      const paymentAttemptId = await insertSucceededAttempt(tx, {
+        orderId: id,
+        amountCents: total,
+        key: `legacy-${id}`,
+      })
       const payment = await tx.execute<{ id: number }>(
-        sql`insert into payments (order_id, amount_cents, idempotency_key, gateway_reference) values (${id}, ${total}, ${`legacy-${id}`}, ${`legacy-ref-${id}`}) returning id`,
+        sql`insert into payments (order_id, amount_cents, idempotency_key, gateway_reference, payment_attempt_id) values (${id}, ${total}, ${`legacy-${id}`}, ${`legacy-ref-${id}`}, ${paymentAttemptId}) returning id`,
       )
       const paymentId = payment.rows[0]!.id
       await insertPaymentJournal(tx, {

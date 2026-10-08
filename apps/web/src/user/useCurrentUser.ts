@@ -1,4 +1,4 @@
-import type { Role } from '@supplement-orders/domain'
+import type { Role, SignInOptionDto, UserDto } from '@supplement-orders/domain'
 import { ref } from 'vue'
 import {
   ApiRequestError,
@@ -6,7 +6,6 @@ import {
   handleApiError,
   listSignInOptions,
   onUnauthenticated,
-  type SignInOptionDto,
 } from '../api'
 import { showNotice } from './notice'
 import { readStoredUserId, writeStoredUserId } from './storage'
@@ -16,7 +15,7 @@ import { readStoredUserId, writeStoredUserId } from './storage'
 // and the login screen lists only the curated demo personas.
 const signInOptions = ref<SignInOptionDto[]>([])
 const selectedUserId = ref<number | null>(readStoredUserId())
-const currentUser = ref<SignInOptionDto | null>(null)
+const currentUser = ref<UserDto | null>(null)
 const loadError = ref<string | null>(null)
 let pendingRestore: Promise<void> | null = null
 let pendingSignInOptions: Promise<void> | null = null
