@@ -1,3 +1,4 @@
+import { expectedPayableLinesOf } from '@supplement-orders/domain'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { as, createDraft, createSentOrder } from '../testing/flows'
 import { createTestContext, type TestContext } from '../testing/harness'
@@ -230,6 +231,7 @@ describe('revision 14 availability HTTP contract', () => {
       mode: 'available',
       expectedRevision: 999,
       expectedTotalCents: 1,
+      expectedPayableLines: [],
     })
     expect(response.status).toBe(409)
     expect(response.body.error.code).toBe('AWAITING_STOCK')
@@ -283,11 +285,13 @@ describe('revision 14 availability HTTP contract', () => {
       mode: 'available',
       expectedRevision: before.body.revision,
       expectedTotalCents: before.body.totalCents,
+      expectedPayableLines: expectedPayableLinesOf(before.body.lines),
     })
     expect(response.status).toBe(200)
     expect(response.body).toMatchObject({
       status: 'paid',
       backorderOrderId: null,
+      blockedByOrderId: null,
       revision: before.body.revision,
       totalCents: before.body.totalCents,
     })
@@ -349,6 +353,7 @@ describe('revision 14 availability HTTP contract', () => {
           mode: 'available',
           expectedRevision: before.body.revision,
           expectedTotalCents: input[0]!.unitPriceCents,
+          expectedPayableLines: expectedPayableLinesOf(before.body.lines),
         },
         ctx.seed[actor],
       )

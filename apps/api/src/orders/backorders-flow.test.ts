@@ -1,4 +1,5 @@
 import {
+  expectedPayableLinesOf,
   insufficientStockErrorResponseSchema,
   lowStockUnacknowledgedErrorResponseSchema,
   patientOrderDetailDtoSchema,
@@ -75,6 +76,9 @@ describe('revision 14: low stock, partial payment and back-orders', () => {
           ? detail.totalCents
           : detail.partialPaymentQuote!.pay.totalCents,
       mode,
+      ...(mode === 'available'
+        ? { expectedPayableLines: expectedPayableLinesOf(detail.lines) }
+        : {}),
     }
   }
 
@@ -398,7 +402,12 @@ describe('revision 14: low stock, partial payment and back-orders', () => {
       const res = await ctx.request
         .post(`/api/orders/${orderId}/pay`)
         .set(as(ctx.seed.patientUserId))
-        .send({ expectedRevision: 1, expectedTotalCents: 0, mode: 'available' })
+        .send({
+          expectedRevision: 1,
+          expectedTotalCents: 0,
+          mode: 'available',
+          expectedPayableLines: [],
+        })
       expect(res.status).toBe(409)
       expect(res.body.error.code).toBe('AWAITING_STOCK')
       expect(ctx.gateway.charges).toHaveLength(0)

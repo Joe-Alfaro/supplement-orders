@@ -47,6 +47,10 @@ describe('revision 14 back-order payment integrity', () => {
         expectedRevision: order!.revision,
         expectedTotalCents:
           2 * lines[0]!.unitPriceCents + lines[2]!.unitPriceCents,
+        expectedPayableLines: [
+          { productId: a!.id, quantity: 2 },
+          { productId: c!.id, quantity: 1 },
+        ],
       },
     }
   }
@@ -157,6 +161,7 @@ describe('revision 14 back-order payment integrity', () => {
         expect(detail.body).toMatchObject({
           splitFromOrderId: f.id,
           backorderOrderId: null,
+          blockedByOrderId: null,
         })
         const list = await ctx.request.get('/api/orders').set(as(user))
         expect(list.body).toEqual(
@@ -294,6 +299,7 @@ describe('revision 14 back-order payment integrity', () => {
       mode: 'available',
       expectedRevision: 1,
       expectedTotalCents: f.lines[0]!.unitPriceCents,
+      expectedPayableLines: [{ productId: f.lines[0]!.productId, quantity: 1 }],
     })
     expect(second.status).toBe(200)
     const third: number = second.body.backorderOrderId

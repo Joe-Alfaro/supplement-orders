@@ -66,6 +66,7 @@ describe('GET /api/orders?status=pending_payment', () => {
       cancelledAt: null,
       splitFromOrderId: null,
       backorderOrderId: null,
+      blockedByOrderId: null,
     })
   })
 

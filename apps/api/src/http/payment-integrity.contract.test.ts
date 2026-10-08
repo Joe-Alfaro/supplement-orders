@@ -37,6 +37,7 @@ const PROVIDER_SUMMARY_KEYS = [
   'revision',
   'splitFromOrderId',
   'backorderOrderId',
+  'blockedByOrderId',
 ]
 
 const PATIENT_SUMMARY_KEYS = [
@@ -55,6 +56,7 @@ const PATIENT_SUMMARY_KEYS = [
   'revision',
   'splitFromOrderId',
   'backorderOrderId',
+  'blockedByOrderId',
 ]
 
 const PROVIDER_DETAIL_KEYS = [
@@ -64,6 +66,8 @@ const PROVIDER_DETAIL_KEYS = [
   'lines',
   'payment',
   'partialPaymentQuote',
+  'paymentInProgress',
+  'backorderStatus',
   'ledger',
 ]
 
@@ -73,6 +77,8 @@ const PATIENT_DETAIL_KEYS = [
   'lines',
   'payment',
   'partialPaymentQuote',
+  'paymentInProgress',
+  'backorderStatus',
 ]
 
 const DASHBOARD_KEYS = [

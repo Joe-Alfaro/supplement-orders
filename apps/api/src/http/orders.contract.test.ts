@@ -41,6 +41,7 @@ const PROVIDER_DETAIL_KEYS = [
   'revision',
   'splitFromOrderId',
   'backorderOrderId',
+  'blockedByOrderId',
   'view',
   'split',
   'patientDateOfBirth',
@@ -48,6 +49,8 @@ const PROVIDER_DETAIL_KEYS = [
   'lines',
   'payment',
   'partialPaymentQuote',
+  'paymentInProgress',
+  'backorderStatus',
   'ledger',
 ]
 

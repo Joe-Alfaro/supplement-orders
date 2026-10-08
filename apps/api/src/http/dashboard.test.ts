@@ -5,7 +5,12 @@ import {
   createInternalTestContext,
   type InternalTestContext,
 } from '../testing/harness'
-import { as, createSentOrder, pay } from '../testing/flows'
+import {
+  as,
+  createSentOrder,
+  pay,
+  withPaidOrdersUnfrozen,
+} from '../testing/flows'
 
 describe('GET /api/dashboard', () => {
   let ctx: InternalTestContext
@@ -92,8 +97,11 @@ describe('GET /api/dashboard range (revision 11a-v2)', () => {
   async function paidOrderAt(paidAt: string) {
     const orderId = await createSentOrder(ctx)
     expect((await pay(ctx, orderId)).status).toBe(200)
-    await ctx.db.execute(
-      sql`update orders set paid_at = ${paidAt}::timestamptz where id = ${orderId}`,
+    // A paid order is frozen (revision 15.5); pinning paid_at is a fixture.
+    await withPaidOrdersUnfrozen(ctx.db, (tx) =>
+      tx.execute(
+        sql`update orders set paid_at = ${paidAt}::timestamptz where id = ${orderId}`,
+      ),
     )
     return orderId
   }
