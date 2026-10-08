@@ -6,7 +6,6 @@ import type {
   CreateOrderRequest,
   IncrementStockRequest,
   SetStockRequest,
-  DashboardDto,
   ListOrdersQuery,
   ListPatientsQuery,
   ProviderOrderListPageDto,
@@ -27,6 +26,11 @@ import type {
   UserDto,
 } from '@supplement-orders/domain'
 import { request } from './client'
+import type {
+  Dashboard18Dto,
+  PaymentAttemptDto,
+  ReconcileResultDto,
+} from './rev18'
 
 // One typed function per endpoint in FRONTEND_DESIGN.md §7.
 
@@ -187,7 +191,7 @@ export function getDashboard(params: DashboardParams = {}) {
     if (value) search.set(key, value)
   })
   const query = search.toString()
-  return request<DashboardDto>('GET', `/dashboard${query ? `?${query}` : ''}`)
+  return request<Dashboard18Dto>('GET', `/dashboard${query ? `?${query}` : ''}`)
 }
 
 /** GET /api/admin/accounts (admin only): the trial balance. */
@@ -204,5 +208,21 @@ export function listAdminJournals(query: ListQuery = {}) {
   return request<AdminJournalPageDto>(
     'GET',
     `/admin/journals${search ? `?${search}` : ''}`,
+  )
+}
+
+/** GET /api/admin/payment-attempts?status=unresolved (admin only): no patient data. */
+export function listUnresolvedPaymentAttempts() {
+  return request<PaymentAttemptDto[]>(
+    'GET',
+    '/admin/payment-attempts?status=unresolved',
+  )
+}
+
+/** POST .../:id/reconcile (admin only); 409 RECONCILE_TOO_EARLY inside the window. */
+export function reconcilePaymentAttempt(attemptId: number) {
+  return request<ReconcileResultDto>(
+    'POST',
+    `/admin/payment-attempts/${attemptId}/reconcile`,
   )
 }

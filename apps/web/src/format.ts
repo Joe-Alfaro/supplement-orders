@@ -17,3 +17,16 @@ export function formatDateOfBirth(isoDate: string) {
   const [, year, month, day] = match
   return `${month}/${day}/${year}`
 }
+
+/** A duration in seconds as its largest whole unit: "5 minutes", "2 hours", "1 day". */
+export function formatAge(seconds: number) {
+  const units = [
+    { name: 'day', size: 86400 },
+    { name: 'hour', size: 3600 },
+    { name: 'minute', size: 60 },
+  ]
+  const unit = units.find((candidate) => seconds >= candidate.size)
+  if (!unit) return 'under a minute'
+  const count = Math.floor(seconds / unit.size)
+  return `${count} ${unit.name}${count === 1 ? '' : 's'}`
+}

@@ -23,6 +23,14 @@ beforeEach(() => {
 })
 
 describe('LoginView', () => {
+  it('labels the personas as fictitious demo data (18.4)', async () => {
+    await renderWithRouter(LoginView, { path: '/login' })
+
+    expect(
+      await screen.findByText('Demo personas (fictitious data)'),
+    ).toBeVisible()
+  })
+
   it('lists exactly the curated options, in order, with no search box', async () => {
     const actor = userEvent.setup()
     await renderWithRouter(LoginView, { path: '/login' })

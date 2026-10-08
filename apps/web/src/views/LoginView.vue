@@ -33,6 +33,7 @@ async function submit() {
     <Message severity="info" :closable="false">
       Authentication is stubbed for this demo: choose a user to continue.
     </Message>
+    <p class="demo-label">Demo personas (fictitious data)</p>
     <ErrorBanner
       v-if="loadError"
       :message="`Could not load users: ${loadError}`"

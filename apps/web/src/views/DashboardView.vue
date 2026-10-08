@@ -1,8 +1,5 @@
 <script setup lang="ts">
-import type {
-  DashboardDto,
-  DashboardRangePreset,
-} from '@supplement-orders/domain'
+import type { DashboardRangePreset } from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable, { type DataTablePageEvent } from 'primevue/datatable'
@@ -12,6 +9,7 @@ import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, type LocationQuery } from 'vue-router'
+import type { Dashboard18Dto } from '../api/rev18'
 import { ApiRequestError, getDashboard, searchProducts } from '../api'
 import { ErrorBanner, MoneyText, PageSummary, StatTile } from '../components'
 import {
@@ -68,7 +66,7 @@ function fallBackToDefault() {
   listUrl.replaceQuery(urlQuery(inventoryState()))
 }
 
-const sales = useResource(async (): Promise<DashboardDto> => {
+const sales = useResource(async (): Promise<Dashboard18Dto> => {
   try {
     return await getDashboard(toDashboardParams(range.value))
   } catch (error) {
@@ -83,9 +81,9 @@ function urlQuery(state: InventoryUrlState) {
   return { ...inventoryToUrl(state), ...rangeToQuery(range.value) }
 }
 
-// Read-only: shows available stock. A payment attempt reserves an order's
-// quantities before charging, a decline gives them back, and a recorded payment
-// keeps them as the sale. Nobody edits stock by hand.
+// Read-only (FR5 deviation, see the README): admins manage stock, providers only
+// see it. A payment attempt reserves an order's quantities before charging, a
+// decline gives them back, and a recorded payment keeps them as the sale.
 const initial = inventoryFromUrl(route.query)
 const inventory = usePagedSearch(searchProducts, {
   initialQuery: initial.q,
@@ -277,6 +275,29 @@ function onInventoryPage(event: DataTablePageEvent) {
           :cents="sales.data.value.owedToYouCents"
         />
       </div>
+    </template>
+    <template v-if="sales.data.value">
+      <h3 id="sold-heading">Sold by product</h3>
+      <p
+        v-if="(sales.data.value.soldByProduct ?? []).length === 0"
+        role="status"
+      >
+        No products sold in this range.
+      </p>
+      <DataTable
+        v-else
+        :value="sales.data.value.soldByProduct"
+        data-key="productId"
+        :table-props="{ 'aria-labelledby': 'sold-heading' }"
+      >
+        <Column field="productName" header="Product" />
+        <Column field="units" header="Units sold" />
+        <Column header="Revenue">
+          <template #body="{ data }"
+            ><MoneyText :cents="data.revenueCents"
+          /></template>
+        </Column>
+      </DataTable>
     </template>
     <p class="section-links">
       <RouterLink to="/orders?status=paid">See paid orders →</RouterLink>

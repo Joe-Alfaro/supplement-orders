@@ -8,6 +8,7 @@ import Button from 'primevue/button'
 import Message from 'primevue/message'
 import { computed, onMounted, ref, watch } from 'vue'
 import { ApiRequestError, handleApiError, getOrder, payOrder } from '../api'
+import type { PartialPaymentQuote18Dto } from '../api/rev18'
 import {
   BackorderLinks,
   ErrorBanner,
@@ -60,6 +61,12 @@ const blockedByOrderId = computed(() => {
   return order.value?.blockedByOrderId ?? priorFromError.value
 })
 
+/** 18.1: the server says nothing can be paid until a live back-order restocks. */
+const awaitingRestock = computed(() => {
+  const current = quote.value as PartialPaymentQuote18Dto | null
+  return current?.payable === false && current.reason === 'awaiting_restock'
+})
+
 const limited = computed(
   () =>
     status.value === 'pending_payment' &&
@@ -69,7 +76,10 @@ const limited = computed(
     quote.value.hasShortfall,
 )
 const payableNow = computed(
-  () => status.value === 'pending_payment' && blockedByOrderId.value === null,
+  () =>
+    status.value === 'pending_payment' &&
+    blockedByOrderId.value === null &&
+    !awaitingRestock.value,
 )
 
 const paying = ref(false)
@@ -83,6 +93,8 @@ interface ChangedNotice {
 }
 
 const STOCK_CHANGED = 'Stock changed; please review the updated amounts.'
+// 18.2: new in revision 18; the domain error codes gain it on merge.
+const PAYMENT_PENDING = 'PAYMENT_PENDING'
 const STOCK_CODES = ['INSUFFICIENT_STOCK', 'AWAITING_STOCK']
 
 function priorOrderIdOf(err: ApiRequestError) {
@@ -148,6 +160,14 @@ async function pay() {
   } catch (err) {
     if (err instanceof ApiRequestError && err.code === 'PRIOR_ORDER_UNPAID') {
       priorFromError.value = priorOrderIdOf(err)
+      await reloadChangedOrder(shown.id)
+      return
+    }
+    if (
+      err instanceof ApiRequestError &&
+      (err.code as string) === PAYMENT_PENDING
+    ) {
+      // A charge is in flight or its outcome is unknown: show the saved attempt.
       await reloadChangedOrder(shown.id)
       return
     }
@@ -220,7 +240,7 @@ async function pay() {
       Some items have limited stock.
     </Message>
     <Message
-      v-if="status === 'awaiting_stock'"
+      v-if="status === 'awaiting_stock' && !awaitingRestock"
       severity="info"
       class="banner"
       role="status"
@@ -228,6 +248,20 @@ async function pay() {
     >
       These items are out of stock. You'll be able to pay once they're back in
       stock.
+    </Message>
+    <Message
+      v-if="awaitingRestock && order.status !== 'cancelled'"
+      severity="info"
+      class="banner"
+      role="status"
+      aria-live="polite"
+    >
+      Some items are still on back-order
+      <RouterLink
+        v-if="order.backorderOrderId"
+        :to="`/my-orders/${order.backorderOrderId}`"
+        >#{{ order.backorderOrderId }}</RouterLink
+      >. You can pay once they're back in stock.
     </Message>
     <LinesTable
       :lines="order.lines"

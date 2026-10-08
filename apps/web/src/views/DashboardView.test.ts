@@ -7,6 +7,7 @@ import { screen, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
+import type { Dashboard18Dto } from '../api/rev18'
 import { renderWithRouter } from '../test/renderWithRouter'
 import DashboardView from './DashboardView.vue'
 
@@ -15,7 +16,8 @@ vi.mock('../api', async (importOriginal) => {
   return { ...actual, getDashboard: vi.fn(), searchProducts: vi.fn() }
 })
 
-const dashboard: DashboardDto = {
+const dashboard: Dashboard18Dto = {
+  soldByProduct: [],
   owedToYouCents: 4910,
   gmvCents: 6951,
   providerMarginCents: 3499,
@@ -35,7 +37,7 @@ function resolved(
   preset: DashboardDto['range']['preset'],
   from: string | null,
   to: string | null,
-): DashboardDto {
+): Dashboard18Dto {
   return {
     ...dashboard,
     range: { preset, from, to, timeZone: tz },
