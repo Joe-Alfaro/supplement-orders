@@ -173,7 +173,7 @@ describe('revision 18 payment recovery, back-orders and fee conservation', () =>
       ).status,
     ).toBe(200)
     const sent = await detail(f.id, ctx.seed.providerUserId)
-    expect(sent.body.totalCents).toBe(
+    expect(sent.body.split.totalCents).toBe(
       f.lines.reduce((sum, l) => sum + l.quantity * l.unitPriceCents, 0),
     )
   })
