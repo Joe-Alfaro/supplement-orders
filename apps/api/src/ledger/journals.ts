@@ -18,7 +18,6 @@ import {
   accounts,
   journals,
   orders,
-  patients,
   postings,
   providers,
   users,
@@ -274,7 +273,6 @@ export async function trialBalance(db: Db): Promise<AdminTrialBalanceDto> {
   }
 }
 
-const patientUsers = alias(users, 'patient_users')
 const providerUsers = alias(users, 'provider_users')
 
 /** Revision 16.4: one page of journals, newest first, with their postings. */
@@ -290,13 +288,10 @@ export async function listJournals(db: Db, offset: number, limit: number) {
           memo: journals.memo,
           paymentId: journals.paymentId,
           orderId: journals.orderId,
-          patientName: patientUsers.name,
           providerName: providerUsers.name,
         })
         .from(journals)
         .leftJoin(orders, eq(orders.id, journals.orderId))
-        .leftJoin(patients, eq(patients.id, orders.patientId))
-        .leftJoin(patientUsers, eq(patientUsers.id, patients.userId))
         .leftJoin(providers, eq(providers.id, orders.providerId))
         .leftJoin(providerUsers, eq(providerUsers.id, providers.userId))
         .orderBy(desc(journals.postedAt), desc(journals.id))

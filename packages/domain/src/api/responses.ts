@@ -651,7 +651,6 @@ export interface AdminJournalDto extends JournalDto {
   kind: JournalKind
   paymentId: number | null
   orderId: number | null
-  patientName: string | null
   providerName: string | null
 }
 
@@ -663,7 +662,6 @@ export const adminJournalDtoSchema: z.ZodType<AdminJournalDto> = z.object({
   postings: z.array(journalPostingDtoSchema),
   paymentId: id.nullable(),
   orderId: id.nullable(),
-  patientName: z.string().nullable(),
   providerName: z.string().nullable(),
 })
 

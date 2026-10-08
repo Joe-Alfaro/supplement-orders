@@ -430,7 +430,6 @@ const adminJournal: AdminJournalDto = {
   paymentId: 5,
   memo: 'Payment for order #7',
   postedAt: '2026-10-05T12:10:00.000Z',
-  patientName: 'Jordan Lee',
   providerName: 'Dr. Maya Rivera',
   postings: [
     {

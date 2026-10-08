@@ -34,7 +34,7 @@ Captured from the live demo at 1440x900, signed in as Dr. Maya Rivera.
   - **Dashboard:** a date range (This month by default, Last 30 days, All time or custom), GMV, margin earned and processing fee tiles, the all-time amount owed to the provider (`owedToYouCents`, the provider's payable balance), "See paid orders →" and "See orders awaiting payment →" links into the Orders tab, and a searchable, read-only inventory.
   - List filters, searches and pages are kept in the URL, so reload, Back and shared links restore the same view.
 - **Patient** (nav: My Orders): sees sent orders and pays them, in full or, when stock is short, for the in-stock items. Never sees wholesale cost, margin or the fee.
-- **Admin** (nav: Inventory): adds to or sets product stock, and reads the ledger: a trial balance of every account (`GET /api/admin/accounts`) and the journals, newest first (`GET /api/admin/journals`). Sees no other provider or patient data.
+- **Admin** (nav: Inventory): adds to or sets product stock, and reads the ledger: a trial balance of every account (`GET /api/admin/accounts`) and the journals, newest first (`GET /api/admin/journals`). Sees no patient data (provider names appear on payables and journals).
 - Page content is centered in a max-width column on wide screens.
 
 ## Quickstart
@@ -66,7 +66,7 @@ Authentication is stubbed. The `/login` dropdown lists every user in the databas
 | Dr. Owen Brooks      | Provider | A second provider, to see that providers can't see each other's data  |
 | Sam Patel            | Patient  | Dr. Rivera's second patient                                           |
 | Alex Kim, Riley Chen | Patient  | Dr. Brooks's patients                                                 |
-| Ada Admin            | Admin    | Manage stock under Inventory (no provider or patient data)            |
+| Ada Admin            | Admin    | Manage stock under Inventory (no patient data)                        |
 
 `npm run db:seed` loads the demo seed: 12 products with small stock so stock changes are easy to check by hand (Probiotic 50 Billion CFU at 0; Omega-3, CoQ10 and N-Acetyl Cysteine at 1-3; the rest at 5-25), and 250 generated patients split between the two providers, so patient search and pagination have something to page through. The first five products are the named ones the tests and e2e use, with the same ids and costs; only their stock differs (the test and e2e seed keep 25-120). A few generated patients share a name and a provider and differ by date of birth and address. Every seed also has the ledger's system accounts and one payable account per provider.
 

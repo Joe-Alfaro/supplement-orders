@@ -73,7 +73,6 @@ function journal(id: number): AdminJournalDto {
     paymentId: id,
     memo: `Payment for order #${40 + id}`,
     postedAt: '2026-10-05T12:10:00.000Z',
-    patientName: 'Jordan Lee',
     providerName: 'Dr. Maya Rivera',
     postings: [
       {
@@ -181,12 +180,13 @@ describe('AdminAccountsView journals', () => {
     const rows = within(table).getAllByRole('row').slice(1)
     expect(rows[0]).toHaveTextContent('Payment for order #42')
     expect(rows[1]).toHaveTextContent('Payment for order #41')
-    expect(rows[0]).toHaveTextContent('Jordan Lee')
+    expect(rows[0]).not.toHaveTextContent('Jordan Lee')
+    expect(
+      within(table).queryByRole('columnheader', { name: 'Patient' }),
+    ).not.toBeInTheDocument()
     expect(rows[0]).toHaveTextContent('Dr. Maya Rivera')
-    expect(within(rows[0]!).getByRole('link', { name: '#42' })).toHaveAttribute(
-      'href',
-      '/orders/42',
-    )
+    expect(within(rows[0]!).getByText('Order #42')).toBeInTheDocument()
+    expect(within(table).queryByRole('link')).not.toBeInTheDocument()
   })
 
   it('expands a journal to show its postings, and collapses it again', async () => {

@@ -13,7 +13,7 @@ import {
 
 // Open envelope names resolved here: accounts => { accounts, totals };
 // journals => { items, total, offset, limit }. Each journal uses the provider
-// detail posting shape plus orderId, patientName and providerName.
+// detail posting shape plus orderId and providerName (never a patient field).
 interface Account {
   id: number
   code: string
@@ -29,7 +29,6 @@ interface Journal {
   id: number
   orderId: number
   postedAt: string
-  patientName: string
   providerName: string
   postings: {
     accountCode: string
@@ -251,9 +250,10 @@ describe('revision 16 accounts, journals and dashboard HTTP contract', () => {
     expect(items.map((item) => item.orderId)).toEqual([third.id, second.id])
     items.forEach((journal) => {
       expect(Number.isNaN(Date.parse(journal.postedAt))).toBe(false)
-      expect(journal.patientName).toBe(
-        journal.orderId === second.id ? 'Alex Kim' : 'Jordan Lee',
-      )
+      expect(
+        Object.keys(journal).filter((key) => /patient/i.test(key)),
+      ).toEqual([])
+      expect(JSON.stringify(journal)).not.toMatch(/Jordan Lee|Alex Kim/)
       expect(journal.providerName).toBe(
         journal.orderId === second.id ? 'Dr. Owen Brooks' : 'Dr. Maya Rivera',
       )

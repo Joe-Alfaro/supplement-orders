@@ -220,7 +220,6 @@ describe('GET /api/admin/accounts and /api/admin/journals', () => {
     expect(page.items[0]).toMatchObject({
       kind: 'patient_payment',
       memo: `Patient payment for order #${orders[2]!.id}`,
-      patientName: 'Jordan Lee',
       providerName: 'Dr. Maya Rivera',
     })
     expect(page.items[0]!.postings.map((p) => p.accountCode)).toEqual([
@@ -229,7 +228,6 @@ describe('GET /api/admin/accounts and /api/admin/journals', () => {
       '4100',
     ])
     expect(page.items[1]).toMatchObject({
-      patientName: 'Alex Kim',
       providerName: 'Dr. Owen Brooks',
     })
     expect(page.items[1]!.postings).toEqual([

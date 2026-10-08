@@ -208,7 +208,9 @@ test('provider sends an order, the patient pays, and the dashboard matches', asy
 
     const journals = page.getByRole('table', { name: 'Journals' })
     const newest = journals.getByRole('row').nth(1)
-    await expect(newest).toContainText(PATIENT)
+    await expect(newest).not.toContainText(PATIENT)
+    await expect(newest.getByText(/^Order #\d+$/)).toBeVisible()
+    await expect(newest.getByRole('link')).toHaveCount(0)
     await newest.getByRole('button', { name: /Show postings/ }).click()
     const postings = page.getByRole('table', { name: /postings$/ })
     await expect(postings.getByText(/Debits = Credits/)).toBeVisible()
