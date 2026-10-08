@@ -1,36 +1,25 @@
-import type { UserDto } from '@supplement-orders/domain'
 import userEvent from '@testing-library/user-event'
 import { screen } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
+import type { SignInOptionDto } from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
 import LoginView from './LoginView.vue'
 
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>()
-  return { ...actual, listUsers: vi.fn(), listSignInOptions: vi.fn() }
+  return { ...actual, getCurrentUser: vi.fn(), listSignInOptions: vi.fn() }
 })
 
-function user(
-  id: number,
-  name: string,
-  role: UserDto['role'],
-  ids: Partial<UserDto> = {},
-): UserDto {
-  return { id, name, role, providerId: null, patientId: null, ...ids }
-}
-
-const curated: UserDto[] = [
-  user(1, 'Dr. Maya Rivera', 'provider', { providerId: 1 }),
-  user(2, 'Jordan Lee', 'patient', { patientId: 1 }),
-  user(3, 'Ada Admin', 'admin'),
+const curated: SignInOptionDto[] = [
+  { id: 1, name: 'Dr. Maya Rivera', role: 'provider' },
+  { id: 2, name: 'Jordan Lee', role: 'patient' },
+  { id: 3, name: 'Ada Admin', role: 'admin' },
 ]
 
 beforeEach(() => {
   vi.mocked(api.listSignInOptions).mockReset().mockResolvedValue(curated)
-  vi.mocked(api.listUsers)
-    .mockReset()
-    .mockResolvedValue([...curated, user(9, 'Hidden Patient', 'patient')])
+  vi.mocked(api.getCurrentUser).mockReset()
 })
 
 describe('LoginView', () => {
@@ -54,5 +43,6 @@ describe('LoginView', () => {
       screen.queryByPlaceholderText('Search users'),
     ).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    expect(api.getCurrentUser).not.toHaveBeenCalled()
   })
 })

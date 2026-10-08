@@ -1,44 +1,54 @@
-import type { Role, UserDto } from '@supplement-orders/domain'
-import { computed, ref } from 'vue'
+import type { Role } from '@supplement-orders/domain'
+import { ref } from 'vue'
 import {
+  ApiRequestError,
+  getCurrentUser,
   handleApiError,
   listSignInOptions,
-  listUsers,
   onUnauthenticated,
+  type SignInOptionDto,
 } from '../api'
 import { showNotice } from './notice'
 import { readStoredUserId, writeStoredUserId } from './storage'
 
 // Module-level state: the current user is the app's only cross-screen client state.
-const users = ref<UserDto[]>([])
-// The curated login list. `users` stays the full list so a restored session
-// works for any user, listed here or not.
-const signInOptions = ref<UserDto[]>([])
+// The app never loads a user directory: the session is restored from /users/me
+// and the login screen lists only the curated demo personas.
+const signInOptions = ref<SignInOptionDto[]>([])
 const selectedUserId = ref<number | null>(readStoredUserId())
+const currentUser = ref<SignInOptionDto | null>(null)
 const loadError = ref<string | null>(null)
-let pendingLoad: Promise<void> | null = null
+let pendingRestore: Promise<void> | null = null
 let pendingSignInOptions: Promise<void> | null = null
 
-const currentUser = computed(
-  () => users.value.find((user) => user.id === selectedUserId.value) ?? null,
-)
+function isUnauthenticated(err: unknown) {
+  return err instanceof ApiRequestError && err.status === 401
+}
 
-async function loadUsers() {
+async function restoreSession() {
+  if (selectedUserId.value === null) {
+    currentUser.value = null
+    return
+  }
   try {
-    users.value = await listUsers()
+    currentUser.value = await getCurrentUser()
     loadError.value = null
-    // Forget a stored id that no longer matches a seeded user.
-    if (selectedUserId.value !== null && !currentUser.value) signOut()
   } catch (err) {
+    currentUser.value = null
+    // The server no longer knows the stored id: forget it quietly.
+    if (isUnauthenticated(err)) {
+      signOut()
+      return
+    }
     loadError.value = handleApiError(err)
-    pendingLoad = null
+    pendingRestore = null
   }
 }
 
-/** Loads the user list once; later calls reuse the same request. */
-function ensureUsersLoaded() {
-  if (!pendingLoad) pendingLoad = loadUsers()
-  return pendingLoad
+/** Restores the stored session once; later calls reuse the same request. */
+function ensureSessionRestored() {
+  if (!pendingRestore) pendingRestore = restoreSession()
+  return pendingRestore
 }
 
 async function loadSignInOptions() {
@@ -57,13 +67,18 @@ function ensureSignInOptionsLoaded() {
   return pendingSignInOptions
 }
 
+/** Stores the id; the next route guard confirms it through /users/me. */
 function signIn(id: number) {
   selectedUserId.value = id
   writeStoredUserId(id)
+  currentUser.value = null
+  pendingRestore = null
 }
 
 function signOut() {
   selectedUserId.value = null
+  currentUser.value = null
+  pendingRestore = Promise.resolve()
   writeStoredUserId(null)
 }
 
@@ -99,7 +114,7 @@ export function roleLabel(role: Role) {
  * Login picker options. Seeded users can share a name, so the user id is added
  * to tell them apart.
  */
-export function userOptions(users: readonly UserDto[]) {
+export function userOptions(users: readonly SignInOptionDto[]) {
   return users.map((user) => {
     const label = `${user.name} (${roleLabel(user.role)})`
     const shared = users.some(
@@ -114,11 +129,10 @@ export function userOptions(users: readonly UserDto[]) {
 
 export function useCurrentUser() {
   return {
-    users,
     signInOptions,
     currentUser,
     loadError,
-    ensureUsersLoaded,
+    ensureSessionRestored,
     ensureSignInOptionsLoaded,
     signIn,
     signOut,

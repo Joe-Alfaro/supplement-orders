@@ -33,7 +33,7 @@ vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>()
   return {
     ...actual,
-    listUsers: vi.fn(),
+    getCurrentUser: vi.fn(),
     listSignInOptions: vi.fn(),
     searchPatients: vi.fn(),
     getPatient: vi.fn(),
@@ -352,7 +352,18 @@ async function renderApp(path: string) {
 }
 
 beforeEach(() => {
-  vi.mocked(api.listUsers).mockReset().mockResolvedValue(users)
+  vi.mocked(api.getCurrentUser)
+    .mockReset()
+    .mockImplementation(async () => {
+      const found = users.find(
+        (candidate) =>
+          String(candidate.id) ===
+          localStorage.getItem('supplementOrders.userId'),
+      )
+      if (!found)
+        throw new api.ApiRequestError(401, 'UNAUTHENTICATED', 'Unknown user')
+      return found
+    })
   vi.mocked(api.listSignInOptions).mockResolvedValue(users)
   vi.mocked(api.searchPatients).mockReset().mockResolvedValue(patientsPage)
   vi.mocked(api.getPatient).mockReset().mockResolvedValue(patient)

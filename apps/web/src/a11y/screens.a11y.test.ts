@@ -36,7 +36,7 @@ vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>()
   return {
     ...actual,
-    listUsers: vi.fn(),
+    getCurrentUser: vi.fn(),
     listSignInOptions: vi.fn(),
     searchPatients: vi.fn(),
     getPatient: vi.fn(),
@@ -300,7 +300,18 @@ function patientPage(query: ListQuery): PatientPageDto {
 }
 
 beforeEach(async () => {
-  vi.mocked(api.listUsers).mockResolvedValue(users)
+  vi.mocked(api.getCurrentUser)
+    .mockReset()
+    .mockImplementation(async () => {
+      const found = users.find(
+        (candidate) =>
+          String(candidate.id) ===
+          localStorage.getItem('supplementOrders.userId'),
+      )
+      if (!found)
+        throw new api.ApiRequestError(401, 'UNAUTHENTICATED', 'Unknown user')
+      return found
+    })
   vi.mocked(api.listSignInOptions).mockResolvedValue(users)
   vi.mocked(api.searchPatients).mockImplementation(async (query = {}) =>
     patientPage(query),
@@ -332,7 +343,7 @@ beforeEach(async () => {
     limit: 25,
   })
   useCurrentUser().signOut()
-  await useCurrentUser().ensureUsersLoaded()
+  await useCurrentUser().ensureSessionRestored()
 })
 
 async function renderBuilder() {

@@ -94,8 +94,8 @@ export function createAppRouter(history: RouterHistory) {
 
   // Persona redirects are a convenience, not security: the API enforces access.
   router.beforeEach(async (to) => {
-    const { ensureUsersLoaded, currentUser } = useCurrentUser()
-    await ensureUsersLoaded()
+    const { ensureSessionRestored, currentUser } = useCurrentUser()
+    await ensureSessionRestored()
     const user = currentUser.value
 
     if (!user) return to.name === 'login' ? true : { name: 'login' }

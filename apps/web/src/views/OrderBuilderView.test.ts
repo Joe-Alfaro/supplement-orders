@@ -573,6 +573,31 @@ describe('OrderBuilderView', () => {
       screen.getByRole('textbox', { name: 'Qty Vitamin D3' }),
     ).not.toHaveAttribute('aria-invalid', 'true')
   })
+
+  it('shows the zero-total send error in the general banner', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.createOrder).mockResolvedValue(draftDetail([]))
+    vi.mocked(api.replaceOrderLines).mockResolvedValue(draftDetail([]))
+    vi.mocked(api.sendOrder).mockRejectedValue(
+      new api.ApiRequestError(
+        400,
+        'VALIDATION_ERROR',
+        'Order total must be greater than $0.00',
+        'lines',
+      ),
+    )
+    await renderBuilder()
+    await addProduct(user, 'Vitamin D3', { price: '20' })
+
+    await user.click(sendButton())
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Order total must be greater than $0.00')
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(
+      screen.getByRole('textbox', { name: 'Qty Vitamin D3' }),
+    ).not.toHaveAttribute('aria-invalid', 'true')
+  })
 })
 
 describe('Add-product modal', () => {

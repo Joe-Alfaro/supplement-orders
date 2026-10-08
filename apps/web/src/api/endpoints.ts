@@ -29,13 +29,17 @@ import { request } from './client'
 
 // One typed function per endpoint in FRONTEND_DESIGN.md §7.
 
-export function listUsers() {
-  return request<UserDto[]>('GET', '/users')
+/** A demo persona on the login screen: no patient or provider ids. */
+export type SignInOptionDto = Pick<UserDto, 'id' | 'name' | 'role'>
+
+/** GET /api/users/me: the caller's own identity; 401 when X-User-Id is unknown. */
+export function getCurrentUser() {
+  return request<SignInOptionDto>('GET', '/users/me')
 }
 
 /** The curated login list, already in display order. */
 export function listSignInOptions() {
-  return request<UserDto[]>('GET', '/users/sign-in-options')
+  return request<SignInOptionDto[]>('GET', '/users/sign-in-options')
 }
 
 /** Query string for a paged list; empty values are omitted. */
