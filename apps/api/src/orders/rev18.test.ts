@@ -120,7 +120,14 @@ describe('revision 18 payment recovery, back-orders and fee conservation', () =>
 
   it("18.1 the auditor's R2 sequence (split, decline, cancel, reopen, resend, partial pay) ends in 200 with one new live back-order", async () => {
     const f = await r2UpToReopen()
-    expect((await action(f.id, 'send')).status).toBe(200)
+    expect(
+      (
+        await ctx.request
+          .post(`/api/orders/${f.id}/send`)
+          .set(provider())
+          .send({ acknowledgeLowStock: true })
+      ).status,
+    ).toBe(200)
     const response = await pay(ctx, f.id, await availableBody(f.id))
     expect(response.status).toBe(200)
     expect(response.body.status).toBe('paid')
@@ -157,7 +164,14 @@ describe('revision 18 payment recovery, back-orders and fee conservation', () =>
     })
     expect((await itemsOf(f.firstChildId)).length).toBeGreaterThan(0)
     // The provider sends the whole original order again.
-    expect((await action(f.id, 'send')).status).toBe(200)
+    expect(
+      (
+        await ctx.request
+          .post(`/api/orders/${f.id}/send`)
+          .set(provider())
+          .send({ acknowledgeLowStock: true })
+      ).status,
+    ).toBe(200)
     const sent = await detail(f.id, ctx.seed.providerUserId)
     expect(sent.body.totalCents).toBe(
       f.lines.reduce((sum, l) => sum + l.quantity * l.unitPriceCents, 0),
@@ -166,7 +180,14 @@ describe('revision 18 payment recovery, back-orders and fee conservation', () =>
 
   it('18.1 findBackorder ignores cancelled children: a cancelled child no longer blocks a new split', async () => {
     const f = await r2UpToReopen()
-    expect((await action(f.id, 'send')).status).toBe(200)
+    expect(
+      (
+        await ctx.request
+          .post(`/api/orders/${f.id}/send`)
+          .set(provider())
+          .send({ acknowledgeLowStock: true })
+      ).status,
+    ).toBe(200)
     expect((await pay(ctx, f.id, await availableBody(f.id))).status).toBe(200)
   })
 
@@ -363,7 +384,7 @@ describe('revision 18 payment recovery, back-orders and fee conservation', () =>
     expect((await pay(ctx, id)).status).toBe(503)
     vi.restoreAllMocks()
     const [attempt] = await attemptsOf(id)
-    const created = attempt!.created_at.getTime()
+    const created = new Date(attempt!.created_at).getTime()
 
     ctx.clock!.now = new Date(created + 14 * 60_000)
     const early = await reconcile(attempt!.id)
@@ -427,7 +448,9 @@ describe('revision 18 payment recovery, back-orders and fee conservation', () =>
     expect(text).not.toContain(patient.address)
     expect(text.toLowerCase()).not.toContain('patient')
     // The same holds for what reconcile returns.
-    ctx.clock!.now = new Date(attempt!.created_at.getTime() + 16 * 60_000)
+    ctx.clock!.now = new Date(
+      new Date(attempt!.created_at).getTime() + 16 * 60_000,
+    )
     const reconciled = await reconcile(attempt!.id)
     expect(JSON.stringify(reconciled.body)).not.toContain(patient.name)
     expect(JSON.stringify(reconciled.body)).not.toContain(patient.address)
