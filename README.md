@@ -12,17 +12,17 @@ Stack: TypeScript end to end. Vue 3 + Vite + PrimeVue 4 on the front end, an Exp
 
 ## Screenshots
 
-Captured from the live demo at 1440x900, signed in as Dr. Maya Rivera.
+Captured at 1440x900 from a freshly seeded instance, signed in as Dr. Maya Rivera.
 
 ![Sign-in screen with a notice that authentication is stubbed and a single user dropdown](docs/screenshots/login.png)
 
 ![Patients list with a name or date-of-birth search box, a Latest order status filter, and a table of patients with date of birth, order count and latest order](docs/screenshots/patients.png)
 
-![Add-product dialog, step 2, for Magnesium Glycinate: wholesale cost $12.75, minimum price $12.85, Markup % 60.00, read-only processing fee $0.16, patient price $20.55](docs/screenshots/order-builder-add-product.png)
+![Add-product dialog, step 2, for Magnesium Glycinate: wholesale cost $12.75, minimum price $12.85, Markup % 60.00, read-only processing fee $0.16, patient price $20.55, margin $7.64](docs/screenshots/order-builder-add-product.png)
 
-![Orders tab with the Status multi-select open and every status checked: Draft, Awaiting payment, Paid, Cancelled](docs/screenshots/orders-status-filter.png)
+![Orders tab with the Status multi-select open and every status checked: Draft, Awaiting payment, Awaiting stock, Paid, Cancelled](docs/screenshots/orders-status-filter.png)
 
-![Dashboard with GMV, margin earned and processing fee tiles, links to paid and awaiting-payment orders, and a searchable read-only inventory table](docs/screenshots/dashboard.png)
+![Dashboard with a date range picker, GMV, margin earned, processing fee and owed-to-you tiles, links to paid and awaiting-payment orders, and a searchable read-only inventory table](docs/screenshots/dashboard.png)
 
 ## Features
 
