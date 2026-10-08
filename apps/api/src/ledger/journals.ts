@@ -114,16 +114,11 @@ export async function postPaymentJournal(
     .returning({ id: journals.id })
   if (!journal) throw new Error('Journal insert returned no row')
   await tx.insert(postings).values(
-    drafts.map((draft) => {
-      if (draft.accountId === undefined) {
-        throw new Error(`No account id for posting to ${draft.accountCode}`)
-      }
-      return {
-        journalId: journal.id,
-        accountId: draft.accountId,
-        amountCents: draft.amountCents,
-      }
-    }),
+    drafts.map((draft) => ({
+      journalId: journal.id,
+      accountId: draft.accountId,
+      amountCents: draft.amountCents,
+    })),
   )
 }
 

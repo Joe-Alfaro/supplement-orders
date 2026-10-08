@@ -89,6 +89,19 @@ export interface PostingDraft {
   amountCents: number
 }
 
+/** A posting to a known account: what paymentJournal returns given every id. */
+export interface AccountPosting extends PostingDraft {
+  accountId: number
+}
+
+/** Every account id of a patient payment, so each posting carries its id. */
+export interface PaymentJournalAccountIds extends PaymentJournalAccounts {
+  cashAccountId: number
+  productSalesAccountId: number
+  platformFeeAccountId: number
+  providerAccountId: number
+}
+
 export interface PaymentJournalAccounts {
   cashAccountId?: number
   productSalesAccountId?: number
@@ -105,6 +118,14 @@ export interface PaymentJournalAccounts {
  * zero-fee order has fewer postings. A zero-total split has none and fails
  * assertJournalBalances.
  */
+export function paymentJournal(
+  split: OrderSplit,
+  accounts: PaymentJournalAccountIds,
+): AccountPosting[]
+export function paymentJournal(
+  split: OrderSplit,
+  accounts?: PaymentJournalAccounts,
+): PostingDraft[]
 export function paymentJournal(
   split: OrderSplit,
   accounts: PaymentJournalAccounts = {},
