@@ -1,11 +1,14 @@
 import {
   incrementStockRequestSchema,
   listAdminJournalsQuerySchema,
+  listAdminPaymentAttemptsQuerySchema,
   listAdminProductsQuerySchema,
   setStockRequestSchema,
   type AdminJournalPageDto,
   type AdminProductPageDto,
+  type AdminPaymentAttemptDto,
   type AdminTrialBalanceDto,
+  type ReconcilePaymentAttemptDto,
 } from '@supplement-orders/domain'
 import { asc, count } from 'drizzle-orm'
 import { Router } from 'express'
@@ -16,6 +19,8 @@ import {
   setStock,
 } from '../inventory/service'
 import { listJournals, trialBalance } from '../ledger/journals'
+import { reconcileAttempt } from '../orders/service'
+import { findPaymentAttempt, listPaymentAttempts } from '../payments/attempts'
 import { requireRole } from '../seams'
 import type { AppContext } from '../server'
 import { matchesSearch } from './search'
@@ -23,9 +28,11 @@ import { parseId, parseOrThrow } from './validate'
 
 /**
  * Revision 13: admin only. The admin manages available stock. Revision 16 adds
- * the read-only ledger: the trial balance and the journal list.
+ * the read-only ledger: the trial balance and the journal list. Revision 18.2
+ * adds payment attempts needing attention and their reconcile action.
  */
-export function adminRouter({ db, auth }: AppContext) {
+export function adminRouter(ctx: AppContext) {
+  const { db, auth, now } = ctx
   const router = Router()
 
   router.get('/products', async (req, res) => {
@@ -93,6 +100,30 @@ export function adminRouter({ db, auth }: AppContext) {
       req.query,
     )
     const body: AdminJournalPageDto = await listJournals(db, offset, limit)
+    res.json(body)
+  })
+
+  router.get('/payment-attempts', async (req, res) => {
+    requireRole(await auth.getCurrentUser(req), 'admin')
+    const { status } = parseOrThrow(
+      listAdminPaymentAttemptsQuerySchema,
+      req.query,
+    )
+    const body: AdminPaymentAttemptDto[] = await listPaymentAttempts(
+      db,
+      now(),
+      status,
+    )
+    res.json(body)
+  })
+
+  router.post('/payment-attempts/:id/reconcile', async (req, res) => {
+    const user = requireRole(await auth.getCurrentUser(req), 'admin')
+    const attemptId = parseId(req.params.id)
+    const outcome = await reconcileAttempt(ctx, user, attemptId)
+    const attempt = await findPaymentAttempt(db, now(), attemptId)
+    if (!attempt) throw new Error(`Payment attempt ${attemptId} disappeared`)
+    const body: ReconcilePaymentAttemptDto = { outcome, attempt }
     res.json(body)
   })
 

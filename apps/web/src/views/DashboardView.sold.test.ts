@@ -1,8 +1,7 @@
-import type { ProductPageDto } from '@supplement-orders/domain'
+import type { DashboardDto, ProductPageDto } from '@supplement-orders/domain'
 import { screen, within } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
-import type { Dashboard18Dto } from '../api/rev18'
 import { renderWithRouter } from '../test/renderWithRouter'
 import DashboardView from './DashboardView.vue'
 
@@ -13,7 +12,7 @@ vi.mock('../api', async (importOriginal) => {
 
 const empty: ProductPageDto = { items: [], total: 0, offset: 0, limit: 25 }
 
-const dashboard: Dashboard18Dto = {
+const dashboard: DashboardDto = {
   owedToYouCents: 0,
   gmvCents: 9000,
   providerMarginCents: 3000,
@@ -25,8 +24,13 @@ const dashboard: Dashboard18Dto = {
     timeZone: 'UTC',
   },
   soldByProduct: [
-    { productId: 2, productName: 'Omega-3', units: 5, revenueCents: 6000 },
-    { productId: 1, productName: 'Vitamin D3', units: 3, revenueCents: 3000 },
+    { productId: 2, productName: 'Omega-3', unitsSold: 5, revenueCents: 6000 },
+    {
+      productId: 1,
+      productName: 'Vitamin D3',
+      unitsSold: 3,
+      revenueCents: 3000,
+    },
   ],
 }
 

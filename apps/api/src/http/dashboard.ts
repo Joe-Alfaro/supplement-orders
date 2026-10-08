@@ -4,10 +4,18 @@ import {
   resolveDashboardRange,
   SYSTEM_ACCOUNTS,
   type DashboardDto,
+  type SoldByProductDto,
 } from '@supplement-orders/domain'
 import { sql, type SQL } from 'drizzle-orm'
 import { Router } from 'express'
-import { accounts, journals, orders, postings } from '../db/schema'
+import {
+  accounts,
+  journals,
+  orderItems,
+  orders,
+  postings,
+  products,
+} from '../db/schema'
 import { requireRole } from '../seams'
 import type { AppContext } from '../server'
 import { ApiError } from './errors'
@@ -18,6 +26,14 @@ interface DashboardRow extends Record<string, unknown> {
   provider_margin_cents: string
   platform_fee_cents: string
   owed_to_you_cents: string
+  sold_by_product: SoldByProductRow[]
+}
+
+interface SoldByProductRow {
+  product_id: number
+  product_name: string
+  units_sold: string
+  revenue_cents: string
 }
 
 /**
@@ -46,7 +62,9 @@ function exactCents(value: string, field: string) {
  * caller's zone (revision 11a-v2) and bounds the three ranged figures on
  * orders.paid_at to [local midnight of the first day, local
  * midnight of the day after the last); Postgres computes those instants, so a
- * 23- or 25-hour DST day is handled.
+ * 23- or 25-hour DST day is handled. Revision 18.3 adds "Sold by product" to
+ * the same statement: units and line totals per product on the orders paid in
+ * range, by revenue descending.
  */
 export function dashboardRouter({ db, auth, now }: AppContext) {
   const router = Router()
@@ -79,7 +97,23 @@ export function dashboardRouter({ db, auth, now }: AppContext) {
         ${sumPostings(sql`${accounts.code} = ${SYSTEM_ACCOUNTS.cash.code} and ${postings.amountCents} > 0 and ${inRange}`, '')} as gmv_cents,
         ${sumPostings(sql`${payable} and ${postings.amountCents} < 0 and ${inRange}`, '-')} as provider_margin_cents,
         ${sumPostings(sql`${accounts.code} = ${SYSTEM_ACCOUNTS.platformFee.code} and ${postings.amountCents} < 0 and ${inRange}`, '-')} as platform_fee_cents,
-        ${sumPostings(payable, '-')} as owed_to_you_cents
+        ${sumPostings(payable, '-')} as owed_to_you_cents,
+        (select coalesce(json_agg(json_build_object(
+                  'product_id', sold.product_id,
+                  'product_name', sold.product_name,
+                  'units_sold', sold.units_sold::text,
+                  'revenue_cents', sold.revenue_cents::text)
+                order by sold.revenue_cents desc, sold.product_name, sold.product_id), '[]'::json)
+           from (select ${orderItems.productId} as product_id,
+                        ${products.name} as product_name,
+                        sum(${orderItems.quantity}) as units_sold,
+                        sum(${orderItems.quantity} * ${orderItems.unitPriceCents}) as revenue_cents
+                   from ${orderItems}
+                   join ${orders} on ${orders.id} = ${orderItems.orderId}
+                   join ${products} on ${products.id} = ${orderItems.productId}
+                  where ${paid}
+                  group by ${orderItems.productId}, ${products.name}) sold
+        ) as sold_by_product
     `)
     const [row] = result.rows
     if (!row) throw new Error('Dashboard query returned no row')
@@ -89,6 +123,12 @@ export function dashboardRouter({ db, auth, now }: AppContext) {
       providerMarginCents: exactCents(row.provider_margin_cents, 'margin'),
       platformFeeCents: exactCents(row.platform_fee_cents, 'processing fees'),
       owedToYouCents: exactCents(row.owed_to_you_cents, 'owed to you'),
+      soldByProduct: row.sold_by_product.map((sold): SoldByProductDto => ({
+        productId: Number(sold.product_id),
+        productName: sold.product_name,
+        unitsSold: exactCents(sold.units_sold, 'units sold'),
+        revenueCents: exactCents(sold.revenue_cents, 'revenue'),
+      })),
       range,
     }
     res.json(body)

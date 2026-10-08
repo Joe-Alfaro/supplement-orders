@@ -74,6 +74,7 @@ describe('GET /api/dashboard', () => {
       'platformFeeCents',
       'providerMarginCents',
       'range',
+      'soldByProduct',
     ])
     expect(other.body).toMatchObject({ gmvCents: 0, owedToYouCents: 0 })
   })

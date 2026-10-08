@@ -134,7 +134,8 @@ describe('POST /api/orders/:id/cancel', () => {
       ctx.request.post(`/api/orders/${orderId}/cancel`),
     ])
 
-    expect(results.map((r) => r.status)).toEqual([403, 403, 404, 400, 401])
+    // Revision 18.4 (L6): another provider's order is 404, not 403.
+    expect(results.map((r) => r.status)).toEqual([403, 404, 404, 400, 401])
     expect((await patientView(orderId)).body.status).toBe('pending_payment')
   })
 

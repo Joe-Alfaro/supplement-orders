@@ -23,6 +23,7 @@ const DASHBOARD_KEYS = [
   'providerMarginCents',
   'platformFeeCents',
   'owedToYouCents',
+  'soldByProduct',
   'range',
 ]
 

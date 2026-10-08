@@ -270,6 +270,7 @@ const myOrders: PatientOrderSummaryDto[] = [
 ]
 
 const dashboard: DashboardDto = {
+  soldByProduct: [],
   owedToYouCents: 785,
   gmvCents: 6951,
   providerMarginCents: 3499,

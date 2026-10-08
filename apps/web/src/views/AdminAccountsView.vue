@@ -12,7 +12,11 @@ import {
   listUnresolvedPaymentAttempts,
   reconcilePaymentAttempt,
 } from '../api'
-import type { PaymentAttemptDto, ReconcileOutcome } from '../api/rev18'
+import type {
+  AdminPaymentAttemptDto,
+  PaymentAttemptStatus,
+  ReconcileOutcome,
+} from '@supplement-orders/domain'
 import {
   ErrorBanner,
   JournalTable,
@@ -37,15 +41,18 @@ const STATUS_LABELS = {
   pending: 'Pending',
   succeeded: 'Succeeded, no payment recorded',
   conflict: 'Conflict',
+  declined: 'Declined',
+  abandoned: 'Abandoned',
 } as const
 
 const OUTCOME_LABELS: Record<ReconcileOutcome, string> = {
-  succeeded: 'payment recorded',
+  finalized: 'payment recorded',
+  unchanged: 'already resolved',
   declined: 'declined, stock released',
   abandoned: 'abandoned, stock released',
 }
 
-function askReconcile(attempt: PaymentAttemptDto) {
+function askReconcile(attempt: AdminPaymentAttemptDto) {
   confirm.require({
     header: 'Reconcile',
     message: `Ask the payment provider what happened to order #${attempt.orderId}'s ${formatCents(attempt.amountCents)} attempt and settle it?`,
@@ -55,7 +62,7 @@ function askReconcile(attempt: PaymentAttemptDto) {
   })
 }
 
-async function reconcile(attempt: PaymentAttemptDto) {
+async function reconcile(attempt: AdminPaymentAttemptDto) {
   if (reconcilingId.value !== null) return
   reconcilingId.value = attempt.id
   reconcileError.value = null
@@ -138,7 +145,7 @@ onMounted(() => {
         </Column>
         <Column header="Status">
           <template #body="{ data }">{{
-            STATUS_LABELS[data.status as PaymentAttemptDto['status']]
+            STATUS_LABELS[data.status as PaymentAttemptStatus]
           }}</template>
         </Column>
         <Column header="Age">

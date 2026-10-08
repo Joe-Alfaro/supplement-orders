@@ -3,6 +3,8 @@ notes/
 
 # Dependencies and build output
 node_modules/
+# The CI npm cache (.gitlab-ci.yml)
+.npm/
 dist/
 
 # Environment

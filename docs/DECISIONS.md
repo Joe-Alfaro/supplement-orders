@@ -104,7 +104,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 - **Why it changed:** the audit showed that a rollback after a successful charge, followed by cancel, reopen and reprice, reused the same key and gateway reference for a different amount. Revision 9 committed a `payment_attempts` row (key `order-<id>-r<revision>`) with its stock reservation before charging, and called the gateway outside the lock. A re-audit then found that this created new holes: two overlapping pays of one attempt could get a decline and a success, and the decline released the stock and unblocked cancel while the success was still in flight; and because the fake gateway kept its idempotency in process memory, verifying a saved success after a restart charged again.
 - **Final decision (revision 10):** each attempt has executions, with the key `order-<id>-r<revision>-e<execution>`. An unresolved execution (`pending`, `succeeded` without a payment, or `conflict`) is always reused with its key; a new execution and key start only after a decline. Stock is reserved with the execution, before any charge. Outcomes are applied with a fenced update (same attempt, same execution, still `pending` or `conflict`), so a stale or duplicate response changes nothing, and a decline releases stock only if its update matched. A succeeded execution is verified with the gateway's non-charging `lookup`, never by charging again. Payment, ledger and paid status are then written in one transaction. While any execution is unresolved, cancel, reopen, delete and edits return 409 `PAYMENT_NEEDS_RECONCILIATION`.
 - **Alternatives:** minting a new key whenever an order is reopened (rejected: it can charge twice while the first success is unresolved); an in-process mutex per attempt (rejected: it doesn't hold across restarts or more than one API process); an outbox and webhook flow (the right production design, but more machinery than the slice needs).
-- **Tradeoff:** stock is held while a payment is unresolved, so the inventory shows available stock, not just sold stock. Nothing resolves an attempt except the patient paying again; there's no reconciliation job, and a `conflict` needs manual reconciliation.
+- **Tradeoff:** stock is held while a payment is unresolved, so the inventory shows available stock, not just sold stock. Until revision 18.2 nothing resolved an attempt except the patient paying again; an admin can now reconcile it (see Audit 6 fixes). A `conflict` for another amount still needs manual reconciliation.
 
 **A durable fake gateway: the first call decides (revision 10)**
 
@@ -311,8 +311,8 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 - **Decision:** `mode: 'available'` plans from current stock with the domain's `planPartialPayment`, under the order lock and with the product rows locked in ascending id, in the same transaction that reserves stock and creates the payment attempt. The back-order is a new sent order (revision 1, original unit prices and cost snapshots); the original keeps the in-stock quantities, re-snapshots its totals and fee, and moves to the next revision, so the attempt's key is a new quote's key.
 - **Why there:** the split, the reservation and the attempt then commit or roll back together. The revision 10 gate (no unresolved attempt) applies unchanged, and the ledger, fee and one-payment-per-order invariants and the migration 0010 triggers don't change.
 - **Replay:** a retried request names the pre-split revision. It's recognised by the back-order's `split_from_revision`, the current revision being exactly one higher, and the current total matching what the patient consented to; it then continues as a pay of the current revision. Concurrent duplicates serialize on the order lock and take the same path.
-- **Fees:** each order is charged its own fee, rounded up, so the two fees together can exceed the unsplit order's by at most 1 cent (tested in the domain). The minimum price is per unit, so both orders still meet it.
-- **Tradeoff:** an order has at most one direct back-order (unique index). If a reduced order is declined and stock then drops further, it can only be paid once restocked: a second split is refused with 409 `INSUFFICIENT_STOCK`. A decline never undoes a split.
+- **Fees:** first, each order was charged its own fee, rounded up, so the two fees together could exceed the unsplit order's by 1 cent. Revision 18.4 conserves the fee instead (see Audit 6 fixes). The minimum price is per unit, so both orders still meet it.
+- **Tradeoff:** an order has at most one live direct back-order (a partial unique index since revision 18.1; cancelled ones don't count). If a reduced order is declined and stock then drops further, it can only be paid once restocked, and its quote says so (`reason: 'awaiting_restock'`). A decline never undoes a split.
 
 **"Awaiting stock" is derived in a view, not stored**
 
@@ -341,7 +341,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 - **Decision:** cancelling an order cancels its downstream back-orders in the same transaction, locking the chain in ascending id (a back-order is always newer than its parent, so that is the lock order every path agrees on). An unresolved attempt anywhere in it refuses the whole cancel. Deleting a reopened original deletes its back-orders too. A back-order can't start a payment while its parent is unpaid: 409 `PRIOR_ORDER_UNPAID` with `priorOrderId`, and the DTOs carry `blockedByOrderId`. An attempt already in progress on a back-order is still completed, so a charged payment is never stranded.
 - **Why:** a back-order paid while its original was cancelled, or left dangling after the original was deleted, made the chain inconsistent, and deleting such an original failed with a 500 on the foreign key.
-- **Tradeoff:** a reopened and resent original can't be split again, because it already has its (cancelled) back-order; it can only be paid in full once restocked. Its back-orders stay cancelled and are never reopened.
+- **Tradeoff (until revision 18.1):** a reopened and resent original couldn't be split again, because it already had its (cancelled) back-order, and its shortfall lines stayed on the cancelled back-order. Revision 18.1 fixes both: only live back-orders count, and reopening merges the cancelled back-orders' lines back.
 
 **Stock above the bound can be corrected (M4)**
 
@@ -352,6 +352,34 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 - **Decision:** migration 0013 adds `order_items.product_name` and `product_sku`, snapshotted on save and refreshed on send (backfilled from the products), and triggers that reject any change to a paid order except `updated_at`, any delete of it, and any write to its lines. Sent and paid orders show the snapshot; drafts show the live product. The paid split shown to the provider is read from the ledger (since revision 16, the journal's postings).
 - **Why:** the ledger was already append-only, but the order rows it describes weren't, and a renamed product changed what a paid order said was sold. Test fixtures that pin a paid order's timestamps switch the trigger off inside their own transaction (`withPaidOrdersUnfrozen`); resets use `TRUNCATE`, as before.
+
+## Audit 6 fixes (revision 18)
+
+**Only live back-orders count; reopen restores the whole order (M1)**
+
+- **Decision:** migration 0016 replaces the unique index on `orders.split_from_order_id` with a partial one `WHERE status <> 'cancelled'`, and the pay path looks only for a live back-order. Reopening a cancelled original merges its cancelled downstream back-orders' lines back into the draft (same product: quantities added at the original line's price; otherwise the back-order line comes back as is) and stamps them `merged_back_at`, so they are merged once and stay as cancelled history. The quote for an order that is short again while it has a live back-order is `payable: false` with `reason: 'awaiting_restock'`.
+- **Why:** audit 6 found that split, decline, cancel, reopen, resend then partial pay dead-ended in 409 `INSUFFICIENT_STOCK` while the quote still offered the partial pay, and that reopening silently dropped the shortfall lines. Every quote the detail endpoint offers must be payable as sent.
+- **Alternative:** detach the cancelled back-order from its original. Rejected: the link is the history of what happened.
+
+**Stranded payments: 503 and an admin reconcile (M2)**
+
+- **Decision:** a gateway call that throws is 503 `PAYMENT_PENDING` with `{ orderId, revision, amountCents }`; the attempt stays pending and keeps its stock. An admin lists unresolved attempts and reconciles each from the gateway's `lookup`: finalize a success (no new charge), decline and release, or, with no record after 15 minutes on the app's (injectable) clock, mark it `abandoned` and release; earlier is 409 `RECONCILE_TOO_EARLY`. Releases are recorded in `inventory_adjustments` as `reconcile_release` with the attempt id.
+- **Why:** a timeout used to be a raw 500, and an abandoned attempt held its stock and blocked the order for good.
+- **Tradeoff:** the fake gateway has no way to void a key, so a request still in flight past the window could succeed after the stock was released. The app records such a late success anyway (retaking the stock) when no later execution exists; a real processor integration would void the key first.
+
+**Sold by product, and the FR5 deviation stated (M3)**
+
+- **Decision:** the provider dashboard adds `soldByProduct` (units and the sum of line totals per product over the provider's orders paid in range, by revenue), read in the same statement as the tiles. The README states the deviation from FR5: inventory is edited by an admin, at the product owner's decision; providers see it read-only.
+
+**Lows (L3–L9)**
+
+- **CI gate (L3):** a `test` job (lint, typecheck, `npm test`, build, on `node:22` with a `postgres:16` service, same runner tag) that `deploy` needs. Playwright is left out of CI because the image has no browsers.
+- **Install-scoped keys (L4):** migration 0016 stores one UUID per database; new keys are `<installId>-order-<id>-r<rev>-e<n>`. Existing attempts keep their keys, so retries of them still replay.
+- **Conserved fees (L5):** the in-stock part is charged `min(ceil(75 × paySubtotal / 10000), order fee)` and the back-order stores the rest, so a chain's fees equal the unsplit order's (the audit's 17¢ case is 9¢ + 8¢). Each part's fee is at most its own rounded-up fee, so no margin goes negative, and the journal uses the stored fee that migration 0015 checks.
+- **404 for not yours (L6):** another practice's or patient's order or patient is 404 `NOT_FOUND`, like a missing one. A wrong persona for an endpoint is still 403.
+- **Frozen attempts (L7):** a trigger rejects any update (even of `updated_at`) or delete of an attempt a payment references, on the pattern of the paid-order freeze.
+- **At most 100 lines (L8)** per order, a 400 on `lines`.
+- **Node 22 only (L9):** `.nvmrc` (22) and `engines`; no `engine-strict`, which blocked `npm ci` on a newer local Node. CI and Railway use Node 22.
 
 ## What we cut
 
@@ -365,7 +393,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 ## What we'd do next
 
-1. A reconciliation job or support tool for unresolved payment attempts (including `conflict`), backed by a real processor's lookup and webhooks.
+1. Run reconciliation as a scheduled job backed by a real processor's lookup, key voiding and webhooks (revision 18.2 added the admin action), and a tool for `conflict` attempts.
 2. Refunds as reversing journals, and payouts as journals debiting the provider payable.
 3. Real authentication and role-based access behind the existing `Auth` interface, with audit logging on PHI reads.
 4. Rate limiting, structured logging with order and payment ids, and alerting on ledger imbalance or post-charge rollback.

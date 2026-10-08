@@ -22,6 +22,7 @@ import type { ChargeRequest, ChargeResult, PaymentGateway } from '../seams'
 import { FakePaymentGateway } from '../seams'
 import { createApp, type PayHooks } from '../server'
 import {
+  attemptKey,
   createInternalTestContext,
   type InternalTestContext,
 } from '../testing/harness'
@@ -95,8 +96,13 @@ function numberValue(value: unknown, field: string): number {
   return parsed
 }
 
-function executionKey(orderId: number, revision: number, execution = 1) {
-  return `order-${orderId}-r${revision}-e${execution}`
+function executionKey(
+  ctx: InternalTestContext,
+  orderId: number,
+  revision: number,
+  execution = 1,
+) {
+  return attemptKey(ctx, orderId, revision, execution)
 }
 
 function lineAt(
@@ -343,7 +349,9 @@ function expectSameDecline(held: readonly HeldCharge[], orderId: number) {
   expect(decline.result.status).toBe('failed')
   expect(second.result).toEqual(decline.result)
   expect(second.request.idempotencyKey).toBe(decline.request.idempotencyKey)
-  expect(decline.request.idempotencyKey).toBe(executionKey(orderId, 1))
+  expect(decline.request.idempotencyKey).toBe(
+    executionKey(context(), orderId, 1),
+  )
   expect(decline.request.amountCents).toBe(2_000)
 }
 
@@ -458,7 +466,7 @@ describe('revision 10 execution-safe payments', () => {
     const attempts = await loadAttempt(orderId)
     expect(attempts).toEqual([
       expect.objectContaining({
-        idempotencyKey: executionKey(orderId, 1),
+        idempotencyKey: executionKey(ctx, orderId, 1),
         execution: 1,
         status: 'declined',
         amountCents: 2_000,
@@ -491,7 +499,7 @@ describe('revision 10 execution-safe payments', () => {
     const rows = await loadGatewayCharges(ctx)
     expect(rows.filter((row) => row.status === 'succeeded')).toHaveLength(1)
     expect(
-      rows.find((row) => row.idempotencyKey === executionKey(orderId, 1))
+      rows.find((row) => row.idempotencyKey === executionKey(ctx, orderId, 1))
         ?.status,
     ).toBe('declined')
     const after = await moneyState(ctx, orderId)
@@ -552,7 +560,7 @@ describe('revision 10 execution-safe payments', () => {
     const rows = await loadGatewayCharges(ctx)
     expect(rows.map((row) => row.status)).toEqual(['declined'])
     expect(
-      rows.every((row) => row.idempotencyKey === executionKey(orderId, 1)),
+      rows.every((row) => row.idempotencyKey === executionKey(ctx, orderId, 1)),
     ).toBe(true)
   })
 
@@ -596,7 +604,7 @@ describe('revision 10 execution-safe payments', () => {
 
     const recorded = await expectRecordedSuccesses(ctx)
     expect(recorded.payments).toEqual([detail.payment?.reference])
-    const firstKey = executionKey(orderId, 1)
+    const firstKey = executionKey(ctx, orderId, 1)
     const rows = await loadGatewayCharges(ctx)
     expect(rows.find((row) => row.idempotencyKey === firstKey)?.status).toBe(
       'declined',
@@ -627,7 +635,7 @@ describe('revision 10 execution-safe payments', () => {
     const next = pay(ctx, orderId)
     await waitForHeld(held, 3)
     expect(heldAt(held, 2).request.idempotencyKey).toBe(
-      executionKey(orderId, 1, 2),
+      executionKey(ctx, orderId, 1, 2),
     )
     expect(heldAt(held, 2).result.status).toBe('succeeded')
     expectApiError(
@@ -702,7 +710,7 @@ describe('revision 10 execution-safe payments', () => {
     const rows = await loadGatewayCharges(ctx)
     expect(rows).toEqual([
       expect.objectContaining({
-        idempotencyKey: executionKey(orderId, 1),
+        idempotencyKey: executionKey(ctx, orderId, 1),
         amountCents: 2_000,
         status: 'succeeded',
         reference: detail.payment?.reference,
@@ -719,8 +727,9 @@ describe('revision 10 execution-safe payments', () => {
     const orderId = await createSentOrder(ctx, lineAt(ctx, 2_000))
     const accepted = crashAfterAccept(ctx.gateway)
 
+    // Revision 18.2: a gateway error is 503 PAYMENT_PENDING, no longer a 500.
     const failed = result(await pay(ctx, orderId))
-    expectApiError(failed, 500, 'INTERNAL')
+    expectApiError(failed, 503, 'PAYMENT_PENDING')
     const reference = accepted().reference
     expect(reference.length).toBeGreaterThan(0)
     const pending = await moneyState(ctx, orderId)
@@ -753,7 +762,7 @@ describe('revision 10 execution-safe payments', () => {
       }
       expectApiError(result(await pay(ctx, orderId)), 500, 'INTERNAL')
       const before = await moneyState(ctx, orderId)
-      const key = executionKey(orderId, 1)
+      const key = executionKey(ctx, orderId, 1)
       if (mismatch === 'missing') {
         await ctx.db.execute(
           sql`delete from fake_gateway_charges where idempotency_key = ${key}`,
@@ -789,7 +798,7 @@ describe('revision 10 execution-safe payments', () => {
     const productId = productIdOf(ctx)
     const orderId = await createSentOrder(ctx, lineAt(ctx, 2_000))
     const before = await moneyState(ctx, orderId)
-    const key = executionKey(orderId, 1)
+    const key = executionKey(ctx, orderId, 1)
     const bound = await ctx.gateway.charge({
       amountCents: 1_999,
       idempotencyKey: key,

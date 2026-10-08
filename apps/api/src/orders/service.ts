@@ -1,16 +1,21 @@
 import {
   computeSplit,
+  conservedSplitFees,
   partialPaymentQuoteDto,
   planPartialPayment,
   samePayableLines,
   SplitValidationError,
   ORDER_STATUS_LABELS,
+  RECONCILE_ABANDON_AFTER_MS,
   type DraftLine,
   type ExpectedPayableLine,
   type LowStockLineDto,
+  type OrderSplit,
   type OrderStatus,
   type PartialPaymentPlan,
+  type PaymentAttemptStatus,
   type PayMode,
+  type ReconcileOutcome,
   type PartialPaymentQuoteDto,
   type SplitLine,
   type StockAvailabilityDto,
@@ -19,6 +24,7 @@ import {
   and,
   asc,
   eq,
+  gt,
   gte,
   inArray,
   isNull,
@@ -28,6 +34,8 @@ import {
 } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import {
+  installation,
+  inventoryAdjustments,
   orderItems,
   orders,
   patients,
@@ -35,12 +43,13 @@ import {
   payments,
   products,
 } from '../db/schema'
-import { ApiError, forbidden, notFound } from '../http/errors'
+import { ApiError, notFound } from '../http/errors'
 import { postPaymentJournal } from '../ledger/journals'
 import { IDEMPOTENCY_KEY_REUSED, type CurrentUser } from '../seams'
 import type { AppContext } from '../server'
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
+type Attempt = typeof paymentAttempts.$inferSelect
 type ProviderUser = Extract<CurrentUser, { role: 'provider' }>
 type PatientUser = Extract<CurrentUser, { role: 'patient' }>
 
@@ -89,16 +98,24 @@ function statusInSentence(status: OrderStatus) {
   return ORDER_STATUS_LABELS[status].toLowerCase()
 }
 
+/**
+ * Locks one of the provider's own orders. Revision 18.4 (L6): another
+ * practice's order is 404, exactly as if it didn't exist, so ids can't be
+ * probed.
+ */
+async function lockOwnOrder(tx: Tx, user: ProviderUser, orderId: number) {
+  const order = await lockOrder(tx, orderId)
+  if (order.providerId !== user.providerId) throw notFound('Order')
+  return order
+}
+
 async function lockOwnedDraft(
   tx: Tx,
   user: ProviderUser,
   orderId: number,
   action: 'edited' | 'sent' | 'deleted',
 ) {
-  const order = await lockOrder(tx, orderId)
-  if (order.providerId !== user.providerId) {
-    throw forbidden('This order belongs to another provider')
-  }
+  const order = await lockOwnOrder(tx, user, orderId)
   // An unreconciled charge outranks the status conflict (revision 9): edits and
   // deletes report PAYMENT_NEEDS_RECONCILIATION whatever the order's status.
   if (action !== 'sent') await assertNoUnreconciledCharge(tx, orderId)
@@ -121,16 +138,9 @@ export async function createDraft(
     .select({ providerId: patients.providerId })
     .from(patients)
     .where(eq(patients.id, patientId))
-  if (!patient) {
+  // Revision 18.4 (L6): another practice's patient is reported as missing.
+  if (!patient || patient.providerId !== user.providerId) {
     throw new ApiError(404, 'NOT_FOUND', 'Patient not found', 'patientId')
-  }
-  if (patient.providerId !== user.providerId) {
-    throw new ApiError(
-      403,
-      'FORBIDDEN',
-      'This patient belongs to another provider',
-      'patientId',
-    )
   }
   const [order] = await db
     .insert(orders)
@@ -428,16 +438,85 @@ export async function deleteDraft(db: Db, user: ProviderUser, orderId: number) {
 }
 
 /**
+ * Revision 18.1: puts the lines of the order's cancelled downstream
+ * back-orders back on it, so a reopened order is the whole original order
+ * again. A product already on the order gets the quantities added at the
+ * order's own price; any other comes back at its back-order line's price and
+ * snapshots. Each merged back-order is marked, so it is merged only once, and
+ * otherwise stays as cancelled history.
+ */
+async function mergeCancelledBackorders(tx: Tx, orderId: number) {
+  const chain = await lockDescendants(tx, orderId)
+  const merged = chain.filter(
+    (o) => o.status === 'cancelled' && o.mergedBackAt === null,
+  )
+  if (merged.length === 0) return
+  const mergedIds = merged.map((o) => o.id)
+  const [own, returning] = await Promise.all([
+    tx
+      .select()
+      .from(orderItems)
+      .where(eq(orderItems.orderId, orderId))
+      .orderBy(asc(orderItems.id)),
+    tx
+      .select()
+      .from(orderItems)
+      .where(inArray(orderItems.orderId, mergedIds))
+      .orderBy(asc(orderItems.orderId), asc(orderItems.id)),
+  ])
+  const added = returning.reduce((acc, line) => {
+    if (line.productId === null) return acc
+    acc.set(line.productId, [...(acc.get(line.productId) ?? []), line])
+    return acc
+  }, new Map<number, (typeof returning)[number][]>())
+  const quantityOf = (lines: readonly { quantity: number }[]) =>
+    lines.reduce((sum, line) => sum + line.quantity, 0)
+
+  await Promise.all(
+    own.flatMap((line) => {
+      const extra =
+        line.productId === null ? undefined : added.get(line.productId)
+      if (extra === undefined) return []
+      return [
+        tx
+          .update(orderItems)
+          .set({ quantity: line.quantity + quantityOf(extra) })
+          .where(eq(orderItems.id, line.id)),
+      ]
+    }),
+  )
+  const ownProducts = new Set(own.map((line) => line.productId))
+  const newLines = [...added.entries()]
+    .filter(([productId]) => !ownProducts.has(productId))
+    .map(([productId, lines]) => {
+      const [first] = lines
+      if (!first) throw new Error(`No back-order line for product ${productId}`)
+      return {
+        orderId,
+        productId,
+        quantity: quantityOf(lines),
+        unitPriceCents: first.unitPriceCents,
+        unitCogsCents: first.unitCogsCents,
+        productName: first.productName,
+        productSku: first.productSku,
+      }
+    })
+  if (newLines.length > 0) await tx.insert(orderItems).values(newLines)
+  await tx
+    .update(orders)
+    .set({ mergedBackAt: new Date() })
+    .where(inArray(orders.id, mergedIds))
+}
+
+/**
  * Cancelled -> draft (revision 8). Clears sentAt, cancelledAt and the sent
  * snapshot so the order is an ordinary draft again (hidden from the patient until
  * re-sent), and keeps its lines. Stock is untouched: only payment moves stock.
+ * Revision 18.1: the lines of its cancelled back-orders come back onto it.
  */
 export async function reopenOrder(db: Db, user: ProviderUser, orderId: number) {
   await db.transaction(async (tx) => {
-    const order = await lockOrder(tx, orderId)
-    if (order.providerId !== user.providerId) {
-      throw forbidden('This order belongs to another provider')
-    }
+    const order = await lockOwnOrder(tx, user, orderId)
     await assertNoUnreconciledCharge(tx, orderId)
     if (order.splitFromOrderId !== null) {
       throw new ApiError(
@@ -453,6 +532,7 @@ export async function reopenOrder(db: Db, user: ProviderUser, orderId: number) {
         `This order is ${statusInSentence(order.status)}; only cancelled orders can be reopened.`,
       )
     }
+    await mergeCancelledBackorders(tx, orderId)
     await tx
       .update(orders)
       .set({
@@ -486,10 +566,7 @@ export async function cancelOrder(
   orderId: number,
 ) {
   const sentIds = await db.transaction(async (tx) => {
-    const order = await lockOrder(tx, orderId)
-    if (order.providerId !== user.providerId) {
-      throw forbidden('This order belongs to another provider')
-    }
+    const order = await lockOwnOrder(tx, user, orderId)
     await assertNoUnreconciledCharge(tx, orderId)
     if (order.status !== 'pending_payment') {
       throw new ApiError(
@@ -531,18 +608,34 @@ export async function cancelOrder(
   )
 }
 
-/** One idempotency key per quote: a re-sent order is a new quote with a new key. */
 /**
  * One idempotency key per payment execution (revision 10). A new execution,
  * and so a new key, exists only after the previous one was definitively
- * declined; an unresolved outcome always reuses its key.
+ * declined or abandoned; an unresolved outcome always reuses its key.
+ * Revision 18.4 (L4): prefixed with this installation's id, so a restored or
+ * second database sharing a processor account can never reuse a key.
  */
-function idempotencyKeyFor(
+async function idempotencyKeyFor(
+  tx: Tx,
   orderId: number,
   revision: number,
   execution: number,
 ) {
-  return `order-${orderId}-r${revision}-e${execution}`
+  const [row] = await tx
+    .select({ installId: installation.installId })
+    .from(installation)
+  if (!row) throw new Error('No installation row; migration 0016 creates it')
+  return `${row.installId}-order-${orderId}-r${revision}-e${execution}`
+}
+
+/** Revision 18.2: attempt statuses that are over, with their stock released. */
+const RELEASED_STATUSES: readonly PaymentAttemptStatus[] = [
+  'declined',
+  'abandoned',
+]
+
+function isReleased(attempt: Pick<Attempt, 'status'>) {
+  return RELEASED_STATUSES.includes(attempt.status)
 }
 
 /**
@@ -703,15 +796,42 @@ async function decrementStock(tx: Tx, lines: PayLine[]) {
   }, Promise.resolve())
 }
 
-/** Gives back stock taken by decrementStock, in the same product-id order. */
-async function releaseStock(tx: Tx, lines: PayLine[]) {
-  await byProductId(lines).reduce(async (prev, line) => {
-    await prev
-    await tx
-      .update(products)
-      .set({ stockQuantity: sql`${products.stockQuantity} + ${line.quantity}` })
-      .where(eq(products.id, line.productId))
-  }, Promise.resolve())
+interface ReleasedStock {
+  productId: number
+  previousQuantity: number
+  newQuantity: number
+}
+
+/**
+ * Gives back stock taken by decrementStock, in the same product-id order, and
+ * reports each product's stock before and after.
+ */
+async function releaseStock(
+  tx: Tx,
+  lines: PayLine[],
+): Promise<ReleasedStock[]> {
+  return byProductId(lines).reduce(
+    async (prev, line) => {
+      const done = await prev
+      const [updated] = await tx
+        .update(products)
+        .set({
+          stockQuantity: sql`${products.stockQuantity} + ${line.quantity}`,
+        })
+        .where(eq(products.id, line.productId))
+        .returning({ stock: products.stockQuantity })
+      if (!updated) return done
+      return [
+        ...done,
+        {
+          productId: line.productId,
+          previousQuantity: updated.stock - line.quantity,
+          newQuantity: updated.stock,
+        },
+      ]
+    },
+    Promise.resolve([] as ReleasedStock[]),
+  )
 }
 
 export interface PayRequest {
@@ -804,11 +924,14 @@ function insufficientStock(
   )
 }
 
+/** Revision 18.1: the order's live back-order; cancelled ones are history. */
 async function findBackorder(tx: Tx, orderId: number) {
   const [child] = await tx
     .select({ id: orders.id, splitFromRevision: orders.splitFromRevision })
     .from(orders)
-    .where(eq(orders.splitFromOrderId, orderId))
+    .where(
+      and(eq(orders.splitFromOrderId, orderId), ne(orders.status, 'cancelled')),
+    )
   return child
 }
 
@@ -849,6 +972,8 @@ async function splitOrder(
 ) {
   const backorderSplit = computeSplit(plan.backorderLines)
   const paySplit = computeSplit(plan.payLines)
+  // Revision 18.4 (L5): the halves share the order's stored fee exactly.
+  const fees = conservedSplitFees(storedFee(order), paySplit.subtotalCents)
   const now = new Date()
   const [backorder] = await tx
     .insert(orders)
@@ -857,7 +982,7 @@ async function splitOrder(
       patientId: order.patientId,
       status: 'pending_payment',
       subtotalCents: backorderSplit.subtotalCents,
-      platformFeeCents: backorderSplit.platformFeeCents,
+      platformFeeCents: fees.backorderFeeCents,
       totalCents: backorderSplit.totalCents,
       sentAt: now,
       revision: 1,
@@ -901,7 +1026,7 @@ async function splitOrder(
     .update(orders)
     .set({
       subtotalCents: paySplit.subtotalCents,
-      platformFeeCents: paySplit.platformFeeCents,
+      platformFeeCents: fees.payFeeCents,
       totalCents: paySplit.totalCents,
       revision,
       updatedAt: now,
@@ -910,7 +1035,28 @@ async function splitOrder(
   return revision
 }
 
-type Attempt = typeof paymentAttempts.$inferSelect
+/** A sent order's stored fee: what its splits and its journal must conserve. */
+function storedFee(order: Order) {
+  if (order.platformFeeCents === null) {
+    throw new Error(`Order ${order.id} was sent without a fee snapshot`)
+  }
+  return order.platformFeeCents
+}
+
+/**
+ * The order's split with its stored fee (revision 18.4, L5): a back-order
+ * carries the remainder of its original's fee, which may be less than 75 bps
+ * of its own subtotal, and migration 0015 checks the journal against it.
+ */
+function splitWithStoredFee(order: Order, split: OrderSplit): OrderSplit {
+  const platformFeeCents = storedFee(order)
+  return {
+    ...split,
+    platformFeeCents,
+    providerMarginCents:
+      split.subtotalCents - split.cogsCents - platformFeeCents,
+  }
+}
 
 function needsReconciliation() {
   return new ApiError(
@@ -938,11 +1084,11 @@ async function preparePayment(
 ): Promise<Attempt | null> {
   return db.transaction(async (tx) => {
     const order = await lockOrder(tx, orderId)
-    if (order.patientId !== user.patientId) {
-      throw forbidden('This order belongs to another patient')
+    // Another patient's order, and an unsent one (including a draft cancelled
+    // before sending), are 404: the patient never saw them (revision 18.4, L6).
+    if (order.patientId !== user.patientId || order.sentAt === null) {
+      throw notFound('Order')
     }
-    // The patient never saw an unsent order, including a draft cancelled before sending.
-    if (order.sentAt === null) throw notFound('Order')
     const { expectedTotalCents, mode } = request
     const expectedRevision = await effectiveRevision(tx, order, request)
     if (order.status === 'paid') {
@@ -969,7 +1115,7 @@ async function preparePayment(
       .orderBy(asc(paymentAttempts.revision), asc(paymentAttempts.execution))
     // An unresolved attempt is always completed; only a new charge waits for
     // the prior order in the chain (revision 15.3).
-    if (attempts.every((a) => a.status === 'declined')) {
+    if (attempts.every(isReleased)) {
       await assertPriorOrderPaid(tx, order)
     }
     // A full pay's quote is the stored total; an available pay's depends on
@@ -984,13 +1130,13 @@ async function preparePayment(
 
     // An unresolved outcome from an earlier quote must be settled first (N1).
     const olderUnresolved = attempts.some(
-      (a) => a.revision !== order.revision && a.status !== 'declined',
+      (a) => a.revision !== order.revision && !isReleased(a),
     )
     if (olderUnresolved) throw needsReconciliation()
 
     const lines = await loadPayLines(tx, orderId)
     const latest = attempts.filter((a) => a.revision === order.revision).at(-1)
-    if (latest && latest.status !== 'declined') {
+    if (latest && !isReleased(latest)) {
       // The stock is already held by this execution, so there is nothing to
       // plan: it is the same quote, retried.
       if (
@@ -1017,8 +1163,17 @@ async function preparePayment(
     // stock, locked, so the reservation below cannot come up short.
     const stock = await lockStock(tx, lines)
     const plan = planPartialPayment(lines, stock)
+    // An order splits at most once while its back-order is live (revision
+    // 18.1): a reduced order that came up short again (say, after a decline)
+    // can only be paid once restocked, and its quote says so.
+    const liveBackorder = plan.hasShortfall
+      ? await findBackorder(tx, orderId)
+      : undefined
     // Pay errors go to the patient, so the quote carries no fee.
-    const quote = partialPaymentQuoteDto(plan, 'patient')
+    const quote = partialPaymentQuoteDto(plan, 'patient', {
+      orderFeeCents: storedFee(order),
+      hasLiveBackorder: liveBackorder !== undefined,
+    })
     const stale =
       order.revision !== expectedRevision ||
       (mode === 'full' ? order.totalCents : quote.pay.totalCents) !==
@@ -1039,11 +1194,7 @@ async function preparePayment(
       if (stale) throw orderChanged(quote)
       if (quote.pay.totalCents <= 0) throw nothingToPay()
     }
-    // An order splits at most once: a reduced order that came up short again
-    // (say, after a decline) can only be paid once restocked.
-    if (plan.hasShortfall && (await findBackorder(tx, orderId))) {
-      throw insufficientStock(lines, stock, quote)
-    }
+    if (liveBackorder) throw insufficientStock(lines, stock, quote)
     const revision = plan.hasShortfall
       ? await splitOrder(tx, order, plan, expectedRevision)
       : order.revision
@@ -1061,7 +1212,12 @@ async function preparePayment(
         orderId,
         revision,
         execution,
-        idempotencyKey: idempotencyKeyFor(orderId, revision, execution),
+        idempotencyKey: await idempotencyKeyFor(
+          tx,
+          orderId,
+          revision,
+          execution,
+        ),
         amountCents,
         stockHeld: true,
       })
@@ -1075,51 +1231,147 @@ async function preparePayment(
   })
 }
 
+type Outcome =
+  | { status: 'succeeded'; reference: string }
+  | { status: 'declined' }
+  | { status: 'conflict' }
+  | { status: 'abandoned' }
+
+/**
+ * The statuses each outcome may be applied over (the fence). Revision 18.2: a
+ * success the gateway reports late still lands on an abandoned attempt, so the
+ * money is recorded rather than stranded; its stock is taken again on
+ * finalization. Abandoning applies only to an attempt still pending.
+ */
+const OUTCOME_FENCE: Record<Outcome['status'], PaymentAttemptStatus[]> = {
+  succeeded: ['pending', 'conflict', 'abandoned'],
+  declined: ['pending', 'conflict'],
+  conflict: ['pending', 'conflict'],
+  abandoned: ['pending'],
+}
+
+/**
+ * Revision 18.2: a late success may land on an abandoned attempt only while
+ * no later execution exists, which could hold or have taken its own charge.
+ */
+async function hasLaterAttempt(tx: Tx, attempt: Attempt) {
+  const [later] = await tx
+    .select({ id: paymentAttempts.id })
+    .from(paymentAttempts)
+    .where(
+      and(
+        eq(paymentAttempts.orderId, attempt.orderId),
+        gt(paymentAttempts.id, attempt.id),
+      ),
+    )
+    .limit(1)
+  return later !== undefined
+}
+
+/** Revision 18.2: the admin reconciling an attempt, for the audit trail. */
+interface Reconciler {
+  userId: number
+  at: Date
+}
+
 /**
  * Applies a gateway outcome to exactly the execution it belongs to (fenced):
- * only while that execution is still pending or in conflict. Returns the
- * attempt as it stands afterwards; a stale or duplicate outcome changes
- * nothing. A decline releases the reservation in the same transaction, and
- * only when its fenced update matched, so it can never release stock that a
- * newer execution or a success holds.
+ * only while that execution is in a status the outcome may replace. Returns
+ * the attempt as it stands afterwards; a stale or duplicate outcome changes
+ * nothing. A decline or abandonment releases the reservation in the same
+ * transaction, and only when its fenced update matched, so it can never
+ * release stock that a newer execution or a success holds. A release by an
+ * admin's reconcile is recorded in inventory_adjustments (revision 18.2).
  */
 async function applyOutcome(
   db: Db,
   attempt: Attempt,
-  outcome:
-    | { status: 'succeeded'; reference: string }
-    | { status: 'declined' }
-    | { status: 'conflict' },
+  outcome: Outcome,
+  reconciler?: Reconciler,
 ): Promise<Attempt> {
   return db.transaction(async (tx) => {
     await lockOrder(tx, attempt.orderId)
-    const fence = and(
-      eq(paymentAttempts.id, attempt.id),
-      eq(paymentAttempts.execution, attempt.execution),
-      inArray(paymentAttempts.status, ['pending', 'conflict']),
-    )
+    const [current] = await tx
+      .select()
+      .from(paymentAttempts)
+      .where(eq(paymentAttempts.id, attempt.id))
+      .for('update')
+    if (!current) throw new Error(`Payment attempt ${attempt.id} disappeared`)
+    if (
+      current.execution !== attempt.execution ||
+      !OUTCOME_FENCE[outcome.status].includes(current.status) ||
+      (current.status === 'abandoned' && (await hasLaterAttempt(tx, current)))
+    ) {
+      return current
+    }
+    const releases =
+      (outcome.status === 'declined' || outcome.status === 'abandoned') &&
+      current.stockHeld
     const [applied] = await tx
       .update(paymentAttempts)
       .set({
         status: outcome.status,
         gatewayReference:
           outcome.status === 'succeeded' ? outcome.reference : null,
-        stockHeld: outcome.status === 'declined' ? false : attempt.stockHeld,
+        stockHeld: releases ? false : current.stockHeld,
         updatedAt: new Date(),
+        ...(reconciler === undefined
+          ? {}
+          : {
+              reconciledAt: reconciler.at,
+              reconciledByUserId: reconciler.userId,
+            }),
       })
-      .where(fence)
+      .where(eq(paymentAttempts.id, current.id))
       .returning()
-    if (applied && outcome.status === 'declined' && attempt.stockHeld) {
-      await releaseStock(tx, await loadPayLines(tx, attempt.orderId))
+    if (!applied) throw new Error(`Payment attempt ${attempt.id} disappeared`)
+    if (!releases) return applied
+    const released = await releaseStock(
+      tx,
+      await loadPayLines(tx, attempt.orderId),
+    )
+    if (reconciler !== undefined && released.length > 0) {
+      await tx.insert(inventoryAdjustments).values(
+        released.map((r) => ({
+          productId: r.productId,
+          userId: reconciler.userId,
+          kind: 'reconcile_release' as const,
+          previousQuantity: r.previousQuantity,
+          newQuantity: r.newQuantity,
+          paymentAttemptId: attempt.id,
+        })),
+      )
     }
-    if (applied) return applied
-    const [current] = await tx
-      .select()
-      .from(paymentAttempts)
-      .where(eq(paymentAttempts.id, attempt.id))
-    if (!current) throw new Error(`Payment attempt ${attempt.id} disappeared`)
-    return current
+    return applied
   })
+}
+
+/**
+ * Revision 18.2: a gateway call that throws (a transport error or a timeout)
+ * leaves the outcome unknown. The attempt stays pending with its stock held,
+ * and the patient is told the payment is being processed: retrying it, or an
+ * admin's reconcile, settles it without a second charge.
+ */
+async function callGateway<T>(attempt: Attempt, call: () => Promise<T>) {
+  try {
+    return await call()
+  } catch (err) {
+    console.error(
+      `[gateway] call for payment attempt ${attempt.id} failed; it stays pending`,
+      err,
+    )
+    throw new ApiError(
+      503,
+      'PAYMENT_PENDING',
+      'Your payment is being processed. Complete payment again in a moment; you will not be charged twice.',
+      undefined,
+      {
+        orderId: attempt.orderId,
+        revision: attempt.revision,
+        amountCents: attempt.amountCents,
+      },
+    )
+  }
 }
 
 /**
@@ -1132,12 +1384,14 @@ async function chargeExecution(
   attempt: Attempt,
   simulateFailure: boolean,
 ): Promise<Attempt> {
-  const charge = await gateway.charge({
-    amountCents: attempt.amountCents,
-    idempotencyKey: attempt.idempotencyKey,
-    description: `Supplement order ${attempt.orderId} (revision ${attempt.revision}, execution ${attempt.execution})`,
-    simulateFailure: allowSimulatedFailure && simulateFailure,
-  })
+  const charge = await callGateway(attempt, () =>
+    gateway.charge({
+      amountCents: attempt.amountCents,
+      idempotencyKey: attempt.idempotencyKey,
+      description: `Supplement order ${attempt.orderId} (revision ${attempt.revision}, execution ${attempt.execution})`,
+      simulateFailure: allowSimulatedFailure && simulateFailure,
+    }),
+  )
   if (charge.status === 'succeeded') {
     if (charge.amountCents !== attempt.amountCents) {
       await applyOutcome(db, attempt, { status: 'conflict' })
@@ -1176,7 +1430,9 @@ async function chargeExecution(
  * reference. Anything else is left for reconciliation.
  */
 async function verifySucceeded({ gateway }: AppContext, attempt: Attempt) {
-  const found = await gateway.lookup(attempt.idempotencyKey)
+  const found = await callGateway(attempt, () =>
+    gateway.lookup(attempt.idempotencyKey),
+  )
   if (
     found?.status !== 'succeeded' ||
     found.amountCents !== attempt.amountCents ||
@@ -1193,7 +1449,11 @@ async function verifySucceeded({ gateway }: AppContext, attempt: Attempt) {
  * back, the execution stays succeeded without a payment and blocks the order
  * until a retried pay finalizes it.
  */
-async function recordPayment({ db, payHooks }: AppContext, attempt: Attempt) {
+async function recordPayment(
+  { db, payHooks }: AppContext,
+  attempt: Attempt,
+  reconciler?: Reconciler,
+) {
   await db.transaction(async (tx) => {
     const order = await lockOrder(tx, attempt.orderId)
     if (order.status === 'paid' && order.revision === attempt.revision) return
@@ -1213,18 +1473,30 @@ async function recordPayment({ db, payHooks }: AppContext, attempt: Attempt) {
       )
     }
     const lines = await loadPayLines(tx, order.id)
-    const split = computeSplit(lines)
+    const split = splitWithStoredFee(order, computeSplit(lines))
     if (split.totalCents !== order.totalCents) {
       throw new Error(
         `Order ${order.id} lines no longer match the sent total (${split.totalCents} != ${order.totalCents})`,
       )
     }
-    // The execution reserved the stock in step 1; take it now only if it holds none.
-    if (!current.stockHeld) {
-      await decrementStock(tx, lines)
+    // The execution reserved the stock in step 1; take it now only if it
+    // holds none (a legacy attempt, or one abandoned before its late success).
+    // An admin's reconcile is stamped here, before the payment freezes the
+    // attempt (revision 18.4, L7).
+    if (!current.stockHeld) await decrementStock(tx, lines)
+    if (!current.stockHeld || reconciler !== undefined) {
       await tx
         .update(paymentAttempts)
-        .set({ stockHeld: true, updatedAt: new Date() })
+        .set({
+          stockHeld: true,
+          updatedAt: new Date(),
+          ...(reconciler === undefined
+            ? {}
+            : {
+                reconciledAt: reconciler.at,
+                reconciledByUserId: reconciler.userId,
+              }),
+        })
         .where(eq(paymentAttempts.id, current.id))
     }
 
@@ -1279,4 +1551,93 @@ export async function payOrder(
       : await chargeExecution(ctx, attempt, request.simulateFailure)
   if (attempt.status === 'succeeded') await verifySucceeded(ctx, attempt)
   await recordPayment(ctx, succeeded)
+}
+
+type AdminUser = Extract<CurrentUser, { role: 'admin' }>
+
+/**
+ * Revision 18.2: an admin settles an unresolved payment attempt from the
+ * gateway's own record, which `lookup` reads without ever charging.
+ * - succeeded: finalize exactly as a retried pay would (payment, journal,
+ *   paid), with no new charge;
+ * - declined: mark it declined and release its stock under the fence;
+ * - no record, and older than RECONCILE_ABANDON_AFTER_MS on the app's clock:
+ *   mark it abandoned and release its stock;
+ * - no record yet: 409 RECONCILE_TOO_EARLY.
+ * Reconciling a resolved attempt changes nothing ('unchanged'). An abandoned
+ * attempt is looked up again, so a success the gateway records late is still
+ * finalized rather than stranded.
+ */
+export async function reconcileAttempt(
+  ctx: AppContext,
+  admin: AdminUser,
+  attemptId: number,
+): Promise<ReconcileOutcome> {
+  const { db, gateway, now } = ctx
+  const [row] = await db
+    .select({ attempt: paymentAttempts, paymentId: payments.id })
+    .from(paymentAttempts)
+    .leftJoin(payments, eq(payments.paymentAttemptId, paymentAttempts.id))
+    .where(eq(paymentAttempts.id, attemptId))
+  if (!row) throw notFound('Payment attempt')
+  const { attempt } = row
+  if (row.paymentId !== null || attempt.status === 'declined') {
+    return 'unchanged'
+  }
+  const reconciler: Reconciler = { userId: admin.userId, at: now() }
+
+  if (attempt.status === 'succeeded') {
+    await verifySucceeded(ctx, attempt)
+    await recordPayment(ctx, attempt, reconciler)
+    return 'finalized'
+  }
+  const found = await callGateway(attempt, () =>
+    gateway.lookup(attempt.idempotencyKey),
+  )
+  if (attempt.status === 'abandoned' && found?.status !== 'succeeded') {
+    return 'unchanged'
+  }
+  if (found === null) {
+    const ageMs = reconciler.at.getTime() - attempt.createdAt.getTime()
+    if (ageMs < RECONCILE_ABANDON_AFTER_MS) {
+      throw new ApiError(
+        409,
+        'RECONCILE_TOO_EARLY',
+        `The gateway has no record of this charge yet. Try again once it is ${RECONCILE_ABANDON_AFTER_MS / 60_000} minutes old.`,
+      )
+    }
+    const applied = await applyOutcome(
+      db,
+      attempt,
+      { status: 'abandoned' },
+      reconciler,
+    )
+    return applied.status === 'abandoned' ? 'abandoned' : 'unchanged'
+  }
+  if (found.status === 'declined') {
+    const applied = await applyOutcome(
+      db,
+      attempt,
+      { status: 'declined' },
+      reconciler,
+    )
+    return applied.status === 'declined' ? 'declined' : 'unchanged'
+  }
+  if (found.amountCents !== attempt.amountCents || found.reference === null) {
+    throw needsReconciliation()
+  }
+  const applied = await applyOutcome(
+    db,
+    attempt,
+    { status: 'succeeded', reference: found.reference },
+    reconciler,
+  )
+  if (
+    applied.status !== 'succeeded' ||
+    applied.gatewayReference !== found.reference
+  ) {
+    throw needsReconciliation()
+  }
+  await recordPayment(ctx, applied, reconciler)
+  return 'finalized'
 }

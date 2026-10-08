@@ -53,17 +53,16 @@ const base: PatientOrderDetailDto = {
   backorderStatus: 'awaiting_stock',
 }
 
-// The quote's `reason` is new in revision 18; the domain type gains it on merge.
-const awaitingRestock = {
+const awaitingRestock: PatientOrderDetailDto = {
   ...base,
   partialPaymentQuote: {
     pay: side(1000),
     backorder: side(2000),
     payable: false,
     hasShortfall: true,
-    reason: 'awaiting_restock',
+    reason: 'awaiting_restock' as const,
   },
-} as PatientOrderDetailDto
+}
 
 async function renderOrder(order: PatientOrderDetailDto) {
   vi.mocked(api.getOrder).mockResolvedValue(order)
@@ -148,7 +147,7 @@ describe('PatientOrderView payment pending (18.2)', () => {
     vi.mocked(api.payOrder).mockRejectedValue(
       new api.ApiRequestError(
         503,
-        'PAYMENT_PENDING' as never,
+        'PAYMENT_PENDING',
         'Payment is being processed',
       ),
     )

@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import type { DashboardRangePreset } from '@supplement-orders/domain'
+import type {
+  DashboardDto,
+  DashboardRangePreset,
+} from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable, { type DataTablePageEvent } from 'primevue/datatable'
@@ -9,7 +12,6 @@ import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, type LocationQuery } from 'vue-router'
-import type { Dashboard18Dto } from '../api/rev18'
 import { ApiRequestError, getDashboard, searchProducts } from '../api'
 import { ErrorBanner, MoneyText, PageSummary, StatTile } from '../components'
 import {
@@ -66,7 +68,7 @@ function fallBackToDefault() {
   listUrl.replaceQuery(urlQuery(inventoryState()))
 }
 
-const sales = useResource(async (): Promise<Dashboard18Dto> => {
+const sales = useResource(async (): Promise<DashboardDto> => {
   try {
     return await getDashboard(toDashboardParams(range.value))
   } catch (error) {
@@ -278,10 +280,7 @@ function onInventoryPage(event: DataTablePageEvent) {
     </template>
     <template v-if="sales.data.value">
       <h3 id="sold-heading">Sold by product</h3>
-      <p
-        v-if="(sales.data.value.soldByProduct ?? []).length === 0"
-        role="status"
-      >
+      <p v-if="sales.data.value.soldByProduct.length === 0" role="status">
         No products sold in this range.
       </p>
       <DataTable
@@ -291,7 +290,7 @@ function onInventoryPage(event: DataTablePageEvent) {
         :table-props="{ 'aria-labelledby': 'sold-heading' }"
       >
         <Column field="productName" header="Product" />
-        <Column field="units" header="Units sold" />
+        <Column field="unitsSold" header="Units sold" />
         <Column header="Revenue">
           <template #body="{ data }"
             ><MoneyText :cents="data.revenueCents"

@@ -2,7 +2,7 @@ import { screen, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
-import type { PaymentAttemptDto } from '../api/rev18'
+import type { AdminPaymentAttemptDto } from '@supplement-orders/domain'
 import { expectNoAxeViolations } from '../a11y/expectNoAxeViolations'
 import { renderWithRouter } from '../test/renderWithRouter'
 import AdminAccountsView from './AdminAccountsView.vue'
@@ -18,13 +18,16 @@ vi.mock('../api', async (importOriginal) => {
   }
 })
 
-const attempt: PaymentAttemptDto = {
+const attempt: AdminPaymentAttemptDto = {
   id: 9,
   orderId: 42,
   providerName: 'Dr. Maya Rivera',
   amountCents: 3000,
   status: 'pending',
+  hasPayment: false,
+  createdAt: '2026-10-08T10:00:00.000Z',
   ageSeconds: 7200,
+  reconciledAt: null,
 }
 
 beforeEach(() => {
@@ -80,8 +83,8 @@ describe('Payments needing attention (18.2)', () => {
   it('confirms before reconciling, then toasts the result and refreshes', async () => {
     const user = userEvent.setup()
     vi.mocked(api.reconcilePaymentAttempt).mockResolvedValue({
-      id: 9,
-      outcome: 'succeeded',
+      outcome: 'finalized',
+      attempt,
     })
     const table = await panel()
     vi.mocked(api.listUnresolvedPaymentAttempts).mockResolvedValue([])
@@ -118,7 +121,7 @@ describe('Payments needing attention (18.2)', () => {
     vi.mocked(api.reconcilePaymentAttempt).mockRejectedValue(
       new api.ApiRequestError(
         409,
-        'RECONCILE_TOO_EARLY' as never,
+        'RECONCILE_TOO_EARLY',
         'Too early to reconcile',
       ),
     )

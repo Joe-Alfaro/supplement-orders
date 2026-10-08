@@ -8,7 +8,6 @@ import Button from 'primevue/button'
 import Message from 'primevue/message'
 import { computed, onMounted, ref, watch } from 'vue'
 import { ApiRequestError, handleApiError, getOrder, payOrder } from '../api'
-import type { PartialPaymentQuote18Dto } from '../api/rev18'
 import {
   BackorderLinks,
   ErrorBanner,
@@ -63,7 +62,7 @@ const blockedByOrderId = computed(() => {
 
 /** 18.1: the server says nothing can be paid until a live back-order restocks. */
 const awaitingRestock = computed(() => {
-  const current = quote.value as PartialPaymentQuote18Dto | null
+  const current = quote.value
   return current?.payable === false && current.reason === 'awaiting_restock'
 })
 
@@ -93,8 +92,6 @@ interface ChangedNotice {
 }
 
 const STOCK_CHANGED = 'Stock changed; please review the updated amounts.'
-// 18.2: new in revision 18; the domain error codes gain it on merge.
-const PAYMENT_PENDING = 'PAYMENT_PENDING'
 const STOCK_CODES = ['INSUFFICIENT_STOCK', 'AWAITING_STOCK']
 
 function priorOrderIdOf(err: ApiRequestError) {
@@ -163,10 +160,7 @@ async function pay() {
       await reloadChangedOrder(shown.id)
       return
     }
-    if (
-      err instanceof ApiRequestError &&
-      (err.code as string) === PAYMENT_PENDING
-    ) {
+    if (err instanceof ApiRequestError && err.code === 'PAYMENT_PENDING') {
       // A charge is in flight or its outcome is unknown: show the saved attempt.
       await reloadChangedOrder(shown.id)
       return

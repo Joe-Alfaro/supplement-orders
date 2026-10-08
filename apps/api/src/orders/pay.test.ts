@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
+  attemptKey,
   createInternalTestContext,
   type InternalTestContext,
 } from '../testing/harness'
@@ -40,7 +41,7 @@ describe('POST /api/orders/:id/pay', () => {
     expect(after.payments).toHaveLength(1)
     const [payment] = after.payments
     expect(payment!.amountCents).toBe(res.body.totalCents)
-    expect(payment!.idempotencyKey).toBe(`order-${orderId}-r1-e1`)
+    expect(payment!.idempotencyKey).toBe(attemptKey(ctx, orderId, 1))
     expect(payment!.paymentAttemptId).not.toBeNull()
     expect(after.journals).toHaveLength(1)
     expect(after.journals[0]).toMatchObject({

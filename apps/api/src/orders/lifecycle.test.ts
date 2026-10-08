@@ -106,7 +106,8 @@ describe('revision 8: delete draft and reopen cancelled', () => {
         ctx.request.delete('/api/orders/abc').set(provider()),
       ])
 
-      expect(results.map((r) => r.status)).toEqual([403, 403, 404, 400])
+      // Revision 18.4 (L6): another provider's order is 404, not 403.
+      expect(results.map((r) => r.status)).toEqual([403, 404, 404, 400])
       expect((await rowsFor(orderId)).order?.status).toBe('draft')
     })
 
@@ -313,7 +314,8 @@ describe('revision 8: delete draft and reopen cancelled', () => {
         reopen(999_999),
       ])
 
-      expect(results.map((r) => r.status)).toEqual([403, 403, 404])
+      // Revision 18.4 (L6): another provider's order is 404, not 403.
+      expect(results.map((r) => r.status)).toEqual([403, 404, 404])
       expect((await rowsFor(orderId)).order?.status).toBe('cancelled')
     })
   })

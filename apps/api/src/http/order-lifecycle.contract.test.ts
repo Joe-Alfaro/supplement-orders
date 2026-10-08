@@ -963,7 +963,8 @@ describe('DELETE /api/orders/:id', () => {
       draft.id,
       context().seed.otherProviderUserId,
     )
-    expectError({ status: other.status, body: other.body }, 403, 'FORBIDDEN')
+    // Revision 18.4 (L6): another practice's order is 404.
+    expectError({ status: other.status, body: other.body }, 404, 'NOT_FOUND')
 
     const missing = await deleteOrder(draft.id)
     expectError(
@@ -1128,7 +1129,8 @@ describe('POST /api/orders/:id/reopen', () => {
       cancelled.id,
       context().seed.otherProviderUserId,
     )
-    expectError({ status: other.status, body: other.body }, 403, 'FORBIDDEN')
+    // Revision 18.4 (L6): another practice's order is 404.
+    expectError({ status: other.status, body: other.body }, 404, 'NOT_FOUND')
 
     const missing = await reopenOrder(cancelled.id)
     expectError(
@@ -1441,7 +1443,8 @@ describe('GET /api/orders?status=', () => {
       { status: 'pending_payment', patientId: String(foreignPatientId) },
       context().seed.providerUserId,
     )
-    expectError(crossed, 403, 'FORBIDDEN')
+    // Revision 18.4 (L6): another practice's patient is 404.
+    expectError(crossed, 404, 'NOT_FOUND')
   })
 
   it.each<[Record<string, string>, string]>([

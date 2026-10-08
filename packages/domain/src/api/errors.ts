@@ -10,8 +10,9 @@ import {
  * Status mapping:
  * - 400 VALIDATION_ERROR: request body, params, or query failed schema validation
  * - 401 UNAUTHENTICATED: missing or unknown X-User-Id
- * - 403 FORBIDDEN: wrong persona, or the resource belongs to someone else
- * - 404 NOT_FOUND: the resource does not exist
+ * - 403 FORBIDDEN: wrong persona for the endpoint
+ * - 404 NOT_FOUND: the resource does not exist, or (revision 18.4, L6) belongs to
+ *   another practice or patient, so ids can't be probed
  * - 409 ORDER_NOT_DRAFT / ORDER_NOT_PAYABLE / ORDER_NOT_CANCELLABLE / ORDER_NOT_REOPENABLE:
  *   the order is in the wrong status. Edit, send and DELETE need a draft; cancel needs
  *   pending_payment (revision 8: drafts are deleted instead); reopen needs cancelled.
@@ -35,7 +36,13 @@ import {
  * - 409 IDEMPOTENCY_KEY_REUSED: the gateway refused a known key with a different amount
  * - 409 STOCK_CHANGED (revision 13): an admin's stock set expected a value that is no
  *   longer current; the body carries `currentStockQuantity`
+ * - 409 RECONCILE_TOO_EARLY (revision 18.2): an admin reconcile found no gateway record
+ *   for an attempt younger than the safety window (15 minutes); try again later.
  * - 402 PAYMENT_FAILED: the gateway declined; nothing was persisted
+ * - 503 PAYMENT_PENDING (revision 18.2): the gateway call failed or timed out, so the
+ *   outcome is unknown. The attempt stays pending with its stock held; the body carries
+ *   `orderId`, `revision` and `amountCents`, and a retried pay (Complete payment) or an
+ *   admin reconcile resolves it without a second charge.
  * - 413 PAYLOAD_TOO_LARGE: the request body exceeds the server's limit
  * - other client errors from reading the body (e.g. 415 for an unsupported charset)
  *   keep their 4xx status with VALIDATION_ERROR
@@ -58,6 +65,8 @@ export const API_ERROR_CODES = [
   'LOW_STOCK_UNACKNOWLEDGED',
   'BACKORDER_NOT_EDITABLE',
   'PRIOR_ORDER_UNPAID',
+  'PAYMENT_PENDING',
+  'RECONCILE_TOO_EARLY',
   'EMPTY_ORDER',
   'INVALID_QUANTITY',
   'INVALID_AMOUNT',
@@ -127,6 +136,12 @@ export interface ApiErrorBody {
   lines?: LowStockLineDto[]
   /** PRIOR_ORDER_UNPAID only: the unpaid order to pay first. */
   priorOrderId?: number
+  /** PAYMENT_PENDING only: the order whose payment is being processed. */
+  orderId?: number
+  /** PAYMENT_PENDING only: the quote revision the pending attempt charges. */
+  revision?: number
+  /** PAYMENT_PENDING only: the pending attempt's amount. */
+  amountCents?: number
 }
 
 export interface ApiErrorResponse {
@@ -203,6 +218,27 @@ export const priorOrderUnpaidErrorResponseSchema: z.ZodType<PriorOrderUnpaidErro
     }),
   })
 
+export interface PaymentPendingErrorResponse {
+  error: {
+    code: 'PAYMENT_PENDING'
+    message: string
+    orderId: number
+    revision: number
+    amountCents: number
+  }
+}
+
+export const paymentPendingErrorResponseSchema: z.ZodType<PaymentPendingErrorResponse> =
+  z.object({
+    error: z.object({
+      code: z.literal('PAYMENT_PENDING'),
+      message: z.string(),
+      orderId: z.int().positive(),
+      revision: z.int().positive(),
+      amountCents: z.int().nonnegative(),
+    }),
+  })
+
 export const apiErrorResponseSchema: z.ZodType<ApiErrorResponse> = z.object({
   error: z.object({
     code: z.enum(API_ERROR_CODES),
@@ -213,5 +249,8 @@ export const apiErrorResponseSchema: z.ZodType<ApiErrorResponse> = z.object({
     partialPaymentQuote: partialPaymentQuoteDtoSchema.optional(),
     lines: z.array(lowStockLineDtoSchema).optional(),
     priorOrderId: z.int().positive().optional(),
+    orderId: z.int().positive().optional(),
+    revision: z.int().positive().optional(),
+    amountCents: z.int().nonnegative().optional(),
   }),
 })
