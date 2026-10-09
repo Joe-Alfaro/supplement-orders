@@ -367,9 +367,9 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 - **Why:** a timeout used to be a raw 500, and an abandoned attempt held its stock and blocked the order for good.
 - **Tradeoff:** the fake gateway has no way to void a key, so a request still in flight past the window could succeed after the stock was released. Revision 19.1 (below) replaces the original handling, which minted a new key after abandonment and so could charge twice.
 
-**Sold by product, and the FR5 deviation stated (M3)**
+**Sold by product, and why an admin edits stock (M3)**
 
-- **Decision:** the provider dashboard adds `soldByProduct` (units and the sum of line totals per product over the provider's orders paid in range, by revenue), read in the same statement as the tiles. The README states the deviation from FR5: inventory is edited by an admin, at the product owner's decision; providers see it read-only.
+- **Decision:** the provider dashboard adds `soldByProduct` (units and the sum of line totals per product over the provider's orders paid in range, by revenue), read in the same statement as the tiles. The README explains why inventory is edited by an admin: the platform holds the inventory, so a platform-side role restocks it, while providers see it read-only alongside what they sold.
 
 **Lows (L3–L9)**
 
