@@ -8,5 +8,7 @@ export default defineConfig({
     // truncate it between tests, so they must not run concurrently. Separate
     // checkouts get separate databases (see testDatabaseName).
     fileParallelism: false,
+    // The shared CI runner is CPU-starved; give slow tests headroom there only.
+    ...(process.env.CI ? { testTimeout: 60_000, hookTimeout: 60_000 } : {}),
   },
 })

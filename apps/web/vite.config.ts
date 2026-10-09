@@ -21,6 +21,9 @@ export default defineConfig(({ mode }) => ({
     setupFiles: ['src/test/setup.ts'],
     // userEvent typing through PrimeVue inputs is slow when the machine is busy
     // (parallel sessions); 5s timed out under load though no assertion failed.
-    testTimeout: 15_000,
+    // The shared CI runner is CPU-starved (pipeline 44683: ~11 tests took 10-29s),
+    // so CI gets generous timeouts and fewer workers to reduce contention.
+    testTimeout: process.env.CI ? 60_000 : 15_000,
+    ...(process.env.CI ? { hookTimeout: 60_000, maxWorkers: 2 } : {}),
   },
 }))
