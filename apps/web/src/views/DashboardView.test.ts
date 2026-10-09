@@ -1,12 +1,9 @@
-import type {
-  DashboardDto,
-  ProductDto,
-  ProductPageDto,
-} from '@supplement-orders/domain'
+import type { DashboardDto, Page } from '@supplement-orders/domain'
 import { screen, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
+import type { ProviderProductDto } from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
 import DashboardView from './DashboardView.vue'
 
@@ -43,8 +40,9 @@ function resolved(
   }
 }
 
-function product(id: number, name: string): ProductDto {
+function product(id: number, name: string): ProviderProductDto {
   return {
+    defaultUnitPriceCents: 1000,
     id,
     sku: `SKU-${id}`,
     name,
@@ -54,10 +52,10 @@ function product(id: number, name: string): ProductDto {
 }
 
 function productPage(
-  items: ProductDto[],
+  items: ProviderProductDto[],
   total = items.length,
   offset = 0,
-): ProductPageDto {
+): Page<ProviderProductDto> {
   return { items, total, offset, limit: 25 }
 }
 

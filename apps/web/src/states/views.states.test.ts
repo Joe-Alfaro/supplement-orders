@@ -1,11 +1,10 @@
 import type {
   DashboardDto,
+  Page,
   PatientDto,
   PatientOrderDetailDto,
   PatientOrderSummaryDto,
   PatientPageDto,
-  ProductDto,
-  ProductPageDto,
   ProviderOrderDetailDto,
   ProviderOrderSummaryDto,
   UserDto,
@@ -16,6 +15,8 @@ import PrimeVue from 'primevue/config'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory } from 'vue-router'
 import * as api from '../api'
+import type { ProviderProductDto } from '../api'
+import { atMinimum } from '../test/products'
 import App from '../App.vue'
 import { primeVueOptions } from '../primevue'
 import { createAppRouter } from '../router'
@@ -74,13 +75,15 @@ const patient: PatientDto = {
   latestOrderStatus: 'paid',
 }
 
-const vitamin: ProductDto = {
+const vitamin: ProviderProductDto = atMinimum({
   id: 1,
   sku: 'VITD',
   name: 'Vitamin D3',
   cogsCents: 1200,
   stockQuantity: 10,
-}
+})
+
+type ProductsPage = Page<ProviderProductDto>
 
 const patientsPage: PatientPageDto = {
   items: [patient],
@@ -96,14 +99,14 @@ const noPatients: PatientPageDto = {
   limit: 25,
 }
 
-const productsPage: ProductPageDto = {
+const productsPage: ProductsPage = {
   items: [vitamin],
   total: 1,
   offset: 0,
   limit: 25,
 }
 
-const noProducts: ProductPageDto = {
+const noProducts: ProductsPage = {
   items: [],
   total: 0,
   offset: 0,
@@ -584,7 +587,7 @@ describe('DashboardView states', () => {
 
   it('shows Loading… for sales and for inventory while each is pending', async () => {
     const salesPending = deferred<DashboardDto>()
-    const inventoryPending = deferred<ProductPageDto>()
+    const inventoryPending = deferred<ProductsPage>()
     vi.mocked(api.getDashboard).mockReturnValue(salesPending.promise)
     vi.mocked(api.searchProducts).mockReturnValue(inventoryPending.promise)
 

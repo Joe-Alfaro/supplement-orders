@@ -2,13 +2,14 @@ import type {
   DashboardDto,
   ListPatientsQuery,
   PatientPageDto,
-  ProductDto,
 } from '@supplement-orders/domain'
 import userEvent from '@testing-library/user-event'
 import { render, screen } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { h } from 'vue'
 import * as api from '../api'
+import type { ProviderProductDto } from '../api'
+import { atMinimum } from '../test/products'
 import { renderWithRouter } from '../test/renderWithRouter'
 import DashboardView from '../views/DashboardView.vue'
 import PatientsView from '../views/PatientsView.vue'
@@ -59,13 +60,13 @@ const dashboard: DashboardDto = {
   owedToYouCents: 0,
 }
 
-const product: ProductDto = {
+const product: ProviderProductDto = atMinimum({
   id: 1,
   sku: 'VITD',
   name: 'Vitamin D3',
   cogsCents: 850,
   stockQuantity: 10,
-}
+})
 
 beforeEach(() => {
   vi.mocked(api.searchPatients)

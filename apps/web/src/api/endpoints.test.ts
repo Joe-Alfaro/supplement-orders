@@ -6,8 +6,10 @@ import {
   getDashboard,
   incrementProductStock,
   reopenOrder,
+  resetDefaultPrice,
   searchAdminProducts,
   searchPatients,
+  setDefaultPrice,
   setProductStock,
 } from './endpoints'
 
@@ -105,6 +107,19 @@ describe('admin inventory endpoints', () => {
     expect(request).toHaveBeenCalledWith(
       'GET',
       '/admin/products?q=vit&offset=25&limit=25',
+    )
+  })
+
+  it('sets and resets a default price', async () => {
+    await setDefaultPrice(3, 2000)
+    await resetDefaultPrice(3)
+
+    expect(request).toHaveBeenCalledWith('PUT', '/products/3/default-price', {
+      unitPriceCents: 2000,
+    })
+    expect(request).toHaveBeenCalledWith(
+      'POST',
+      '/products/3/default-price/reset',
     )
   })
 

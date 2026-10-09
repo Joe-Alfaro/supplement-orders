@@ -3,12 +3,12 @@ import type {
   AdminTrialBalanceDto,
   DashboardDto,
   ListQuery,
+  Page,
   PatientDto,
   PatientOrderDetailDto,
   PatientOrderSummaryDto,
   PatientPageDto,
   ProductDto,
-  ProductPageDto,
   ProviderOrderDetailDto,
   ProviderOrderSummaryDto,
   UserDto,
@@ -18,6 +18,8 @@ import userEvent from '@testing-library/user-event'
 import type { UserEvent } from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
+import type { ProviderProductDto } from '../api'
+import { atMinimum } from '../test/products'
 import { renderWithRouter } from '../test/renderWithRouter'
 import { useCurrentUser } from '../user'
 import AdminAccountsView from '../views/AdminAccountsView.vue'
@@ -283,14 +285,19 @@ const dashboard: DashboardDto = {
   },
 }
 
-function productPage(query: ListQuery): ProductPageDto {
+function productPage(query: ListQuery): Page<ProviderProductDto> {
   const q = query.q?.toLowerCase() ?? ''
   const items = products.filter(
     (product) =>
       product.name.toLowerCase().includes(q) ||
       product.sku.toLowerCase().includes(q),
   )
-  return { items, total: items.length, offset: 0, limit: query.limit ?? 25 }
+  return {
+    items: items.map(atMinimum),
+    total: items.length,
+    offset: 0,
+    limit: query.limit ?? 25,
+  }
 }
 
 function patientPage(query: ListQuery): PatientPageDto {
@@ -661,6 +668,26 @@ describe('accessibility', { timeout: AXE_TIMEOUT_MS }, () => {
       })
     })
     await screen.findByText('Vitamin D3')
+    await expectAccessible(container)
+  })
+
+  it('dashboard set-default-price dialog with a validation error', async () => {
+    const { container } = await renderWithRouter(DashboardView, {
+      path: '/dashboard',
+    })
+    await screen.findByText('Vitamin D3')
+    const user = userEvent.setup()
+    await user.click(
+      screen.getByRole('button', { name: 'Set default price for Vitamin D3' }),
+    )
+    await replaceInput(
+      user,
+      screen.getByLabelText('Patient price (each)'),
+      '1.00',
+    )
+    await user.click(screen.getByRole('button', { name: 'Save default price' }))
+    await screen.findByText(/Price must be at least/)
+    await expectNoAxeViolations(screen.getByRole('dialog'))
     await expectAccessible(container)
   })
 

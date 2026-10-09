@@ -1,12 +1,14 @@
 import type {
   PatientDto,
-  ProductPageDto,
+  Page,
   ProviderOrderDetailDto,
 } from '@supplement-orders/domain'
 import userEvent from '@testing-library/user-event'
 import { screen, within } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
+import type { ProviderProductDto } from '../api'
+import { atMinimum } from '../test/products'
 import { renderWithRouter } from '../test/renderWithRouter'
 import OrderBuilderView from './OrderBuilderView.vue'
 
@@ -34,9 +36,15 @@ const patient: PatientDto = {
   latestOrderStatus: 'draft',
 }
 
-const productPage: ProductPageDto = {
+const productPage: Page<ProviderProductDto> = {
   items: [
-    { id: 2, sku: 'MAG', name: 'Magnesium', cogsCents: 1500, stockQuantity: 3 },
+    atMinimum({
+      id: 2,
+      sku: 'MAG',
+      name: 'Magnesium',
+      cogsCents: 1500,
+      stockQuantity: 3,
+    }),
   ],
   total: 1,
   offset: 0,

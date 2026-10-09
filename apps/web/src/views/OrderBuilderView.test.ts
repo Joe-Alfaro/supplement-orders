@@ -2,13 +2,15 @@ import type {
   ListQuery,
   PatientDto,
   ProductDto,
-  ProductPageDto,
+  Page,
   ProviderOrderDetailDto,
 } from '@supplement-orders/domain'
 import userEvent, { type UserEvent } from '@testing-library/user-event'
 import { screen, within } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
+import type { ProviderProductDto } from '../api'
+import { atMinimum } from '../test/products'
 import { renderRoutes } from '../test/renderRoutes'
 import { renderWithRouter } from '../test/renderWithRouter'
 import { clearNoticeUnlessOn, notice } from '../user'
@@ -45,12 +47,17 @@ const products: ProductDto[] = [
 ]
 
 /** A fake GET /api/products: substring match on name or SKU, one page. */
-function productPage(query: ListQuery): ProductPageDto {
+function productPage(query: ListQuery): Page<ProviderProductDto> {
   const q = query.q?.toLowerCase() ?? ''
   const items = products.filter(
     (p) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q),
   )
-  return { items, total: items.length, offset: 0, limit: query.limit ?? 25 }
+  return {
+    items: items.map(atMinimum),
+    total: items.length,
+    offset: 0,
+    limit: query.limit ?? 25,
+  }
 }
 
 const patient: PatientDto = {

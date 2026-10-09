@@ -1,7 +1,9 @@
-import type { DashboardDto, ProductPageDto } from '@supplement-orders/domain'
+import type { DashboardDto, Page } from '@supplement-orders/domain'
 import { screen, within } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
+import type { ProviderProductDto } from '../api'
+
 import { renderWithRouter } from '../test/renderWithRouter'
 import DashboardView from './DashboardView.vue'
 
@@ -10,7 +12,12 @@ vi.mock('../api', async (importOriginal) => {
   return { ...actual, getDashboard: vi.fn(), searchProducts: vi.fn() }
 })
 
-const empty: ProductPageDto = { items: [], total: 0, offset: 0, limit: 25 }
+const empty: Page<ProviderProductDto> = {
+  items: [],
+  total: 0,
+  offset: 0,
+  limit: 25,
+}
 
 const dashboard: DashboardDto = {
   owedToYouCents: 0,

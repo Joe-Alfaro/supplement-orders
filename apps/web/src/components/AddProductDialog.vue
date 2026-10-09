@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import type { ProductDto } from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable, {
@@ -13,23 +12,19 @@ import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
 import Tag from 'primevue/tag'
 import { computed, nextTick, ref, watch } from 'vue'
-import { searchProducts } from '../api'
+import { searchProducts, type ProviderProductDto } from '../api'
 import {
-  evaluatePricing,
-  markupInputFromPrice,
-  minimumPriceInput,
-  normalizedMarkupInput,
-  normalizedPriceInput,
-  priceInputFromMarkup,
+  centsToInput,
+  usePricingForm,
   type LineEdit,
   type LineProduct,
   type NewLine,
 } from '../builder'
-import { formatCents, PLATFORM_FEE_BPS } from '../money'
 import { usePagedSearch } from '../search'
 import ErrorBanner from './ErrorBanner.vue'
 import MoneyText from './MoneyText.vue'
 import PageSummary from './PageSummary.vue'
+import PricingFields from './PricingFields.vue'
 
 interface Props {
   open: boolean
@@ -50,75 +45,20 @@ const search = usePagedSearch(searchProducts)
 
 const step = ref<1 | 2>(1)
 const chosen = ref<LineProduct | null>(null)
-const quantityInput = ref('1')
-const priceInput = ref('')
-const markupInput = ref('')
-const source = ref<'price' | 'markup'>('price')
-const attempted = ref(false)
+const form = usePricingForm(chosen, { idPrefix: 'add-product' })
 
-function unavailableReason(product: ProductDto) {
+function unavailableReason(product: ProviderProductDto) {
   if (props.excludedProductIds.includes(product.id)) return 'Already added'
   return null
 }
 
-const pricing = computed(() =>
-  evaluatePricing({
-    product: chosen.value,
-    quantityInput: quantityInput.value,
-    priceInput: priceInput.value,
-    markupInput: markupInput.value,
-    source: source.value,
-  }),
-)
-
-const belowMinimumError = computed(() => {
-  const { belowMinimum, minPriceCents } = pricing.value
-  if (!belowMinimum || minPriceCents === null) return null
-  return `Price must be at least ${formatCents(minPriceCents)}`
-})
-
-const priceError = computed(
-  () =>
-    pricing.value.errors.unitPriceCents ??
-    (attempted.value ? belowMinimumError.value : null),
-)
-
-interface DialogError {
-  id: string
-  label: string
-  text: string
-}
-
-/** One entry per invalid input, in field order; each id is that input's aria-describedby target. */
-const errorItems = computed<DialogError[]>(() => {
-  const { quantity, markup } = pricing.value.errors
-  const candidates: Array<DialogError | null> = [
-    quantity
-      ? { id: 'add-product-qty-error', label: 'Qty', text: quantity }
-      : null,
-    markup
-      ? { id: 'add-product-markup-error', label: 'Markup %', text: markup }
-      : null,
-    priceError.value
-      ? {
-          id: 'add-product-price-error',
-          label: 'Patient price (each)',
-          text: priceError.value,
-        }
-      : null,
-  ]
-  return candidates.filter((item): item is DialogError => item !== null)
-})
-
 /** The error wins; otherwise the back-order note describes the field. */
-const qtyDescribedBy = computed(() => {
-  if (pricing.value.errors.quantity) return 'add-product-qty-error'
-  if (pricing.value.stockWarning) return 'add-product-qty-warning'
-  return undefined
-})
+const qtyNoteId = computed(() =>
+  form.pricing.stockWarning ? 'add-product-qty-warning' : undefined,
+)
 
 const stockNote = computed(() => {
-  if (!pricing.value.stockWarning) return null
+  if (!form.pricing.stockWarning) return null
   return `More than the ${chosen.value?.stockQuantity ?? 0} in stock — the rest will be back-ordered.`
 })
 
@@ -155,7 +95,7 @@ function onVisible(visible: boolean) {
   if (!visible) emit('close')
 }
 
-function onRowClick(event: DataTableRowClickEvent<ProductDto>) {
+function onRowClick(event: DataTableRowClickEvent<ProviderProductDto>) {
   choose(event.data)
 }
 
@@ -163,25 +103,16 @@ function onPage(event: DataTablePageEvent) {
   search.goTo(event.first)
 }
 
-/** Markup on a $0 wholesale cost is undefined: the field shows "—" and is disabled. */
-const zeroCost = computed(() => chosen.value?.cogsCents === 0)
-
-const feeLabel = `Processing fee (${PLATFORM_FEE_BPS / 100}%)`
-
-function rowClass(product: ProductDto) {
+function rowClass(product: ProviderProductDto) {
   return unavailableReason(product) ? 'row-unavailable' : ''
 }
 
-async function choose(product: ProductDto) {
+async function choose(product: ProviderProductDto) {
   if (unavailableReason(product)) return
   chosen.value = product
-  quantityInput.value = '1'
-  // Start at the minimum price so a new line is complete and sendable as-is.
-  priceInput.value = minimumPriceInput(product.cogsCents)
-  markupInput.value =
-    markupInputFromPrice(product.cogsCents, priceInput.value) ?? ''
-  source.value = 'price'
-  attempted.value = false
+  // The provider's default is never below the minimum, so a new line starts
+  // complete and sendable as-is. Changing it here never changes the default.
+  form.startAtPrice(product, centsToInput(product.defaultUnitPriceCents))
   step.value = 2
   focusById('add-product-qty')
 }
@@ -189,11 +120,7 @@ async function choose(product: ProductDto) {
 /** Edit mode: straight to the pricing step with the line's current values. */
 function startEditing(line: NewLine) {
   chosen.value = line.product
-  quantityInput.value = line.quantityInput
-  priceInput.value = line.priceInput
-  markupInput.value = line.markupInput
-  source.value = line.source
-  attempted.value = false
+  form.load(line)
   step.value = 2
   focusById('add-product-qty')
 }
@@ -203,33 +130,12 @@ function back() {
   focusById('add-product-search')
 }
 
-function onPrice(value: string) {
-  priceInput.value = value
-  source.value = 'price'
-  if (!chosen.value) return
-  markupInput.value =
-    markupInputFromPrice(chosen.value.cogsCents, value) ?? markupInput.value
-}
-
-function onMarkup(value: string) {
-  markupInput.value = value
-  source.value = 'markup'
-  if (!chosen.value) return
-  priceInput.value =
-    priceInputFromMarkup(chosen.value.cogsCents, value) ?? priceInput.value
-}
-
 function addToOrder() {
-  attempted.value = true
+  form.attempted = true
   const product = chosen.value
   // A blank price is allowed (the line stays incomplete); below the minimum is not.
-  if (!product || !pricing.value.saveable || belowMinimumError.value) return
-  const values = {
-    quantityInput: quantityInput.value,
-    priceInput: priceInput.value,
-    markupInput: markupInput.value,
-    source: source.value,
-  }
+  if (!product || !form.pricing.saveable || form.belowMinimumError) return
+  const values = form.values()
   if (props.editing) {
     emit('save', values)
     return
@@ -350,91 +256,17 @@ function addToOrder() {
         <dt>Minimum price</dt>
         <dd>
           <MoneyText
-            v-if="pricing.minPriceCents !== null"
-            :cents="pricing.minPriceCents"
+            v-if="form.pricing.minPriceCents !== null"
+            :cents="form.pricing.minPriceCents"
           />
         </dd>
       </dl>
 
-      <div class="fields">
-        <div class="field">
-          <label for="add-product-qty">Qty</label>
-          <InputText
-            id="add-product-qty"
-            class="qty"
-            inputmode="numeric"
-            :model-value="quantityInput"
-            :invalid="Boolean(pricing.errors.quantity)"
-            :aria-describedby="qtyDescribedBy"
-            @update:model-value="quantityInput = $event ?? ''"
-          />
-        </div>
-        <div class="field">
-          <label for="add-product-markup">Markup %</label>
-          <InputText
-            id="add-product-markup"
-            class="markup"
-            inputmode="decimal"
-            :placeholder="zeroCost ? '—' : '0.00'"
-            :disabled="zeroCost"
-            :model-value="markupInput"
-            :invalid="Boolean(pricing.errors.markup)"
-            :aria-describedby="
-              [
-                zeroCost ? 'add-product-markup-na' : '',
-                pricing.errors.markup ? 'add-product-markup-error' : '',
-              ]
-                .join(' ')
-                .trim() || undefined
-            "
-            @update:model-value="onMarkup($event ?? '')"
-            @blur="markupInput = normalizedMarkupInput(markupInput)"
-          />
-          <small v-if="zeroCost" id="add-product-markup-na" class="hint"
-            >No markup on a $0 cost; enter the price.</small
-          >
-        </div>
-        <div class="field">
-          <!-- Read-only by nature: plain text in a labelled <output>, not a control. -->
-          <label for="add-product-fee">{{ feeLabel }}</label>
-          <output id="add-product-fee" class="fee-value" aria-live="polite">{{
-            formatCents(pricing.lineFeeCents ?? 0)
-          }}</output>
-        </div>
-        <div class="field">
-          <label for="add-product-price">Patient price (each)</label>
-          <InputText
-            id="add-product-price"
-            class="price"
-            inputmode="decimal"
-            placeholder="0.00"
-            :model-value="priceInput"
-            :invalid="Boolean(priceError) || pricing.belowMinimum"
-            :aria-describedby="
-              priceError ? 'add-product-price-error' : undefined
-            "
-            @update:model-value="onPrice($event ?? '')"
-            @blur="priceInput = normalizedPriceInput(priceInput)"
-          />
-        </div>
-        <div class="field">
-          <label for="add-product-margin">Your margin</label>
-          <output
-            id="add-product-margin"
-            class="fee-value"
-            :class="{ negative: (pricing.lineMarginCents ?? 0) < 0 }"
-            aria-live="polite"
-            >{{ formatCents(pricing.lineMarginCents ?? 0) }}</output
-          >
-        </div>
-      </div>
-      <div aria-live="polite" data-testid="add-product-errors">
-        <ul v-if="errorItems.length" class="errors" aria-label="Errors">
-          <li v-for="item in errorItems" :id="item.id" :key="item.id">
-            {{ item.label }} - {{ item.text }}
-          </li>
-        </ul>
-      </div>
+      <PricingFields
+        :form="form"
+        id-prefix="add-product"
+        :qty-note-id="qtyNoteId"
+      />
       <div aria-live="polite" data-testid="add-product-warnings">
         <Message
           v-if="stockNote"
@@ -447,8 +279,8 @@ function addToOrder() {
       <p>
         Line total:
         <MoneyText
-          v-if="pricing.lineTotalCents !== null"
-          :cents="pricing.lineTotalCents"
+          v-if="form.pricing.lineTotalCents !== null"
+          :cents="form.pricing.lineTotalCents"
         />
         <span v-else>—</span>
       </p>

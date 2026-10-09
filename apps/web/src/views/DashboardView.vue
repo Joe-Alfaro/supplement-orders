@@ -12,8 +12,19 @@ import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, type LocationQuery } from 'vue-router'
-import { ApiRequestError, getDashboard, searchProducts } from '../api'
-import { ErrorBanner, MoneyText, PageSummary, StatTile } from '../components'
+import {
+  ApiRequestError,
+  getDashboard,
+  searchProducts,
+  type ProviderProductDto,
+} from '../api'
+import {
+  ErrorBanner,
+  MoneyText,
+  PageSummary,
+  SetDefaultPriceDialog,
+  StatTile,
+} from '../components'
 import {
   DEFAULT_RANGE,
   dateToDay,
@@ -93,6 +104,19 @@ const inventory = usePagedSearch(searchProducts, {
 })
 
 listUrl.onLeave(inventory.cancel)
+
+// The product whose default price is being set; null when the dialog is closed.
+const pricing = ref<ProviderProductDto | null>(null)
+
+/** Shows the server's row for a product in place, without refetching the page. */
+function showSavedDefault(updated: ProviderProductDto) {
+  const page = inventory.page.value
+  if (!page) return
+  inventory.page.value = {
+    ...page,
+    items: page.items.map((row) => (row.id === updated.id ? updated : row)),
+  }
+}
 
 function inventoryState(): InventoryUrlState {
   return { q: inventory.activeQuery.value, offset: inventory.offset.value }
@@ -373,7 +397,30 @@ function onInventoryPage(event: DataTablePageEvent) {
           /></template>
         </Column>
         <Column field="stockQuantity" header="Stock on hand" />
+        <Column header="Default price">
+          <template #body="{ data }"
+            ><MoneyText :cents="data.defaultUnitPriceCents"
+          /></template>
+        </Column>
+        <Column header="Actions">
+          <template #body="{ data }">
+            <Button
+              label="Set default price"
+              :aria-label="`Set default price for ${data.name}`"
+              size="small"
+              severity="secondary"
+              outlined
+              @click="pricing = data"
+            />
+          </template>
+        </Column>
       </DataTable>
     </template>
   </section>
+
+  <SetDefaultPriceDialog
+    :product="pricing"
+    @close="pricing = null"
+    @saved="showSavedDefault"
+  />
 </template>
