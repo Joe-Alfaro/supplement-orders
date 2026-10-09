@@ -127,6 +127,13 @@
       "when": 1791504180714,
       "tag": "0017_rev19_audit7",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791576728070,
+      "tag": "0018_rev20_default_prices",
+      "breakpoints": true
     }
   ]
 }

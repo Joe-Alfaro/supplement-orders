@@ -186,7 +186,11 @@ export interface SeedResult {
   products: { id: number; cogsCents: number; stockQuantity: number }[]
 }
 
-/** Every table, in an order TRUNCATE ... CASCADE accepts. */
+/**
+ * Every table, in an order TRUNCATE ... CASCADE accepts. provider_product_prices
+ * (migration 0018) is left out so scratch databases migrated earlier still
+ * reset; CASCADE truncates it with providers and products.
+ */
 const ALL_TABLES = sql`inventory_adjustments, postings, journals, accounts, payments, payment_attempts, fake_gateway_charges, order_items, orders, products, patients, providers, users`
 
 /** The database or a transaction on it; seeding only inserts (and reads). */

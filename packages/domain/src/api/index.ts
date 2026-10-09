@@ -1,4 +1,5 @@
 export * from './dates'
+export * from './default-price'
 export * from './errors'
 export * from './requests'
 export * from './responses'
