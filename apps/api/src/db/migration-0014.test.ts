@@ -11,6 +11,7 @@ import { FakePaymentGateway, RecordingNotifier } from '../seams'
 import { createApp } from '../server'
 import { createDb, type Db } from './client'
 import {
+  addLaterEnumValues,
   migrationsThrough,
   recreateDatabase,
   scratchUrl,
@@ -159,6 +160,8 @@ describe('migration 0014: ledger_entries backfilled into journals', () => {
       await oldDashboard(created.db, 2),
     ]
     await runMigrations(created.db, throughJournal)
+    // The current app reads statuses later migrations add (revision 19).
+    await addLaterEnumValues(created.db)
   }, 120_000)
 
   afterAll(async () => {

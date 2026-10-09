@@ -43,6 +43,8 @@ const STATUS_LABELS = {
   conflict: 'Conflict',
   declined: 'Declined',
   abandoned: 'Abandoned',
+  late_success: 'Charged late',
+  refund_required: 'Charged twice: refund required',
 } as const
 
 const OUTCOME_LABELS: Record<ReconcileOutcome, string> = {
@@ -50,6 +52,8 @@ const OUTCOME_LABELS: Record<ReconcileOutcome, string> = {
   unchanged: 'already resolved',
   declined: 'declined, stock released',
   abandoned: 'abandoned, stock released',
+  refund_required: 'charged twice, refund required',
+  refunded: 'marked refunded',
 }
 
 function askReconcile(attempt: AdminPaymentAttemptDto) {

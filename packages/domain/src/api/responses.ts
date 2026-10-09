@@ -47,7 +47,13 @@ export type OrderStatus = (typeof ORDER_STATUSES)[number]
 /**
  * Payment attempt statuses (the database enum). Revision 18.2 adds
  * `abandoned`: reconciled by an admin after the gateway never saw the charge
- * within the safety window; its stock was released.
+ * within the safety window; its stock was released, but its key is not
+ * retired (revision 19.1): the next pay at the same revision re-runs it.
+ * Revision 19.1 adds `late_success`: the gateway charged an execution that was
+ * no longer current (abandoned or superseded), and an admin must reconcile
+ * it; and `refund_required`: such a charge could not pay its order (the order
+ * was paid another way, or changed), so it must be refunded (`refundedAt` on
+ * the admin DTO records that it was).
  */
 export const PAYMENT_ATTEMPT_STATUSES = [
   'pending',
@@ -55,6 +61,8 @@ export const PAYMENT_ATTEMPT_STATUSES = [
   'declined',
   'conflict',
   'abandoned',
+  'late_success',
+  'refund_required',
 ] as const
 export type PaymentAttemptStatus = (typeof PAYMENT_ATTEMPT_STATUSES)[number]
 
@@ -794,7 +802,10 @@ export const awaitingPaymentPageDtoSchema = providerOrderListPageDtoSchema
 /**
  * Revision 18.2 (admin only): one row of GET /api/admin/payment-attempts. No
  * patient fields. `ageSeconds` is measured from `createdAt` on the server's
- * clock. `hasPayment` is true once a payment records the attempt.
+ * clock. `hasPayment` is true once a payment records the attempt. Revision
+ * 19.1: `gatewayReference` is the charge the gateway reported (set for
+ * succeeded, late_success and refund_required), and `refundedAt` is when an
+ * admin marked a refund_required charge refunded (null until then).
  */
 export interface AdminPaymentAttemptDto {
   id: number
@@ -806,6 +817,8 @@ export interface AdminPaymentAttemptDto {
   createdAt: string
   ageSeconds: number
   reconciledAt: string | null
+  gatewayReference: string | null
+  refundedAt: string | null
 }
 
 export const adminPaymentAttemptDtoSchema: z.ZodType<AdminPaymentAttemptDto> =
@@ -819,6 +832,8 @@ export const adminPaymentAttemptDtoSchema: z.ZodType<AdminPaymentAttemptDto> =
     createdAt: timestamp,
     ageSeconds: z.int().nonnegative(),
     reconciledAt: timestamp.nullable(),
+    gatewayReference: z.string().nullable(),
+    refundedAt: timestamp.nullable(),
   })
 
 /** GET /api/admin/payment-attempts returns a plain array (no paging). */
@@ -830,12 +845,17 @@ export const adminPaymentAttemptListDtoSchema = z.array(
  * What POST /api/admin/payment-attempts/:id/reconcile did (revision 18.2):
  * `finalized` recorded the payment the gateway already took, `declined` and
  * `abandoned` released the attempt's stock, and `unchanged` means it was
- * already resolved (reconciling is idempotent).
+ * already resolved (reconciling is idempotent). Revision 19.1:
+ * `refund_required` means the gateway's charge could not pay the order (it
+ * was paid another way, or changed) and must be refunded; `refunded` is what
+ * POST /api/admin/payment-attempts/:id/refund returns once it is.
  */
 export const RECONCILE_OUTCOMES = [
   'finalized',
   'declined',
   'abandoned',
+  'refund_required',
+  'refunded',
   'unchanged',
 ] as const
 export type ReconcileOutcome = (typeof RECONCILE_OUTCOMES)[number]

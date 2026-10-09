@@ -51,7 +51,12 @@ export const orderStatusEnum = pgEnum('order_status', [
  * released; conflict = the key is bound to another amount at the gateway, so
  * the outcome is unresolved and the stock stays held. Revision 18.2 adds
  * abandoned: an admin reconciled a pending attempt the gateway never saw,
- * after the safety window, and its stock was released.
+ * after the safety window, and its stock was released; its key is not
+ * retired, and the next pay at the same revision re-runs it (revision 19.1).
+ * Revision 19.1 adds late_success: the gateway charged an execution that was
+ * no longer current (abandoned or superseded), awaiting an admin's reconcile;
+ * and refund_required: such a charge could not pay its order and must be
+ * refunded (refunded_at records that it was).
  */
 export const paymentAttemptStatusEnum = pgEnum(
   'payment_attempt_status',
@@ -94,11 +99,17 @@ export const fakeGatewayCharges = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
+    /** Revision 19.1: set by the refund stub; only a success can be refunded. */
+    refundedAt: timestamp('refunded_at', { withTimezone: true }),
   },
   (t) => [
     check(
       'fake_gateway_charges_reference_iff_succeeded',
       sql`(${t.status} = 'succeeded') = (${t.reference} is not null)`,
+    ),
+    check(
+      'fake_gateway_charges_refunded_only_succeeded',
+      sql`${t.refundedAt} is null or ${t.status} = 'succeeded'`,
     ),
     check(
       'fake_gateway_charges_amount_nonnegative',
@@ -376,6 +387,9 @@ export const paymentAttempts = pgTable(
     reconciledByUserId: integer('reconciled_by_user_id').references(
       () => users.id,
     ),
+    /** Revision 19.1: when and by which admin a refund_required charge was refunded. */
+    refundedAt: timestamp('refunded_at', { withTimezone: true }),
+    refundedByUserId: integer('refunded_by_user_id').references(() => users.id),
   },
   (t) => [
     unique('payment_attempts_order_revision_execution_unique').on(
@@ -385,9 +399,16 @@ export const paymentAttempts = pgTable(
     ),
     check('payment_attempts_execution_positive', sql`${t.execution} >= 1`),
     check('payment_attempts_amount_nonnegative', sql`${t.amountCents} >= 0`),
+    // Revision 19.1: a late success keeps the reference of the charge it
+    // reports, and so does a refund_required one. Compared as text, because
+    // migration 0017 adds those enum values in the same transaction.
     check(
-      'payment_attempts_reference_iff_succeeded',
-      sql`(${t.status} = 'succeeded') = (${t.gatewayReference} is not null)`,
+      'payment_attempts_reference_iff_charged',
+      sql`(${t.status}::text in ('succeeded', 'late_success', 'refund_required')) = (${t.gatewayReference} is not null)`,
+    ),
+    check(
+      'payment_attempts_refunded_only_refund_required',
+      sql`${t.refundedAt} is null or ${t.status}::text = 'refund_required'`,
     ),
   ],
 )

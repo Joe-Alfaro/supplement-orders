@@ -6,7 +6,7 @@
 -- reconcile_release, naming the attempt. The new enum values are only used
 -- by later transactions, as Postgres requires.
 ALTER TYPE "public"."inventory_adjustment_kind" ADD VALUE 'reconcile_release';--> statement-breakpoint
-ALTER TYPE "public"."payment_attempt_status" ADD VALUE 'abandoned';--> statement-breakpoint
+ALTER TYPE "public"."payment_attempt_status" ADD VALUE IF NOT EXISTS 'abandoned';--> statement-breakpoint
 ALTER TABLE "inventory_adjustments" ADD COLUMN "payment_attempt_id" integer;--> statement-breakpoint
 ALTER TABLE "payment_attempts" ADD COLUMN "reconciled_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "payment_attempts" ADD COLUMN "reconciled_by_user_id" integer;--> statement-breakpoint

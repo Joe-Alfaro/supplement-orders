@@ -138,7 +138,7 @@ describe('revision 15 frozen paid records', () => {
         key: `legacy-${id}`,
       })
       const payment = await tx.execute<{ id: number }>(
-        sql`insert into payments (order_id, amount_cents, idempotency_key, gateway_reference, payment_attempt_id) values (${id}, ${total}, ${`legacy-${id}`}, ${`legacy-ref-${id}`}, ${paymentAttemptId}) returning id`,
+        sql`insert into payments (order_id, amount_cents, idempotency_key, gateway_reference, payment_attempt_id) values (${id}, ${total}, ${`legacy-${id}`}, ${`ref-legacy-${id}`}, ${paymentAttemptId}) returning id`,
       )
       const paymentId = payment.rows[0]!.id
       await insertPaymentJournal(tx, {

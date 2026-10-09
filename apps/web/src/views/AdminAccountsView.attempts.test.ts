@@ -28,6 +28,8 @@ const attempt: AdminPaymentAttemptDto = {
   createdAt: '2026-10-08T10:00:00.000Z',
   ageSeconds: 7200,
   reconciledAt: null,
+  gatewayReference: null,
+  refundedAt: null,
 }
 
 beforeEach(() => {

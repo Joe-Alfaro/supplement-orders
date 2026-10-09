@@ -38,6 +38,7 @@ import {
  *   longer current; the body carries `currentStockQuantity`
  * - 409 RECONCILE_TOO_EARLY (revision 18.2): an admin reconcile found no gateway record
  *   for an attempt younger than the safety window (15 minutes); try again later.
+ * - 409 NOT_REFUNDABLE (revision 19.1): only a refund_required attempt can be marked refunded.
  * - 402 PAYMENT_FAILED: the gateway declined; nothing was persisted
  * - 503 PAYMENT_PENDING (revision 18.2): the gateway call failed or timed out, so the
  *   outcome is unknown. The attempt stays pending with its stock held; the body carries
@@ -67,6 +68,7 @@ export const API_ERROR_CODES = [
   'PRIOR_ORDER_UNPAID',
   'PAYMENT_PENDING',
   'RECONCILE_TOO_EARLY',
+  'NOT_REFUNDABLE',
   'EMPTY_ORDER',
   'INVALID_QUANTITY',
   'INVALID_AMOUNT',

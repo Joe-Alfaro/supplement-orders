@@ -19,7 +19,7 @@ import {
   setStock,
 } from '../inventory/service'
 import { listJournals, trialBalance } from '../ledger/journals'
-import { reconcileAttempt } from '../orders/service'
+import { reconcileAttempt, refundAttempt } from '../orders/service'
 import { findPaymentAttempt, listPaymentAttempts } from '../payments/attempts'
 import { requireRole } from '../seams'
 import type { AppContext } from '../server'
@@ -29,7 +29,8 @@ import { parseId, parseOrThrow } from './validate'
 /**
  * Revision 13: admin only. The admin manages available stock. Revision 16 adds
  * the read-only ledger: the trial balance and the journal list. Revision 18.2
- * adds payment attempts needing attention and their reconcile action.
+ * adds payment attempts needing attention and their reconcile action, and
+ * revision 19.1 the refund action for a charge that must be refunded.
  */
 export function adminRouter(ctx: AppContext) {
   const { db, auth, now } = ctx
@@ -121,6 +122,17 @@ export function adminRouter(ctx: AppContext) {
     const user = requireRole(await auth.getCurrentUser(req), 'admin')
     const attemptId = parseId(req.params.id)
     const outcome = await reconcileAttempt(ctx, user, attemptId)
+    const attempt = await findPaymentAttempt(db, now(), attemptId)
+    if (!attempt) throw new Error(`Payment attempt ${attemptId} disappeared`)
+    const body: ReconcilePaymentAttemptDto = { outcome, attempt }
+    res.json(body)
+  })
+
+  // Revision 19.1: marks a refund_required charge refunded.
+  router.post('/payment-attempts/:id/refund', async (req, res) => {
+    const user = requireRole(await auth.getCurrentUser(req), 'admin')
+    const attemptId = parseId(req.params.id)
+    const outcome = await refundAttempt(ctx, user, attemptId)
     const attempt = await findPaymentAttempt(db, now(), attemptId)
     if (!attempt) throw new Error(`Payment attempt ${attemptId} disappeared`)
     const body: ReconcilePaymentAttemptDto = { outcome, attempt }
