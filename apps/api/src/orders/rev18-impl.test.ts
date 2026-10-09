@@ -348,11 +348,13 @@ describe('revision 18', () => {
         'ageSeconds',
         'amountCents',
         'createdAt',
+        'gatewayReference',
         'hasPayment',
         'id',
         'orderId',
         'providerName',
         'reconciledAt',
+        'refundedAt',
         'status',
       ])
     })
@@ -437,7 +439,8 @@ describe('revision 18', () => {
       ).toBe('unchanged')
       expect(await stockOf(productId)).toBe(stockBefore)
 
-      // The order is unblocked: the patient pays with a new execution.
+      // The order is unblocked: the patient pays, and (revision 19.1) the
+      // abandoned execution re-runs with its key; no new key is issued.
       const paid = await payQuote(id, await patientDetail(id))
       expect(paid.status).toBe(200)
       const keys = (
@@ -447,10 +450,7 @@ describe('revision 18', () => {
           .where(eq(paymentAttempts.orderId, id))
           .orderBy(asc(paymentAttempts.id))
       ).map((r) => r.key)
-      expect(keys).toEqual([
-        attemptKey(ctx, id, paid.body.revision, 1),
-        attemptKey(ctx, id, paid.body.revision, 2),
-      ])
+      expect(keys).toEqual([attemptKey(ctx, id, paid.body.revision, 1)])
     })
 
     it('refuses providers, patients and unknown attempts', async () => {

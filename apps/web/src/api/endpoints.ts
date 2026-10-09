@@ -219,7 +219,7 @@ export function listUnresolvedPaymentAttempts() {
 
 /** POST .../:id/refund (admin only): records that a `refund_required` charge was refunded. */
 export function refundPaymentAttempt(attemptId: number) {
-  return request<AdminPaymentAttemptDto>(
+  return request<ReconcilePaymentAttemptDto>(
     'POST',
     `/admin/payment-attempts/${attemptId}/refund`,
   )

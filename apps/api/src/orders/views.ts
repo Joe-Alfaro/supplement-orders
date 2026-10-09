@@ -208,8 +208,9 @@ async function selectLines(db: Reader, orderIds: number[]) {
 
 /**
  * Revision 15.1: the order's latest unresolved payment attempt (pending,
- * succeeded without a payment, or in conflict), or undefined. While one holds
- * stock, the order's lines are exactly what it reserved.
+ * succeeded without a payment, in conflict, or, revision 19.1, a late success
+ * awaiting an admin), or undefined. While one holds stock, the order's lines
+ * are exactly what it reserved.
  */
 async function selectUnresolvedAttempt(db: Reader, orderId: number) {
   const [attempt] = await db
@@ -223,13 +224,38 @@ async function selectUnresolvedAttempt(db: Reader, orderId: number) {
     .where(
       and(
         eq(paymentAttempts.orderId, orderId),
-        inArray(paymentAttempts.status, ['pending', 'succeeded', 'conflict']),
+        inArray(paymentAttempts.status, [
+          'pending',
+          'succeeded',
+          'conflict',
+          'late_success',
+        ]),
         isNull(payments.id),
       ),
     )
     .orderBy(desc(paymentAttempts.revision), desc(paymentAttempts.execution))
     .limit(1)
   return attempt
+}
+
+/**
+ * Revision 19.1: whether the next pay re-runs an abandoned execution (the
+ * latest at the order's revision), which can't split the order: its key is
+ * bound to the full amount.
+ */
+async function rerunsAbandoned(db: Reader, orderId: number, revision: number) {
+  const [latest] = await db
+    .select({ status: paymentAttempts.status })
+    .from(paymentAttempts)
+    .where(
+      and(
+        eq(paymentAttempts.orderId, orderId),
+        eq(paymentAttempts.revision, revision),
+      ),
+    )
+    .orderBy(desc(paymentAttempts.execution))
+    .limit(1)
+  return latest?.status === 'abandoned'
 }
 
 type UnresolvedAttempt = Awaited<ReturnType<typeof selectUnresolvedAttempt>>
@@ -325,6 +351,7 @@ function quoteFor(
   lines: LineRow[],
   view: OrderView,
   held: boolean,
+  rerun: boolean,
 ): PartialPaymentQuoteDto | null {
   if (
     order.storedStatus !== 'pending_payment' ||
@@ -357,12 +384,14 @@ function quoteFor(
   )
   // Revision 18.4 (L5): the halves share the stored fee. Revision 18.1: an
   // order with a live back-order can't split again, so a shortfall makes the
-  // quote unpayable until restocked; every payable quote round-trips.
+  // quote unpayable until restocked; every payable quote round-trips. So
+  // does re-running an abandoned execution (revision 19.1).
   return partialPaymentQuoteDto(planPartialPayment(complete, stock), view, {
     orderFeeCents: order.platformFeeCents,
     hasLiveBackorder:
-      order.backorderOrderId !== null &&
-      order.backorderStoredStatus !== 'cancelled',
+      rerun ||
+      (order.backorderOrderId !== null &&
+        order.backorderStoredStatus !== 'cancelled'),
   })
 }
 
@@ -550,7 +579,13 @@ async function loadOne(db: Reader, orderId: number, hooks: ReadHooks = {}) {
   await hooks.afterOrderHeader?.()
   const lines = await selectLines(db, [orderId])
   const attempt = await selectUnresolvedAttempt(db, orderId)
-  return { order, lines, attempt, payment: await loadPayment(db, orderId) }
+  return {
+    order,
+    lines,
+    attempt,
+    rerun: await rerunsAbandoned(db, orderId, order.revision),
+    payment: await loadPayment(db, orderId),
+  }
 }
 
 /** Revision 15 detail fields; `held` is whether an attempt holds the stock. */
@@ -571,7 +606,11 @@ async function readProviderOrderDetail(
   orderId: number,
   hooks?: ReadHooks,
 ): Promise<ProviderOrderDetailDto> {
-  const { order, lines, attempt, payment } = await loadOne(db, orderId, hooks)
+  const { order, lines, attempt, rerun, payment } = await loadOne(
+    db,
+    orderId,
+    hooks,
+  )
   const { held, ...extras } = detailExtras(order, attempt)
   const { journal, split } = await selectOrderJournal(db, orderId)
   return {
@@ -581,7 +620,7 @@ async function readProviderOrderDetail(
     lines: lines.map((line) => providerLine(line, held)),
     payment,
     journal,
-    partialPaymentQuote: quoteFor(order, lines, 'provider', held),
+    partialPaymentQuote: quoteFor(order, lines, 'provider', held, rerun),
     ...extras,
   }
 }
@@ -591,14 +630,18 @@ async function readPatientOrderDetail(
   orderId: number,
   hooks?: ReadHooks,
 ): Promise<PatientOrderDetailDto> {
-  const { order, lines, attempt, payment } = await loadOne(db, orderId, hooks)
+  const { order, lines, attempt, rerun, payment } = await loadOne(
+    db,
+    orderId,
+    hooks,
+  )
   const { held, ...extras } = detailExtras(order, attempt)
   return {
     ...patientSummary(order),
     patientAddress: order.patientAddress,
     lines: lines.map((line) => patientLine(order, line, held)),
     payment,
-    partialPaymentQuote: quoteFor(order, lines, 'patient', held),
+    partialPaymentQuote: quoteFor(order, lines, 'patient', held, rerun),
     ...extras,
   }
 }

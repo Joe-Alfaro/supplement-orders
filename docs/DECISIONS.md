@@ -365,7 +365,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 - **Decision:** a gateway call that throws is 503 `PAYMENT_PENDING` with `{ orderId, revision, amountCents }`; the attempt stays pending and keeps its stock. An admin lists unresolved attempts and reconciles each from the gateway's `lookup`: finalize a success (no new charge), decline and release, or, with no record after 15 minutes on the app's (injectable) clock, mark it `abandoned` and release; earlier is 409 `RECONCILE_TOO_EARLY`. Releases are recorded in `inventory_adjustments` as `reconcile_release` with the attempt id.
 - **Why:** a timeout used to be a raw 500, and an abandoned attempt held its stock and blocked the order for good.
-- **Tradeoff:** the fake gateway has no way to void a key, so a request still in flight past the window could succeed after the stock was released. The app records such a late success anyway (retaking the stock) when no later execution exists; a real processor integration would void the key first.
+- **Tradeoff:** the fake gateway has no way to void a key, so a request still in flight past the window could succeed after the stock was released. Revision 19.1 (below) replaces the original handling, which minted a new key after abandonment and so could charge twice.
 
 **Sold by product, and the FR5 deviation stated (M3)**
 
@@ -373,7 +373,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 **Lows (L3–L9)**
 
-- **CI gate (L3):** a `test` job (lint, typecheck, `npm test`, build, on `node:22` with a `postgres:16` service, same runner tag) that `deploy` needs. Playwright is left out of CI because the image has no browsers.
+- **CI gate (L3):** a `test` job (lint, typecheck, `npm test`, build, on `node:22` with a `postgres:16` service, same runner tag) that `deploy` needs. Playwright was left out of CI because the image has no browsers; revision 19.4 adds it (below).
 - **Install-scoped keys (L4):** migration 0016 stores one UUID per database; new keys are `<installId>-order-<id>-r<rev>-e<n>`. Existing attempts keep their keys, so retries of them still replay.
 - **Conserved fees (L5):** the in-stock part is charged `min(ceil(75 × paySubtotal / 10000), order fee)` and the back-order stores the rest, so a chain's fees equal the unsplit order's (the audit's 17¢ case is 9¢ + 8¢). Each part's fee is at most its own rounded-up fee, so no margin goes negative, and the journal uses the stored fee that migration 0015 checks.
 - **404 for not yours (L6):** another practice's or patient's order or patient is 404 `NOT_FOUND`, like a missing one. A wrong persona for an endpoint is still 403.
@@ -381,9 +381,31 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 - **At most 100 lines (L8)** per order, a 400 on `lines`.
 - **Node 22 only (L9):** `.nvmrc` (22) and `engines`; no `engine-strict`, which blocked `npm ci` on a newer local Node. CI and Railway use Node 22.
 
+## Audit 7 fixes (revision 19)
+
+M1 (FR5: inventory is edited by an admin, not the provider) and M2 (the public sign-in screen names a few demo patient personas) stay as the product owner decided; the README states both.
+
+**No second charge after abandonment (H1)**
+
+- **Decision:** abandoning an attempt releases its stock but retires no key. The rule is that a new key may be issued only after a definitive decline from the gateway, never after an abandonment or a timeout. The next pay at the same revision re-runs the abandoned execution with its key (taking the stock again if all of it is still there), so a delayed original call and the retry share one key and the gateway's first-call-decides rule allows one charge. A re-sent order's new revision gets its first key only after every abandoned key from an earlier revision has been looked up and found uncharged. Any success for an execution that is no longer current is recorded as `late_success` with its reference; reconciling it finalizes the order if it still awaits payment at the same quote with the stock available, and otherwise marks it `refund_required`, which the admin marks refunded (the fake gateway's `refund(key)` stub records it). Migration 0017 adds both statuses and the refund columns.
+- **Why:** audit 7 reproduced two charges for one order: a held first call, 16 minutes, abandon, retry with a new key, then the held call lands. Reusing the key makes that interleaving one charge and one payment, with 200 for both requests.
+- **Tradeoff:** with stock gone, an order with an abandoned execution can't split (that would need a new key at a new amount), so it waits for a restock, with an honest `awaiting_restock` quote. A call delayed past the window that lands after the order was re-sent at a new revision can still charge twice, because the lookup found nothing when the new key was issued; it is recorded and listed as `refund_required` rather than lost. Only a real processor's key voiding closes that.
+- **Alternative:** keep minting a new key after abandonment and only record late successes when no later execution exists (revision 18's handling). Rejected: that is the double charge.
+
+**Payment provenance in the database (M3)**
+
+- **Decision:** migration 0017 adds `assert_payment_provenance` to the deferred payment trigger: the payment's amount, idempotency key and gateway reference must equal its attempt's, and the attempt's revision the paid order's. It runs over every existing payment and fails the migration if one can't pass.
+- **Why:** 0015 only required a succeeded attempt on the same order, so a direct insert could pair a 1¢ attempt with a 5,000¢ payment.
+- **Note:** migrations 0016 and 0017 add their enum values with `IF NOT EXISTS`, so test scratch databases that pre-create them for the current app still migrate. On a database that already ran 0016 nothing changes.
+
+**E2E in CI (L1)**
+
+- **Decision:** an `e2e` job in the official Playwright image pinned to the project's Playwright version (`mcr.microsoft.com/playwright:v1.63.0-noble`), with a `postgres:16` service on the `railway-deploy` runner, runs `npm run test:e2e` in parallel with `test`; `deploy` needs both. The job has a 20-minute timeout and keeps traces on failure.
+- **Why:** the browser suite was only a local gate, so a deploy could ship a UI regression the unit tests miss. A pinned image avoids downloading browsers on every run; its tag must move with `@playwright/test`.
+
 ## What we cut
 
-- Refunds, cancelling paid orders, and reopening paid orders.
+- Real refunds (revision 19.1 only records that a duplicate charge was refunded), cancelling paid orders, and reopening paid orders.
 - Provider payouts. Each provider's payable balance records what's owed; nothing moves money to providers.
 - Real payments, auth, email, shipping, tax.
 - CSV export and charts on the dashboard. A platform-wide revenue report (the admin trial balance shows the fee revenue balance, but not by period).
@@ -393,7 +415,7 @@ The key calls, in roughly the order they shaped the system. Each lists what was 
 
 ## What we'd do next
 
-1. Run reconciliation as a scheduled job backed by a real processor's lookup, key voiding and webhooks (revision 18.2 added the admin action), and a tool for `conflict` attempts.
+1. Run reconciliation as a scheduled job backed by a real processor's lookup, key voiding and webhooks (revision 18.2 added the admin action, revision 19.1 late-success handling), real refunds for `refund_required` charges, and a tool for `conflict` attempts.
 2. Refunds as reversing journals, and payouts as journals debiting the provider payable.
 3. Real authentication and role-based access behind the existing `Auth` interface, with audit logging on PHI reads.
 4. Rate limiting, structured logging with order and payment ids, and alerting on ledger imbalance or post-charge rollback.

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import type { Db } from '../db/client'
 import { fakeGatewayCharges } from '../db/schema'
 
@@ -45,9 +45,21 @@ export interface ChargeLookup {
   reference: string | null
 }
 
+/** Revision 19.1: what the gateway recorded for a refund of a key's charge. */
+export interface RefundResult {
+  reference: string
+  amountCents: number
+  refundedAt: Date
+}
+
 export interface PaymentGateway {
   charge(request: ChargeRequest, options?: ChargeOptions): Promise<ChargeResult>
   lookup(idempotencyKey: string): Promise<ChargeLookup | null>
+  /**
+   * Revision 19.1: refunds the successful charge of a key, once; a repeat
+   * returns the first refund. Null when the key holds no successful charge.
+   */
+  refund(idempotencyKey: string): Promise<RefundResult | null>
 }
 
 const DECLINE_MESSAGE = 'Card declined (simulated gateway failure)'
@@ -156,6 +168,31 @@ export class FakePaymentGateway implements PaymentGateway {
       status: stored.status,
       amountCents: stored.amountCents,
       reference: stored.reference,
+    }
+  }
+
+  /**
+   * A stub (revision 19.1): real refunds are out of scope, so this only
+   * records the refund on the stored charge, in its own statement.
+   */
+  async refund(idempotencyKey: string): Promise<RefundResult | null> {
+    await this.db
+      .update(fakeGatewayCharges)
+      .set({
+        refundedAt: sql`coalesce(${fakeGatewayCharges.refundedAt}, now())`,
+      })
+      .where(
+        and(
+          eq(fakeGatewayCharges.idempotencyKey, idempotencyKey),
+          eq(fakeGatewayCharges.status, 'succeeded'),
+        ),
+      )
+    const stored = await this.find(idempotencyKey)
+    if (!stored?.reference || !stored.refundedAt) return null
+    return {
+      reference: stored.reference,
+      amountCents: stored.amountCents,
+      refundedAt: stored.refundedAt,
     }
   }
 

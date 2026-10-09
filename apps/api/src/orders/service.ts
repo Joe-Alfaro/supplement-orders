@@ -24,7 +24,6 @@ import {
   and,
   asc,
   eq,
-  gt,
   gte,
   inArray,
   isNull,
@@ -611,7 +610,10 @@ export async function cancelOrder(
 /**
  * One idempotency key per payment execution (revision 10). A new execution,
  * and so a new key, exists only after the previous one was definitively
- * declined or abandoned; an unresolved outcome always reuses its key.
+ * declined by the gateway; an unresolved outcome always reuses its key.
+ * Revision 19.1: abandonment retires no key. At the same revision the
+ * abandoned execution is re-run with its key; a new revision gets a key only
+ * once the gateway's lookup of every abandoned key finds no charge.
  * Revision 18.4 (L4): prefixed with this installation's id, so a restored or
  * second database sharing a processor account can never reuse a key.
  */
@@ -628,10 +630,27 @@ async function idempotencyKeyFor(
   return `${row.installId}-order-${orderId}-r${revision}-e${execution}`
 }
 
-/** Revision 18.2: attempt statuses that are over, with their stock released. */
+/**
+ * Revision 18.2: attempt statuses that hold no stock and don't block the
+ * order. Revision 19.1 adds refund_required: its charge is settled outside the
+ * order (a refund), so the order may be paid another way.
+ */
 const RELEASED_STATUSES: readonly PaymentAttemptStatus[] = [
   'declined',
   'abandoned',
+  'refund_required',
+]
+
+/**
+ * Revision 9 (H2), 10 and 19.1: attempts that block the order while no payment
+ * records them: the gateway outcome is unknown (pending, conflict), or money
+ * moved that no payment records yet (succeeded, late_success).
+ */
+export const BLOCKING_STATUSES: PaymentAttemptStatus[] = [
+  'pending',
+  'succeeded',
+  'conflict',
+  'late_success',
 ]
 
 function isReleased(attempt: Pick<Attempt, 'status'>) {
@@ -682,7 +701,7 @@ async function assertNoUnreconciledCharge(
     .where(
       and(
         inArray(paymentAttempts.orderId, ids),
-        inArray(paymentAttempts.status, ['pending', 'succeeded', 'conflict']),
+        inArray(paymentAttempts.status, BLOCKING_STATUSES),
         isNull(payments.id),
       ),
     )
@@ -1074,6 +1093,9 @@ function needsReconciliation() {
  * does a new execution start, with a new key and a fresh stock reservation.
  * A new execution plans from current stock (revision 14): `full` refuses any
  * shortfall; `available` moves it to a back-order first, in this transaction.
+ * Revision 19.1: an abandoned execution at this revision is re-run with its
+ * key, taking its stock again; an abandoned one from an earlier revision
+ * blocks a new key unless `lookedUp` says the gateway has no charge for it.
  * Returns null when the order is already paid at this quote.
  */
 async function preparePayment(
@@ -1081,6 +1103,7 @@ async function preparePayment(
   user: PatientUser,
   orderId: number,
   request: PayRequest,
+  lookedUp: ReadonlySet<number>,
 ): Promise<Attempt | null> {
   return db.transaction(async (tx) => {
     const order = await lockOrder(tx, orderId)
@@ -1129,13 +1152,26 @@ async function preparePayment(
     }
 
     // An unresolved outcome from an earlier quote must be settled first (N1).
+    // Revision 19.1: so must a late success, by an admin, and an abandoned
+    // key from an earlier quote that the gateway lookup hasn't cleared.
     const olderUnresolved = attempts.some(
-      (a) => a.revision !== order.revision && !isReleased(a),
+      (a) =>
+        a.status === 'late_success' ||
+        (a.revision !== order.revision && !isReleased(a)) ||
+        (a.revision !== order.revision &&
+          a.status === 'abandoned' &&
+          !lookedUp.has(a.id)),
     )
     if (olderUnresolved) throw needsReconciliation()
 
     const lines = await loadPayLines(tx, orderId)
     const latest = attempts.filter((a) => a.revision === order.revision).at(-1)
+    if (latest?.status === 'abandoned') {
+      return rerunAbandoned(tx, order, latest, lines, {
+        ...request,
+        expectedRevision,
+      })
+    }
     if (latest && !isReleased(latest)) {
       // The stock is already held by this execution, so there is nothing to
       // plan: it is the same quote, retried.
@@ -1231,6 +1267,54 @@ async function preparePayment(
   })
 }
 
+/**
+ * Revision 19.1: the abandoned execution at the order's revision runs again
+ * with the same key, so a delayed original call and this retry charge at most
+ * once. Its stock is taken again if it is still all there; otherwise the order
+ * waits for a restock, since splitting would need a new key. The request's
+ * expectedRevision is already the effective one.
+ */
+async function rerunAbandoned(
+  tx: Tx,
+  order: Order,
+  abandoned: Attempt,
+  lines: PayLine[],
+  request: PayRequest,
+): Promise<Attempt> {
+  if (
+    order.revision !== request.expectedRevision ||
+    order.totalCents !== request.expectedTotalCents ||
+    abandoned.amountCents !== order.totalCents ||
+    !approvesLines(request, lines)
+  ) {
+    throw orderChanged()
+  }
+  const stock = await lockStock(tx, lines)
+  const plan = planPartialPayment(lines, stock)
+  if (plan.hasShortfall) {
+    // Unpayable until restocked, like an order with a live back-order.
+    const quote = partialPaymentQuoteDto(plan, 'patient', {
+      orderFeeCents: storedFee(order),
+      hasLiveBackorder: true,
+    })
+    throw insufficientStock(lines, stock, quote)
+  }
+  await decrementStock(tx, lines)
+  const [rerun] = await tx
+    .update(paymentAttempts)
+    .set({ status: 'pending', stockHeld: true, updatedAt: new Date() })
+    .where(
+      and(
+        eq(paymentAttempts.id, abandoned.id),
+        eq(paymentAttempts.status, 'abandoned'),
+      ),
+    )
+    .returning()
+  if (!rerun)
+    throw new Error(`Payment attempt ${abandoned.id} changed under lock`)
+  return rerun
+}
+
 type Outcome =
   | { status: 'succeeded'; reference: string }
   | { status: 'declined' }
@@ -1238,35 +1322,43 @@ type Outcome =
   | { status: 'abandoned' }
 
 /**
- * The statuses each outcome may be applied over (the fence). Revision 18.2: a
- * success the gateway reports late still lands on an abandoned attempt, so the
- * money is recorded rather than stranded; its stock is taken again on
- * finalization. Abandoning applies only to an attempt still pending.
+ * The statuses each outcome may be applied over (the fence). A success the
+ * gateway reports for an abandoned attempt still lands, so the money is
+ * recorded rather than stranded (as late_success, revision 19.1). A decline
+ * found for an abandoned key confirms it. Abandoning applies only to an
+ * attempt still pending.
  */
 const OUTCOME_FENCE: Record<Outcome['status'], PaymentAttemptStatus[]> = {
   succeeded: ['pending', 'conflict', 'abandoned'],
-  declined: ['pending', 'conflict'],
+  declined: ['pending', 'conflict', 'abandoned'],
   conflict: ['pending', 'conflict'],
   abandoned: ['pending'],
 }
 
 /**
- * Revision 18.2: a late success may land on an abandoned attempt only while
- * no later execution exists, which could hold or have taken its own charge.
+ * Revision 19.1: the status a gateway outcome gives the attempt. A success
+ * for an execution that is no longer current (abandoned, or its order paid,
+ * cancelled or changed since) is a late success, left for an admin.
  */
-async function hasLaterAttempt(tx: Tx, attempt: Attempt) {
-  const [later] = await tx
-    .select({ id: paymentAttempts.id })
-    .from(paymentAttempts)
-    .where(
-      and(
-        eq(paymentAttempts.orderId, attempt.orderId),
-        gt(paymentAttempts.id, attempt.id),
-      ),
-    )
-    .limit(1)
-  return later !== undefined
+function appliedStatus(
+  outcome: Outcome,
+  current: Attempt,
+  order: Order,
+): PaymentAttemptStatus {
+  if (outcome.status !== 'succeeded') return outcome.status
+  const isCurrent =
+    current.status !== 'abandoned' &&
+    order.status === 'pending_payment' &&
+    order.revision === current.revision
+  return isCurrent ? 'succeeded' : 'late_success'
 }
+
+/** Statuses whose attempt gives back the stock it holds. */
+const RELEASING_STATUSES: readonly PaymentAttemptStatus[] = [
+  'declined',
+  'abandoned',
+  'late_success',
+]
 
 /** Revision 18.2: the admin reconciling an attempt, for the audit trail. */
 interface Reconciler {
@@ -1278,7 +1370,9 @@ interface Reconciler {
  * Applies a gateway outcome to exactly the execution it belongs to (fenced):
  * only while that execution is in a status the outcome may replace. Returns
  * the attempt as it stands afterwards; a stale or duplicate outcome changes
- * nothing. A decline or abandonment releases the reservation in the same
+ * nothing. A success for an execution no longer current is recorded as
+ * late_success (revision 19.1). A decline, abandonment or late success
+ * releases the reservation in the same
  * transaction, and only when its fenced update matched, so it can never
  * release stock that a newer execution or a success holds. A release by an
  * admin's reconcile is recorded in inventory_adjustments (revision 18.2).
@@ -1290,7 +1384,7 @@ async function applyOutcome(
   reconciler?: Reconciler,
 ): Promise<Attempt> {
   return db.transaction(async (tx) => {
-    await lockOrder(tx, attempt.orderId)
+    const order = await lockOrder(tx, attempt.orderId)
     const [current] = await tx
       .select()
       .from(paymentAttempts)
@@ -1299,18 +1393,16 @@ async function applyOutcome(
     if (!current) throw new Error(`Payment attempt ${attempt.id} disappeared`)
     if (
       current.execution !== attempt.execution ||
-      !OUTCOME_FENCE[outcome.status].includes(current.status) ||
-      (current.status === 'abandoned' && (await hasLaterAttempt(tx, current)))
+      !OUTCOME_FENCE[outcome.status].includes(current.status)
     ) {
       return current
     }
-    const releases =
-      (outcome.status === 'declined' || outcome.status === 'abandoned') &&
-      current.stockHeld
+    const status = appliedStatus(outcome, current, order)
+    const releases = RELEASING_STATUSES.includes(status) && current.stockHeld
     const [applied] = await tx
       .update(paymentAttempts)
       .set({
-        status: outcome.status,
+        status,
         gatewayReference:
           outcome.status === 'succeeded' ? outcome.reference : null,
         stockHeld: releases ? false : current.stockHeld,
@@ -1450,84 +1542,162 @@ async function verifySucceeded({ gateway }: AppContext, attempt: Attempt) {
  * until a retried pay finalizes it.
  */
 async function recordPayment(
-  { db, payHooks }: AppContext,
+  ctx: AppContext,
   attempt: Attempt,
   reconciler?: Reconciler,
 ) {
-  await db.transaction(async (tx) => {
+  await ctx.db.transaction(async (tx) => {
     const order = await lockOrder(tx, attempt.orderId)
-    if (order.status === 'paid' && order.revision === attempt.revision) return
-    const [current] = await tx
-      .select()
-      .from(paymentAttempts)
-      .where(eq(paymentAttempts.id, attempt.id))
-    if (
-      current?.status !== 'succeeded' ||
-      current.gatewayReference === null ||
-      order.status !== 'pending_payment' ||
-      order.revision !== current.revision ||
-      order.totalCents !== current.amountCents
-    ) {
-      throw new Error(
-        `Order ${order.id} no longer matches payment attempt ${attempt.id}`,
-      )
-    }
-    const lines = await loadPayLines(tx, order.id)
-    const split = splitWithStoredFee(order, computeSplit(lines))
-    if (split.totalCents !== order.totalCents) {
-      throw new Error(
-        `Order ${order.id} lines no longer match the sent total (${split.totalCents} != ${order.totalCents})`,
-      )
-    }
-    // The execution reserved the stock in step 1; take it now only if it
-    // holds none (a legacy attempt, or one abandoned before its late success).
-    // An admin's reconcile is stamped here, before the payment freezes the
-    // attempt (revision 18.4, L7).
-    if (!current.stockHeld) await decrementStock(tx, lines)
-    if (!current.stockHeld || reconciler !== undefined) {
-      await tx
-        .update(paymentAttempts)
-        .set({
-          stockHeld: true,
-          updatedAt: new Date(),
-          ...(reconciler === undefined
-            ? {}
-            : {
-                reconciledAt: reconciler.at,
-                reconciledByUserId: reconciler.userId,
-              }),
-        })
-        .where(eq(paymentAttempts.id, current.id))
-    }
-
-    const [payment] = await tx
-      .insert(payments)
-      .values({
-        orderId: order.id,
-        amountCents: current.amountCents,
-        idempotencyKey: current.idempotencyKey,
-        gatewayReference: current.gatewayReference,
-        paymentAttemptId: current.id,
-      })
-      .returning({ id: payments.id, amountCents: payments.amountCents })
-    if (!payment)
-      throw new Error(`Payment insert for order ${order.id} returned no row`)
-
-    await postPaymentJournal(tx, {
-      paymentId: payment.id,
-      orderId: order.id,
-      providerId: order.providerId,
-      amountCents: payment.amountCents,
-      split,
-    })
-    await payHooks.afterLedgerInsert?.()
-
-    const now = new Date()
-    await tx
-      .update(orders)
-      .set({ status: 'paid', paidAt: now, updatedAt: now })
-      .where(eq(orders.id, order.id))
+    await writePayment(ctx, tx, order, attempt, reconciler)
   })
+}
+
+/**
+ * The body of recordPayment, under the order lock the caller holds. An order
+ * already paid by this attempt is done; paid by another, it needs an admin.
+ */
+async function writePayment(
+  { payHooks }: AppContext,
+  tx: Tx,
+  order: Order,
+  attempt: Attempt,
+  reconciler?: Reconciler,
+) {
+  if (order.status === 'paid') {
+    const [own] = await tx
+      .select({ id: payments.id })
+      .from(payments)
+      .where(eq(payments.paymentAttemptId, attempt.id))
+    if (own) return
+    throw needsReconciliation()
+  }
+  const [current] = await tx
+    .select()
+    .from(paymentAttempts)
+    .where(eq(paymentAttempts.id, attempt.id))
+  if (
+    current?.status !== 'succeeded' ||
+    current.gatewayReference === null ||
+    order.status !== 'pending_payment' ||
+    order.revision !== current.revision ||
+    order.totalCents !== current.amountCents
+  ) {
+    throw new Error(
+      `Order ${order.id} no longer matches payment attempt ${attempt.id}`,
+    )
+  }
+  const lines = await loadPayLines(tx, order.id)
+  const split = splitWithStoredFee(order, computeSplit(lines))
+  if (split.totalCents !== order.totalCents) {
+    throw new Error(
+      `Order ${order.id} lines no longer match the sent total (${split.totalCents} != ${order.totalCents})`,
+    )
+  }
+  // The execution reserved the stock in step 1; take it now only if it
+  // holds none (a legacy attempt, or one abandoned before its late success).
+  // An admin's reconcile is stamped here, before the payment freezes the
+  // attempt (revision 18.4, L7).
+  if (!current.stockHeld) await decrementStock(tx, lines)
+  if (!current.stockHeld || reconciler !== undefined) {
+    await tx
+      .update(paymentAttempts)
+      .set({
+        stockHeld: true,
+        updatedAt: new Date(),
+        ...(reconciler === undefined
+          ? {}
+          : {
+              reconciledAt: reconciler.at,
+              reconciledByUserId: reconciler.userId,
+            }),
+      })
+      .where(eq(paymentAttempts.id, current.id))
+  }
+
+  const [payment] = await tx
+    .insert(payments)
+    .values({
+      orderId: order.id,
+      amountCents: current.amountCents,
+      idempotencyKey: current.idempotencyKey,
+      gatewayReference: current.gatewayReference,
+      paymentAttemptId: current.id,
+    })
+    .returning({ id: payments.id, amountCents: payments.amountCents })
+  if (!payment)
+    throw new Error(`Payment insert for order ${order.id} returned no row`)
+
+  await postPaymentJournal(tx, {
+    paymentId: payment.id,
+    orderId: order.id,
+    providerId: order.providerId,
+    amountCents: payment.amountCents,
+    split,
+  })
+  await payHooks.afterLedgerInsert?.()
+
+  const now = new Date()
+  await tx
+    .update(orders)
+    .set({ status: 'paid', paidAt: now, updatedAt: now })
+    .where(eq(orders.id, order.id))
+}
+
+/**
+ * Revision 19.1: before an order's new revision may get a key, every
+ * abandoned key from an earlier revision is looked up at the gateway (never
+ * charged). A success found there is recorded as late_success and blocks the
+ * order for an admin; a decline confirms the key. Returns the attempts whose
+ * lookup found no success, for preparePayment's check under the lock. Orders
+ * that aren't this patient's, or aren't awaiting payment, are left to
+ * preparePayment's own errors.
+ */
+async function lookUpAbandonedKeys(
+  ctx: AppContext,
+  user: PatientUser,
+  orderId: number,
+): Promise<ReadonlySet<number>> {
+  const { db, gateway } = ctx
+  const rows = await db
+    .select({ attempt: paymentAttempts })
+    .from(paymentAttempts)
+    .innerJoin(orders, eq(orders.id, paymentAttempts.orderId))
+    .where(
+      and(
+        eq(paymentAttempts.orderId, orderId),
+        eq(paymentAttempts.status, 'abandoned'),
+        ne(paymentAttempts.revision, orders.revision),
+        eq(orders.patientId, user.patientId),
+        eq(orders.status, 'pending_payment'),
+      ),
+    )
+    .orderBy(asc(paymentAttempts.id))
+  const cleared = await rows.reduce(
+    async (prev, { attempt }) => {
+      const done = await prev
+      const found = await callGateway(attempt, () =>
+        gateway.lookup(attempt.idempotencyKey),
+      )
+      if (found?.status === 'succeeded') {
+        if (
+          found.reference !== null &&
+          found.amountCents === attempt.amountCents
+        ) {
+          await applyOutcome(db, attempt, {
+            status: 'succeeded',
+            reference: found.reference,
+          })
+        }
+        throw needsReconciliation()
+      }
+      if (found?.status === 'declined') {
+        await applyOutcome(db, attempt, { status: 'declined' })
+      }
+      return [...done, attempt.id]
+    },
+    Promise.resolve([] as number[]),
+  )
+  return new Set(cleared)
 }
 
 /**
@@ -1535,7 +1705,8 @@ async function recordPayment(
  * validate the quote and pick or start an execution with its stock held;
  * charge it (or, for an execution already succeeded, verify it by lookup,
  * never by charging again); apply the outcome under a fence; then write
- * payment, journal and status atomically.
+ * payment, journal and status atomically. Revision 19.1: abandoned keys from
+ * earlier revisions are looked up first.
  */
 export async function payOrder(
   ctx: AppContext,
@@ -1543,7 +1714,8 @@ export async function payOrder(
   orderId: number,
   request: PayRequest,
 ) {
-  const attempt = await preparePayment(ctx.db, user, orderId, request)
+  const lookedUp = await lookUpAbandonedKeys(ctx, user, orderId)
+  const attempt = await preparePayment(ctx.db, user, orderId, request, lookedUp)
   if (attempt === null) return
   const succeeded =
     attempt.status === 'succeeded'
@@ -1556,17 +1728,77 @@ export async function payOrder(
 type AdminUser = Extract<CurrentUser, { role: 'admin' }>
 
 /**
+ * Revision 19.1: settles a late success. Its charge pays the order only if
+ * the order still awaits payment at the attempt's revision and total, no
+ * other execution is unresolved, and the stock is all there; the payment is
+ * then recorded in the same transaction. Otherwise (paid another way,
+ * cancelled, changed, or sold out) it becomes refund_required.
+ */
+async function settleLateSuccess(
+  ctx: AppContext,
+  attempt: Attempt,
+  reconciler: Reconciler,
+): Promise<ReconcileOutcome> {
+  await verifySucceeded(ctx, attempt)
+  return ctx.db.transaction(async (tx) => {
+    const order = await lockOrder(tx, attempt.orderId)
+    const [current] = await tx
+      .select()
+      .from(paymentAttempts)
+      .where(eq(paymentAttempts.id, attempt.id))
+      .for('update')
+    if (current?.status !== 'late_success') return 'unchanged'
+    const [otherUnresolved] = await tx
+      .select({ id: paymentAttempts.id })
+      .from(paymentAttempts)
+      .leftJoin(payments, eq(payments.paymentAttemptId, paymentAttempts.id))
+      .where(
+        and(
+          eq(paymentAttempts.orderId, order.id),
+          ne(paymentAttempts.id, current.id),
+          inArray(paymentAttempts.status, BLOCKING_STATUSES),
+          isNull(payments.id),
+        ),
+      )
+      .limit(1)
+    const lines = await loadPayLines(tx, order.id)
+    const stock = await lockStock(tx, lines)
+    const payable =
+      order.status === 'pending_payment' &&
+      order.revision === current.revision &&
+      order.totalCents === current.amountCents &&
+      otherUnresolved === undefined &&
+      lines.every((l) => (stock.get(l.productId) ?? 0) >= l.quantity)
+    const [settled] = await tx
+      .update(paymentAttempts)
+      .set({
+        status: payable ? 'succeeded' : 'refund_required',
+        updatedAt: new Date(),
+        reconciledAt: reconciler.at,
+        reconciledByUserId: reconciler.userId,
+      })
+      .where(eq(paymentAttempts.id, current.id))
+      .returning()
+    if (!settled) throw new Error(`Payment attempt ${attempt.id} disappeared`)
+    if (!payable) return 'refund_required'
+    await writePayment(ctx, tx, order, settled, reconciler)
+    return 'finalized'
+  })
+}
+
+/**
  * Revision 18.2: an admin settles an unresolved payment attempt from the
  * gateway's own record, which `lookup` reads without ever charging.
  * - succeeded: finalize exactly as a retried pay would (payment, journal,
  *   paid), with no new charge;
  * - declined: mark it declined and release its stock under the fence;
  * - no record, and older than RECONCILE_ABANDON_AFTER_MS on the app's clock:
- *   mark it abandoned and release its stock;
+ *   mark it abandoned and release its stock (its key stays, revision 19.1);
  * - no record yet: 409 RECONCILE_TOO_EARLY.
- * Reconciling a resolved attempt changes nothing ('unchanged'). An abandoned
- * attempt is looked up again, so a success the gateway records late is still
- * finalized rather than stranded.
+ * Revision 19.1: a success for an execution no longer current (abandoned or
+ * superseded) is a late success, settled by settleLateSuccess: finalized, or
+ * refund_required. Reconciling a resolved attempt changes nothing
+ * ('unchanged').
  */
 export async function reconcileAttempt(
   ctx: AppContext,
@@ -1581,7 +1813,11 @@ export async function reconcileAttempt(
     .where(eq(paymentAttempts.id, attemptId))
   if (!row) throw notFound('Payment attempt')
   const { attempt } = row
-  if (row.paymentId !== null || attempt.status === 'declined') {
+  if (
+    row.paymentId !== null ||
+    attempt.status === 'declined' ||
+    attempt.status === 'refund_required'
+  ) {
     return 'unchanged'
   }
   const reconciler: Reconciler = { userId: admin.userId, at: now() }
@@ -1590,6 +1826,9 @@ export async function reconcileAttempt(
     await verifySucceeded(ctx, attempt)
     await recordPayment(ctx, attempt, reconciler)
     return 'finalized'
+  }
+  if (attempt.status === 'late_success') {
+    return settleLateSuccess(ctx, attempt, reconciler)
   }
   const found = await callGateway(attempt, () =>
     gateway.lookup(attempt.idempotencyKey),
@@ -1632,12 +1871,61 @@ export async function reconcileAttempt(
     { status: 'succeeded', reference: found.reference },
     reconciler,
   )
-  if (
-    applied.status !== 'succeeded' ||
-    applied.gatewayReference !== found.reference
-  ) {
-    throw needsReconciliation()
+  if (applied.gatewayReference !== found.reference) throw needsReconciliation()
+  if (applied.status === 'late_success') {
+    return settleLateSuccess(ctx, applied, reconciler)
   }
+  if (applied.status !== 'succeeded') throw needsReconciliation()
   await recordPayment(ctx, applied, reconciler)
   return 'finalized'
+}
+
+/**
+ * Revision 19.1: an admin marks a refund_required charge refunded. The fake
+ * gateway's refund stub records it; a real refund is out of scope. Refunding
+ * again changes nothing ('unchanged').
+ */
+export async function refundAttempt(
+  ctx: AppContext,
+  admin: AdminUser,
+  attemptId: number,
+): Promise<ReconcileOutcome> {
+  const { db, gateway, now } = ctx
+  const [attempt] = await db
+    .select()
+    .from(paymentAttempts)
+    .where(eq(paymentAttempts.id, attemptId))
+  if (!attempt) throw notFound('Payment attempt')
+  if (attempt.status !== 'refund_required') {
+    throw new ApiError(
+      409,
+      'NOT_REFUNDABLE',
+      'Only a charge marked "refund required" can be refunded.',
+    )
+  }
+  if (attempt.refundedAt !== null) return 'unchanged'
+  const refunded = await gateway.refund(attempt.idempotencyKey)
+  if (refunded === null || refunded.reference !== attempt.gatewayReference) {
+    throw new ApiError(
+      409,
+      'NOT_REFUNDABLE',
+      'The payment provider has no charge to refund for this attempt.',
+    )
+  }
+  const [marked] = await db
+    .update(paymentAttempts)
+    .set({
+      refundedAt: now(),
+      refundedByUserId: admin.userId,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(paymentAttempts.id, attempt.id),
+        eq(paymentAttempts.status, 'refund_required'),
+        isNull(paymentAttempts.refundedAt),
+      ),
+    )
+    .returning({ id: paymentAttempts.id })
+  return marked ? 'refunded' : 'unchanged'
 }

@@ -85,7 +85,7 @@ describe('revision 16 direct SQL journal guards', () => {
       }
       const payment = (
         await tx.execute<{ id: number }>(
-          sql`insert into payments (order_id, amount_cents, idempotency_key, gateway_reference, payment_attempt_id) values (${id}, ${split.totalCents}, ${`manual-${id}`}, ${`ref-${id}`}, ${attemptId}) returning id`,
+          sql`insert into payments (order_id, amount_cents, idempotency_key, gateway_reference, payment_attempt_id) values (${id}, ${split.totalCents}, ${`manual-${id}`}, ${`ref-manual-${id}`}, ${attemptId}) returning id`,
         )
       ).rows[0]!
       if (mode !== 'missing') {

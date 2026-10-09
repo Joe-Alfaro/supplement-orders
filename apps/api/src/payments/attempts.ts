@@ -4,6 +4,7 @@ import type {
 } from '@supplement-orders/domain'
 import { and, asc, desc, eq, inArray, isNull, or } from 'drizzle-orm'
 import type { Db } from '../db/client'
+import { BLOCKING_STATUSES } from '../orders/service'
 import {
   orders,
   paymentAttempts,
@@ -13,15 +14,17 @@ import {
 } from '../db/schema'
 
 /**
- * Revision 18.2: an attempt is unresolved while it is pending, in conflict, or
- * succeeded without a payment. The same rule as assertNoUnreconciledCharge.
+ * Revision 18.2: an attempt is unresolved while it blocks its order without a
+ * payment (the rule of assertNoUnreconciledCharge): pending, in conflict,
+ * succeeded, or (revision 19.1) a late success. A refund_required charge also
+ * stays listed until it is marked refunded.
  */
-const unresolved = and(
-  or(
-    inArray(paymentAttempts.status, ['pending', 'conflict']),
-    eq(paymentAttempts.status, 'succeeded'),
+const unresolved = or(
+  and(inArray(paymentAttempts.status, BLOCKING_STATUSES), isNull(payments.id)),
+  and(
+    eq(paymentAttempts.status, 'refund_required'),
+    isNull(paymentAttempts.refundedAt),
   ),
-  isNull(payments.id),
 )
 
 function selectAttempts(db: Db) {
@@ -35,6 +38,8 @@ function selectAttempts(db: Db) {
       paymentId: payments.id,
       createdAt: paymentAttempts.createdAt,
       reconciledAt: paymentAttempts.reconciledAt,
+      gatewayReference: paymentAttempts.gatewayReference,
+      refundedAt: paymentAttempts.refundedAt,
     })
     .from(paymentAttempts)
     .innerJoin(orders, eq(orders.id, paymentAttempts.orderId))
@@ -61,6 +66,8 @@ function toDto(row: AttemptRow, now: Date): AdminPaymentAttemptDto {
     ),
     reconciledAt:
       row.reconciledAt === null ? null : row.reconciledAt.toISOString(),
+    gatewayReference: row.gatewayReference,
+    refundedAt: row.refundedAt === null ? null : row.refundedAt.toISOString(),
   }
 }
 

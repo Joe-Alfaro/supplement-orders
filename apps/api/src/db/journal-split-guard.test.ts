@@ -63,7 +63,7 @@ describe('revision 17 direct SQL split and provenance guards', () => {
         const payment = (
           await tx.execute<{ id: number }>(sql`insert into payments
         (order_id, amount_cents, idempotency_key, gateway_reference, payment_attempt_id)
-        values (${id}, ${total}, 'rev17-payment', 'rev17-reference', ${mode === 'null-attempt' ? null : attempt.id}) returning id`)
+        values (${id}, ${total}, 'rev17-attempt', 'rev17-reference', ${mode === 'null-attempt' ? null : attempt.id}) returning id`)
         ).rows[0]!
         const journal = (
           await tx.execute<{

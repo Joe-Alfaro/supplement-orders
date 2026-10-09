@@ -106,7 +106,8 @@ export const listAdminJournalsQuerySchema: z.ZodType<
 /**
  * Revision 18.2: GET /api/admin/payment-attempts returns an array.
  * `unresolved` (the default) lists attempts that are pending, succeeded
- * without a payment, or in conflict, oldest first; `all` lists every attempt,
+ * without a payment, or in conflict, plus (revision 19.1) late_success ones
+ * and refund_required ones not yet refunded, oldest first; `all` lists every attempt,
  * newest first, so reconciled ones stay visible.
  */
 export const ADMIN_PAYMENT_ATTEMPT_FILTERS = ['unresolved', 'all'] as const

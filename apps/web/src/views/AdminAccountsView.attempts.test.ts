@@ -29,6 +29,8 @@ const attempt: AdminPaymentAttemptDto = {
   createdAt: '2026-10-08T10:00:00.000Z',
   ageSeconds: 7200,
   reconciledAt: null,
+  gatewayReference: null,
+  refundedAt: null,
 }
 
 beforeEach(() => {
@@ -164,7 +166,7 @@ describe('Late successes and refunds (19.1)', () => {
     const table = await panel()
     const row = within(table).getByRole('row', { name: /Order #42/ })
 
-    expect(row).toHaveTextContent('Charged after abandonment')
+    expect(row).toHaveTextContent('Charged late')
     expect(row).toHaveTextContent('$45.00')
     expect(
       within(row).getByRole('button', { name: 'Reconcile order 42' }),
@@ -194,8 +196,8 @@ describe('Late successes and refunds (19.1)', () => {
       refundRequired,
     ])
     vi.mocked(api.refundPaymentAttempt).mockResolvedValue({
-      ...refundRequired,
-      status: 'succeeded',
+      outcome: 'refunded',
+      attempt: { ...refundRequired, refundedAt: '2026-10-08T12:00:00.000Z' },
     })
     const table = await panel()
     vi.mocked(api.listUnresolvedPaymentAttempts).mockResolvedValue([])

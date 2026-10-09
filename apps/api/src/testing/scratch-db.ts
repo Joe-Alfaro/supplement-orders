@@ -59,12 +59,15 @@ export function migrationCountInFolder(folder = MIGRATIONS_FOLDER) {
 }
 
 /**
- * The columns and table that migration 0016 (revision 18) adds and the app's
- * writes now name. A scratch database migrated to an earlier point gets them
- * so the current app can make its data there; removeLaterAppSchema takes them
- * away again before the remaining migrations run, so 0016 applies as usual.
+ * The columns, table and enum values that migrations 0016 (revision 18) and
+ * 0017 (revision 19) add and the app's reads and writes now name. A scratch
+ * database migrated to an earlier point gets them so the current app can make
+ * its data there; removeLaterAppSchema takes them away again before the
+ * remaining migrations run, so 0016 and 0017 apply as usual. Enum values
+ * can't be dropped, so they stay, and 0016 and 0017 add theirs only if absent.
  */
 export async function addLaterAppSchema(db: Db) {
+  await addLaterEnumValues(db)
   await db.execute(sql`
     alter table orders add column merged_back_at timestamp with time zone;
     alter table payment_attempts add column reconciled_at timestamp with time zone;
@@ -75,9 +78,39 @@ export async function addLaterAppSchema(db: Db) {
       created_at timestamp with time zone not null default now()
     );
     insert into installation default values;`)
+  await add0017AppSchema(db)
+}
+
+/**
+ * The payment attempt statuses that 0016 and 0017 add, which the app's reads
+ * name: enough for the current app to read a database migrated to an earlier
+ * point.
+ */
+export async function addLaterEnumValues(db: Db) {
+  await db.execute(sql`
+    alter type payment_attempt_status add value if not exists 'abandoned';
+    alter type payment_attempt_status add value if not exists 'late_success';
+    alter type payment_attempt_status add value if not exists 'refund_required';`)
+}
+
+/** Only what 0017 adds, for a scratch database migrated through 0016. */
+export async function add0017AppSchema(db: Db) {
+  await addLaterEnumValues(db)
+  await db.execute(sql`
+    alter table payment_attempts add column refunded_at timestamp with time zone;
+    alter table payment_attempts add column refunded_by_user_id integer;
+    alter table fake_gateway_charges add column refunded_at timestamp with time zone;`)
+}
+
+export async function remove0017AppSchema(db: Db) {
+  await db.execute(sql`
+    alter table fake_gateway_charges drop column refunded_at;
+    alter table payment_attempts drop column refunded_by_user_id;
+    alter table payment_attempts drop column refunded_at;`)
 }
 
 export async function removeLaterAppSchema(db: Db) {
+  await remove0017AppSchema(db)
   await db.execute(sql`
     drop table installation;
     alter table payment_attempts drop column reconciled_by_user_id;
