@@ -1,7 +1,11 @@
 # Revision 18.4 (L3): every pipeline runs the test gate, and main deploys only
-# after it passes. Both jobs use the project runner tagged railway-deploy
-# (docker executor) and the node:22 image, matching .nvmrc and package.json
-# engines.
+# after it passes. Revision 19.4 adds the Playwright e2e job to that gate:
+# deploy needs both test and e2e. Every job uses the project runner tagged
+# railway-deploy (docker executor). test and deploy use the node:22 image,
+# matching .nvmrc and package.json engines; e2e uses the official Playwright
+# image for the exact @playwright/test version in package-lock.json (browsers
+# preinstalled, so no download per run). Bump the image tag together with
+# @playwright/test.
 #
 # Deploys main to the Railway `web` service. RAILWAY_TOKEN is a Railway project
 # token stored as a masked CI/CD variable; Railway builds the app from railway.json.
@@ -30,9 +34,7 @@ test:
         - package-lock.json
     paths:
       - .npm/
-  # Playwright e2e (npm run test:e2e) is not run here: the node:22 image has no
-  # browsers, and installing them on every run would dominate the job. It stays
-  # part of the local gate before merging.
+  # Playwright e2e runs in its own job (e2e, below), in parallel with this one.
   script:
     - node --version
     - npm ci --cache .npm --prefer-offline
@@ -41,6 +43,44 @@ test:
     - npm test
     - npm run build
 
+# The e2e suite (npm run test:e2e): Playwright starts the API on :3100 against
+# its own supplement_orders_e2e database on the postgres service (created,
+# migrated and seeded by npm run e2e:db) and the web app on :5174. Specs run
+# serially in one worker, with 2 retries in CI (playwright.config.ts), in
+# roughly 5-10 minutes; the 20-minute timeout bounds a hung run. Traces of
+# retried tests are kept as artifacts on failure.
+e2e:
+  stage: test
+  image: mcr.microsoft.com/playwright:v1.63.0-noble
+  tags:
+    - railway-deploy
+  timeout: 20 minutes
+  services:
+    - name: postgres:16
+      alias: postgres
+  variables:
+    POSTGRES_USER: supplement_orders
+    POSTGRES_PASSWORD: supplement_orders
+    POSTGRES_DB: supplement_orders
+    DATABASE_URL: postgres://supplement_orders:supplement_orders@postgres:5432/supplement_orders
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+  script:
+    - node --version
+    - npm ci --cache .npm --prefer-offline
+    - npx playwright --version
+    - npm run test:e2e
+  artifacts:
+    when: on_failure
+    expire_in: 1 week
+    paths:
+      - test-results/
+      - playwright-report/
+
 deploy:
   stage: deploy
   image: node:22
@@ -48,6 +88,7 @@ deploy:
     - railway-deploy
   needs:
     - test
+    - e2e
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
   script:
