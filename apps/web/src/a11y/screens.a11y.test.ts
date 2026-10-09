@@ -459,7 +459,10 @@ const adminJournal: AdminJournalDto = {
   ],
 }
 
-describe('accessibility', () => {
+// axe scans of large DOMs are slow on CI runners, so allow far more than the 5s default.
+const AXE_TIMEOUT_MS = 30000
+
+describe('accessibility', { timeout: AXE_TIMEOUT_MS }, () => {
   it('admin accounts: trial balance and journals', async () => {
     const { container } = await renderWithRouter(AdminAccountsView, {
       path: '/admin/accounts',
