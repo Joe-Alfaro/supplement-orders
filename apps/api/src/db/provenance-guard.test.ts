@@ -103,7 +103,7 @@ describe('revision 19.2 payment provenance matches its attempt exactly', () => {
           sql`select status from orders where id = ${orderId}`,
         )
       ).rows,
-    ).toEqual([{ status: 'pending' }])
+    ).toEqual([{ status: 'pending_payment' }])
   }
 
   const matching: Side = { amountCents: 5000, key: 'key-A', reference: 'ref-A' }
