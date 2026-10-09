@@ -15,6 +15,7 @@ vi.mock('../api', async (importOriginal) => {
     listAdminJournals: vi.fn(),
     listUnresolvedPaymentAttempts: vi.fn(),
     reconcilePaymentAttempt: vi.fn(),
+    refundPaymentAttempt: vi.fn(),
   }
 })
 
@@ -44,6 +45,7 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue([attempt])
   vi.mocked(api.reconcilePaymentAttempt).mockReset()
+  vi.mocked(api.refundPaymentAttempt).mockReset()
 })
 
 async function panel() {
@@ -136,6 +138,125 @@ describe('Payments needing attention (18.2)', () => {
     expect(await screen.findByText('Too early to reconcile')).toBeVisible()
     expect(
       within(table).getByRole('button', { name: 'Reconcile order 42' }),
+    ).toBeEnabled()
+  })
+})
+
+describe('Late successes and refunds (19.1)', () => {
+  const lateSuccess: AdminPaymentAttemptDto = {
+    ...attempt,
+    id: 11,
+    status: 'late_success',
+    amountCents: 4500,
+  }
+  const refundRequired: AdminPaymentAttemptDto = {
+    ...attempt,
+    id: 12,
+    orderId: 43,
+    status: 'refund_required',
+    amountCents: 5000,
+  }
+
+  it('shows a late success as a charge to reconcile, with the Reconcile action', async () => {
+    vi.mocked(api.listUnresolvedPaymentAttempts).mockResolvedValue([
+      lateSuccess,
+    ])
+    const table = await panel()
+    const row = within(table).getByRole('row', { name: /Order #42/ })
+
+    expect(row).toHaveTextContent('Charged after abandonment')
+    expect(row).toHaveTextContent('$45.00')
+    expect(
+      within(row).getByRole('button', { name: 'Reconcile order 42' }),
+    ).toBeEnabled()
+  })
+
+  it('shows "Charged twice — refund $X" with Mark refunded, and no patient data', async () => {
+    vi.mocked(api.listUnresolvedPaymentAttempts).mockResolvedValue([
+      refundRequired,
+    ])
+    const table = await panel()
+    const row = within(table).getByRole('row', { name: /Order #43/ })
+
+    expect(row).toHaveTextContent('Charged twice — refund $50.00')
+    expect(row).not.toHaveTextContent(/Jordan|Alder/)
+    expect(
+      within(row).queryByRole('button', { name: /^Reconcile/ }),
+    ).not.toBeInTheDocument()
+    expect(
+      within(row).getByRole('button', { name: 'Mark order 43 refunded' }),
+    ).toBeEnabled()
+  })
+
+  it('confirms before marking refunded, then toasts and refreshes', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.listUnresolvedPaymentAttempts).mockResolvedValue([
+      refundRequired,
+    ])
+    vi.mocked(api.refundPaymentAttempt).mockResolvedValue({
+      ...refundRequired,
+      status: 'succeeded',
+    })
+    const table = await panel()
+    vi.mocked(api.listUnresolvedPaymentAttempts).mockResolvedValue([])
+
+    await user.click(
+      within(table).getByRole('button', { name: 'Mark order 43 refunded' }),
+    )
+    expect(api.refundPaymentAttempt).not.toHaveBeenCalled()
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Mark refunded',
+    })
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Mark refunded' }),
+    )
+
+    expect(api.refundPaymentAttempt).toHaveBeenCalledWith(12)
+    expect(await screen.findByText('Order #43 marked refunded')).toBeVisible()
+    expect(await screen.findByText('No payments need attention.')).toBeVisible()
+  })
+
+  it('does nothing when the refund confirmation is declined', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.listUnresolvedPaymentAttempts).mockResolvedValue([
+      refundRequired,
+    ])
+    const table = await panel()
+
+    await user.click(
+      within(table).getByRole('button', { name: 'Mark order 43 refunded' }),
+    )
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Mark refunded',
+    })
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+    expect(api.refundPaymentAttempt).not.toHaveBeenCalled()
+  })
+
+  it('shows a failed refund and keeps the row', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.listUnresolvedPaymentAttempts).mockResolvedValue([
+      refundRequired,
+    ])
+    vi.mocked(api.refundPaymentAttempt).mockRejectedValue(
+      new api.ApiRequestError(500, 'INTERNAL', 'Refund failed'),
+    )
+    const table = await panel()
+
+    await user.click(
+      within(table).getByRole('button', { name: 'Mark order 43 refunded' }),
+    )
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Mark refunded',
+    })
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Mark refunded' }),
+    )
+
+    expect(await screen.findByText('Refund failed')).toBeVisible()
+    expect(
+      within(table).getByRole('button', { name: 'Mark order 43 refunded' }),
     ).toBeEnabled()
   })
 })

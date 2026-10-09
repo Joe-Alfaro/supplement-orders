@@ -10,7 +10,8 @@ import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
 import InputNumber from 'primevue/inputnumber'
 import InputText from 'primevue/inputtext'
-import { onMounted, reactive, watch } from 'vue'
+import { useToast } from 'primevue/usetoast'
+import { computed, onMounted, reactive, watch } from 'vue'
 import { useRoute, type LocationQuery } from 'vue-router'
 import {
   ApiRequestError,
@@ -61,6 +62,8 @@ function currentState(): UrlState {
 
 /** What one row is doing. `saved` is the last stock value the server gave us. */
 interface RowState {
+  /** The product as last seen, so an edit can still be saved or named after it leaves the page. */
+  product: AdminProductDto
   saved: number
   /** What is in the input; null while it is empty. */
   typed: number | null
@@ -69,33 +72,67 @@ interface RowState {
   message: string | null
 }
 
-const rows = reactive<Record<number, RowState>>({})
+function freshRow(product: AdminProductDto): RowState {
+  return {
+    product,
+    saved: product.stockQuantity,
+    typed: product.stockQuantity,
+    pending: false,
+    message: null,
+  }
+}
 
-// A fresh page replaces every row's state, including unsaved edits.
+const rows = reactive<Record<number, RowState>>({})
+const toast = useToast()
+const warned = new Set<number>()
+
+function hasWork(row: RowState) {
+  return row.pending || isDirty(row)
+}
+
+/** Rows with work in progress whose product is not in the current results. */
+const orphans = computed(() => {
+  const shown = new Set(inventory.items.value.map((item) => item.id))
+  return Object.values(rows).filter(
+    (row) => !shown.has(row.product.id) && hasWork(row),
+  )
+})
+
+// A fresh page or search result never overwrites a row that has an unsaved
+// edit or a save in flight (19.3). Everything else follows the server.
 watch(
   () => inventory.page.value,
   (page) => {
-    Object.keys(rows).forEach((key) => delete rows[Number(key)])
-    page?.items.forEach((item) => {
-      rows[item.id] = {
-        saved: item.stockQuantity,
-        typed: item.stockQuantity,
-        pending: false,
-        message: null,
+    const items = page?.items ?? []
+    const shown = new Set(items.map((item) => item.id))
+    Object.values(rows)
+      .filter((row) => !shown.has(row.product.id) && !hasWork(row))
+      .forEach((row) => delete rows[row.product.id])
+    items.forEach((item) => {
+      const row = rows[item.id]
+      if (row && hasWork(row)) {
+        row.product = item
+        return
       }
+      rows[item.id] = freshRow(item)
     })
+    // Warn once per product while its edit stays orphaned.
+    const current = new Set(orphans.value.map((row) => row.product.id))
+    warned.forEach((id) => current.has(id) || warned.delete(id))
+    orphans.value
+      .filter((row) => !warned.has(row.product.id))
+      .forEach((row) => {
+        warned.add(row.product.id)
+        toast.add({
+          severity: 'warn',
+          summary: `Unsaved stock edit for ${row.product.name} is no longer in these results. Save or discard it below.`,
+        })
+      })
   },
 )
 
 function rowOf(product: AdminProductDto): RowState {
-  return (
-    rows[product.id] ?? {
-      saved: product.stockQuantity,
-      typed: product.stockQuantity,
-      pending: false,
-      message: null,
-    }
-  )
+  return rows[product.id] ?? freshRow(product)
 }
 
 function isDirty(row: RowState) {
@@ -207,6 +244,38 @@ const INCREMENTS = [1, 10, 100]
 
 <template>
   <h1>Inventory</h1>
+
+  <section
+    v-if="orphans.length > 0"
+    aria-labelledby="unsaved-heading"
+    class="unsaved"
+  >
+    <h2 id="unsaved-heading">Unsaved edits</h2>
+    <p>These products are not in the current results.</p>
+    <ul>
+      <li v-for="row in orphans" :key="row.product.id">
+        <span>{{ row.product.name }}</span>
+        <span>{{ row.typed ?? '' }}</span>
+        <Button
+          label="Save"
+          :aria-label="`Save stock for ${row.product.name}`"
+          size="small"
+          :disabled="row.pending || row.typed === null"
+          @click="save(row.product)"
+        />
+        <Button
+          label="Discard"
+          :aria-label="`Discard edit for ${row.product.name}`"
+          size="small"
+          severity="secondary"
+          outlined
+          :disabled="row.pending"
+          @click="cancel(row.product)"
+        />
+        <span v-if="row.message" role="alert">{{ row.message }}</span>
+      </li>
+    </ul>
+  </section>
 
   <section aria-labelledby="inventory-heading">
     <h2 id="inventory-heading" class="visually-hidden">Products</h2>

@@ -421,3 +421,120 @@ describe('AdminInventoryView editing stock', () => {
     expect(stockInput()).toHaveValue('55')
   })
 })
+
+describe('AdminInventoryView keeps edits across refreshes (19.3)', () => {
+  it('keeps a typed value and its Save button while a search response is delayed, and after it lands', async () => {
+    const slow = deferred<AdminProductPageDto>()
+    await renderPage()
+    vi.mocked(api.searchAdminProducts).mockReturnValueOnce(slow.promise)
+
+    await userEvent.type(
+      screen.getByRole('searchbox', { name: 'Search products' }),
+      'vit',
+    )
+    await waitFor(() =>
+      expect(api.searchAdminProducts).toHaveBeenCalledTimes(2),
+    )
+    await typeStock('55')
+    expect(stockInput()).toHaveValue('55')
+
+    slow.resolve(pageOf([product(1, 'Vitamin D3', 40)]))
+
+    await waitFor(() =>
+      expect(screen.queryByText('Zinc')).not.toBeInTheDocument(),
+    )
+    expect(stockInput()).toHaveValue('55')
+    expect(
+      screen.getByRole('button', { name: 'Save stock for Vitamin D3' }),
+    ).toBeVisible()
+  })
+
+  it('warns and keeps the edit, discardable, when the product leaves the results', async () => {
+    const slow = deferred<AdminProductPageDto>()
+    await renderPage()
+    vi.mocked(api.searchAdminProducts).mockReturnValueOnce(slow.promise)
+
+    await userEvent.type(
+      screen.getByRole('searchbox', { name: 'Search products' }),
+      'zinc',
+    )
+    await waitFor(() =>
+      expect(api.searchAdminProducts).toHaveBeenCalledTimes(2),
+    )
+    await typeStock('55')
+    slow.resolve(pageOf([product(2, 'Zinc')]))
+
+    expect(
+      await screen.findByText(/Unsaved stock edit for Vitamin D3/),
+    ).toBeVisible()
+    const unsaved = screen.getByRole('region', { name: 'Unsaved edits' })
+    expect(within(unsaved).getByText('Vitamin D3')).toBeVisible()
+    expect(within(unsaved).getByText('55')).toBeVisible()
+
+    await userEvent.click(
+      within(unsaved).getByRole('button', {
+        name: 'Discard edit for Vitamin D3',
+      }),
+    )
+
+    expect(
+      screen.queryByRole('region', { name: 'Unsaved edits' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('lets an edit that left the results still be saved', async () => {
+    vi.mocked(api.setProductStock).mockResolvedValue(
+      product(1, 'Vitamin D3', 55),
+    )
+    const slow = deferred<AdminProductPageDto>()
+    await renderPage()
+    vi.mocked(api.searchAdminProducts).mockReturnValueOnce(slow.promise)
+    await userEvent.type(
+      screen.getByRole('searchbox', { name: 'Search products' }),
+      'zinc',
+    )
+    await waitFor(() =>
+      expect(api.searchAdminProducts).toHaveBeenCalledTimes(2),
+    )
+    await typeStock('55')
+    slow.resolve(pageOf([product(2, 'Zinc')]))
+    const unsaved = await screen.findByRole('region', { name: 'Unsaved edits' })
+
+    await userEvent.click(
+      within(unsaved).getByRole('button', {
+        name: 'Save stock for Vitamin D3',
+      }),
+    )
+
+    expect(api.setProductStock).toHaveBeenCalledWith(1, {
+      stockQuantity: 55,
+      expectedStockQuantity: 40,
+    })
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('region', { name: 'Unsaved edits' }),
+      ).not.toBeInTheDocument(),
+    )
+  })
+
+  it('keeps a pending save across a refresh', async () => {
+    const save = deferred<AdminProductDto>()
+    vi.mocked(api.setProductStock).mockReturnValue(save.promise)
+    const { router } = await renderPage()
+    await typeStock('55')
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save stock for Vitamin D3' }),
+    )
+    expect(stockInput()).toBeDisabled()
+
+    await router.push('/admin/inventory?q=vit')
+    await waitFor(() =>
+      expect(api.searchAdminProducts).toHaveBeenCalledTimes(2),
+    )
+
+    expect(stockInput()).toBeDisabled()
+    save.resolve(product(1, 'Vitamin D3', 55))
+    await waitFor(() => expect(stockInput()).toBeEnabled())
+    expect(stockInput()).toHaveValue('55')
+  })
+})

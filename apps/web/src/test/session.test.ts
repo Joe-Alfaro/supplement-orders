@@ -2,6 +2,7 @@ import type { Role } from '@supplement-orders/domain'
 import userEvent from '@testing-library/user-event'
 import { render, screen } from '@testing-library/vue'
 import PrimeVue from 'primevue/config'
+import ToastService from 'primevue/toastservice'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory } from 'vue-router'
 import App from '../App.vue'
@@ -69,7 +70,9 @@ async function startApp(path: string) {
   const router = createAppRouter(createMemoryHistory())
   await router.push(path)
   await router.isReady()
-  render(App, { global: { plugins: [router, [PrimeVue, primeVueOptions]] } })
+  render(App, {
+    global: { plugins: [router, [PrimeVue, primeVueOptions], ToastService] },
+  })
   return router
 }
 

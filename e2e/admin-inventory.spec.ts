@@ -8,14 +8,28 @@ const PRODUCT = 'Methylated B-Complex (60 caps)'
 // Changes stock by +10 and then sets it to a new value. Other specs read stock
 // relative to their own baseline, so a shifted quantity does not affect them.
 
-async function openInventory(page: Page) {
-  await expect(page).toHaveURL(/\/admin\/inventory$/)
+// Waits for the search response itself, not a fixed delay: the table only
+// shows the one product once the filtered results have landed.
+async function searchForProduct(page: Page) {
+  const searched = page.waitForResponse(
+    (response) =>
+      response.url().includes('/api/admin/products') &&
+      response.url().includes('q=B-Complex') &&
+      response.ok(),
+  )
   await page
     .getByRole('searchbox', { name: 'Search products' })
     .fill('B-Complex')
+  await searched
   await expect(page.getByRole('row').filter({ hasText: PRODUCT })).toHaveCount(
     1,
   )
+  await expect(stockInput(page)).toBeVisible()
+}
+
+async function openInventory(page: Page) {
+  await expect(page).toHaveURL(/\/admin\/inventory$/)
+  await searchForProduct(page)
 }
 
 const stockInput = (page: Page) =>
@@ -56,9 +70,7 @@ test('admin adds stock, edits it directly, and the change survives a reload', as
   await test.step('the saved value is still there after a reload', async () => {
     await page.reload()
     await expect(page.getByRole('table', { name: 'Inventory' })).toBeVisible()
-    await page
-      .getByRole('searchbox', { name: 'Search products' })
-      .fill('B-Complex')
+    await searchForProduct(page)
     await expect(stockInput(page)).toHaveValue(String(target))
   })
 })

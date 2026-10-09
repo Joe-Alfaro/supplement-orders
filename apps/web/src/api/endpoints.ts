@@ -217,6 +217,14 @@ export function listUnresolvedPaymentAttempts() {
   )
 }
 
+/** POST .../:id/refund (admin only): records that a `refund_required` charge was refunded. */
+export function refundPaymentAttempt(attemptId: number) {
+  return request<AdminPaymentAttemptDto>(
+    'POST',
+    `/admin/payment-attempts/${attemptId}/refund`,
+  )
+}
+
 /** POST .../:id/reconcile (admin only); 409 RECONCILE_TOO_EARLY inside the window. */
 export function reconcilePaymentAttempt(attemptId: number) {
   return request<ReconcilePaymentAttemptDto>(

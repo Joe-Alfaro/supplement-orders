@@ -47,7 +47,9 @@ export type OrderStatus = (typeof ORDER_STATUSES)[number]
 /**
  * Payment attempt statuses (the database enum). Revision 18.2 adds
  * `abandoned`: reconciled by an admin after the gateway never saw the charge
- * within the safety window; its stock was released.
+ * within the safety window; its stock was released. Revision 19.1 adds
+ * `late_success` (the gateway charged an attempt that was no longer current)
+ * and `refund_required` (that charge duplicates a payment already recorded).
  */
 export const PAYMENT_ATTEMPT_STATUSES = [
   'pending',
@@ -55,6 +57,8 @@ export const PAYMENT_ATTEMPT_STATUSES = [
   'declined',
   'conflict',
   'abandoned',
+  'late_success',
+  'refund_required',
 ] as const
 export type PaymentAttemptStatus = (typeof PAYMENT_ATTEMPT_STATUSES)[number]
 

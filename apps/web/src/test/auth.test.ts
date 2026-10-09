@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory } from 'vue-router'
 import * as api from '../api'
 import PrimeVue from 'primevue/config'
+import ToastService from 'primevue/toastservice'
 import App from '../App.vue'
 import { primeVueOptions } from '../primevue'
 import { createAppRouter } from '../router'
@@ -51,7 +52,9 @@ async function startApp(path: string) {
   const router = createAppRouter(createMemoryHistory())
   await router.push(path)
   await router.isReady()
-  render(App, { global: { plugins: [router, [PrimeVue, primeVueOptions]] } })
+  render(App, {
+    global: { plugins: [router, [PrimeVue, primeVueOptions], ToastService] },
+  })
   return router
 }
 

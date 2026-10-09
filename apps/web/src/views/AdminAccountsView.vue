@@ -11,6 +11,7 @@ import {
   listAdminJournals,
   listUnresolvedPaymentAttempts,
   reconcilePaymentAttempt,
+  refundPaymentAttempt,
 } from '../api'
 import type {
   AdminPaymentAttemptDto,
@@ -43,6 +44,8 @@ const STATUS_LABELS = {
   conflict: 'Conflict',
   declined: 'Declined',
   abandoned: 'Abandoned',
+  late_success: 'Charged after abandonment',
+  refund_required: 'Refund required',
 } as const
 
 const OUTCOME_LABELS: Record<ReconcileOutcome, string> = {
@@ -77,6 +80,31 @@ async function reconcile(attempt: AdminPaymentAttemptDto) {
     await attempts.load()
   } finally {
     reconcilingId.value = null
+  }
+}
+
+function askRefund(attempt: AdminPaymentAttemptDto) {
+  confirm.require({
+    header: 'Mark refunded',
+    message: `Confirm that order #${attempt.orderId}'s duplicate ${formatCents(attempt.amountCents)} charge has been refunded?`,
+    rejectProps: { label: 'Cancel', severity: 'secondary' },
+    acceptProps: { label: 'Mark refunded' },
+    accept: () => markRefunded(attempt),
+  })
+}
+
+async function markRefunded(attempt: AdminPaymentAttemptDto) {
+  if (reconcilingId.value !== null) return
+  reconcilingId.value = attempt.id
+  reconcileError.value = null
+  try {
+    await refundPaymentAttempt(attempt.id)
+    showSuccess(`Order #${attempt.orderId} marked refunded`)
+  } catch (err) {
+    reconcileError.value = handleApiError(err)
+  } finally {
+    reconcilingId.value = null
+    await attempts.load()
   }
 }
 
@@ -144,9 +172,15 @@ onMounted(() => {
           /></template>
         </Column>
         <Column header="Status">
-          <template #body="{ data }">{{
-            STATUS_LABELS[data.status as PaymentAttemptStatus]
-          }}</template>
+          <template #body="{ data }">
+            <template v-if="data.status === 'refund_required'"
+              >Charged twice — refund
+              {{ formatCents(data.amountCents) }}</template
+            >
+            <template v-else>{{
+              STATUS_LABELS[data.status as PaymentAttemptStatus]
+            }}</template>
+          </template>
         </Column>
         <Column header="Age">
           <template #body="{ data }">{{ formatAge(data.ageSeconds) }}</template>
@@ -154,6 +188,17 @@ onMounted(() => {
         <Column header="Action">
           <template #body="{ data }">
             <Button
+              v-if="data.status === 'refund_required'"
+              label="Mark refunded"
+              size="small"
+              severity="secondary"
+              :aria-label="`Mark order ${data.orderId} refunded`"
+              :disabled="reconcilingId !== null"
+              :loading="reconcilingId === data.id"
+              @click="askRefund(data)"
+            />
+            <Button
+              v-else
               label="Reconcile"
               size="small"
               severity="secondary"
