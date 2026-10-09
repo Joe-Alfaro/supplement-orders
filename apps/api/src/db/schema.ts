@@ -182,6 +182,38 @@ export const products = pgTable(
   ],
 )
 
+/**
+ * Revision 20: a provider's default patient price for a product. Every
+ * provider has a row for every product, at the minimum until they change it:
+ * migration 0018 backfills them and triggers on providers and products
+ * create the rest. Order lines snapshot their own price and never write here.
+ */
+export const providerProductPrices = pgTable(
+  'provider_product_prices',
+  {
+    providerId: integer('provider_id')
+      .notNull()
+      .references(() => providers.id),
+    productId: integer('product_id')
+      .notNull()
+      .references(() => products.id),
+    unitPriceCents: cents('unit_price_cents').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique('provider_product_prices_provider_product_unique').on(
+      t.providerId,
+      t.productId,
+    ),
+    check(
+      'provider_product_prices_range',
+      sql`${t.unitPriceCents} between 1 and 1000000`,
+    ),
+  ],
+)
+
 export const orders = pgTable(
   'orders',
   {

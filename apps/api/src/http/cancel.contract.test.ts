@@ -153,7 +153,14 @@ const JOURNAL_KEYS = ['id', 'postedAt', 'memo', 'postings']
 
 const POSTING_KEYS = ['accountCode', 'accountName', 'debitCents', 'creditCents']
 
-const PRODUCT_KEYS = ['id', 'sku', 'name', 'cogsCents', 'stockQuantity']
+const PRODUCT_KEYS = [
+  'id',
+  'sku',
+  'name',
+  'cogsCents',
+  'stockQuantity',
+  'defaultUnitPriceCents',
+]
 
 const PATIENT_KEYS = [
   'id',

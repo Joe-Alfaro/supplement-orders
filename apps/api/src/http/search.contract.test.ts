@@ -24,7 +24,14 @@ import type { TestContext } from '../testing/harness'
 
 const PAGE_KEYS = ['items', 'total', 'offset', 'limit']
 
-const PRODUCT_KEYS = ['id', 'sku', 'name', 'cogsCents', 'stockQuantity']
+const PRODUCT_KEYS = [
+  'id',
+  'sku',
+  'name',
+  'cogsCents',
+  'stockQuantity',
+  'defaultUnitPriceCents',
+]
 
 const PATIENT_KEYS = [
   'id',

@@ -114,6 +114,9 @@ export const signInOptionDtoSchema: z.ZodType<SignInOptionDto> = z.object({
 /**
  * GET /api/products returns Page<ProductDto> (provider only: wholesale cost is internal).
  * Stock is read-only here; only an admin changes it (see AdminProductDto).
+ * Revision 20: `defaultUnitPriceCents` is the calling provider's default
+ * patient price for the product (never null; the minimum until they set one).
+ * It is also the body of PUT .../default-price and POST .../default-price/reset.
  */
 export interface ProductDto {
   id: number
@@ -121,6 +124,7 @@ export interface ProductDto {
   name: string
   cogsCents: number
   stockQuantity: number
+  defaultUnitPriceCents: number
 }
 
 export const productDtoSchema: z.ZodType<ProductDto> = z.object({
@@ -129,6 +133,7 @@ export const productDtoSchema: z.ZodType<ProductDto> = z.object({
   name: z.string(),
   cogsCents: cents,
   stockQuantity: z.int().nonnegative(),
+  defaultUnitPriceCents: z.int().positive(),
 })
 
 /**

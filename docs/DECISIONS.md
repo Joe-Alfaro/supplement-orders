@@ -403,6 +403,19 @@ M1 (FR5: inventory is edited by an admin, not the provider) and M2 (the public s
 - **Decision:** an `e2e` job in the official Playwright image pinned to the project's Playwright version (`mcr.microsoft.com/playwright:v1.63.0-noble`), with a `postgres:16` service on the `railway-deploy` runner, runs `npm run test:e2e` in parallel with `test`; `deploy` needs both. The job has a 20-minute timeout and keeps traces on failure.
 - **Why:** the browser suite was only a local gate, so a deploy could ship a UI regression the unit tests miss. A pinned image avoids downloading browsers on every run; its tag must move with `@playwright/test`.
 
+## Provider default patient prices (revision 20)
+
+**Defaults for every provider and product**
+
+- **Decision:** `provider_product_prices` holds one row per provider × product, always present and never below the minimum. Migration 0018 backfills it, and `AFTER INSERT` triggers on `providers` and `products` create the rows for anything added later, as the provider payable account trigger does. The migration makes the stored minimum at least 1 cent (`minDefaultPriceCents`), because the table requires 1 to 1,000,000 and a free product's minimum is 0.
+- **Why:** the user wanted a default for every product, so the add-line flow needs no minimum fallback. A trigger covers seeds, fixtures and future creation paths without each remembering to insert.
+- **Alternative:** sparse rows with a fallback to the minimum when none exists. Rejected: it keeps the fallback the user wanted gone.
+- **Note:** a cost whose minimum exceeds 1,000,000 cents would fail the trigger's insert. No such product can be priced anyway. `truncateAll` doesn't list the new table, so scratch databases migrated earlier still reset; CASCADE clears it.
+
+**Default is a pre-fill, not a rule**
+
+- **Decision:** `defaultUnitPriceCents` rides on the provider's product rows (dashboard list and add-dialog search), and set and reset return that row. Lines keep their own price snapshot, and editing a line never writes a default.
+
 ## What we cut
 
 - Real refunds (revision 19.1 only records that a duplicate charge was refunded), cancelling paid orders, and reopening paid orders.
