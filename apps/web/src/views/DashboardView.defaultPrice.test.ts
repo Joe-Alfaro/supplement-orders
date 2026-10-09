@@ -1,9 +1,8 @@
-import type { DashboardDto } from '@supplement-orders/domain'
+import type { DashboardDto, ProductDto } from '@supplement-orders/domain'
 import userEvent from '@testing-library/user-event'
 import { screen, within } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
-import type { ProviderProductDto } from '../api'
 import { ApiRequestError } from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
 import DashboardView from './DashboardView.vue'
@@ -34,7 +33,7 @@ const dashboard: DashboardDto = {
 }
 
 // $12.00 cost: the minimum price is 1200 + ceil(75 * 1200 / 9925) = $12.10.
-function vitaminD(defaultUnitPriceCents: number): ProviderProductDto {
+function vitaminD(defaultUnitPriceCents: number): ProductDto {
   return {
     id: 1,
     sku: 'VITD',
@@ -45,7 +44,7 @@ function vitaminD(defaultUnitPriceCents: number): ProviderProductDto {
   }
 }
 
-function serve(row: ProviderProductDto) {
+function serve(row: ProductDto) {
   vi.mocked(api.searchProducts).mockResolvedValue({
     items: [row],
     total: 1,

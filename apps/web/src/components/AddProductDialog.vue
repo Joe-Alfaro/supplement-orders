@@ -12,7 +12,8 @@ import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
 import Tag from 'primevue/tag'
 import { computed, nextTick, ref, watch } from 'vue'
-import { searchProducts, type ProviderProductDto } from '../api'
+import type { ProductDto } from '@supplement-orders/domain'
+import { searchProducts } from '../api'
 import {
   centsToInput,
   usePricingForm,
@@ -47,7 +48,7 @@ const step = ref<1 | 2>(1)
 const chosen = ref<LineProduct | null>(null)
 const form = usePricingForm(chosen, { idPrefix: 'add-product' })
 
-function unavailableReason(product: ProviderProductDto) {
+function unavailableReason(product: ProductDto) {
   if (props.excludedProductIds.includes(product.id)) return 'Already added'
   return null
 }
@@ -95,7 +96,7 @@ function onVisible(visible: boolean) {
   if (!visible) emit('close')
 }
 
-function onRowClick(event: DataTableRowClickEvent<ProviderProductDto>) {
+function onRowClick(event: DataTableRowClickEvent<ProductDto>) {
   choose(event.data)
 }
 
@@ -103,11 +104,11 @@ function onPage(event: DataTablePageEvent) {
   search.goTo(event.first)
 }
 
-function rowClass(product: ProviderProductDto) {
+function rowClass(product: ProductDto) {
   return unavailableReason(product) ? 'row-unavailable' : ''
 }
 
-async function choose(product: ProviderProductDto) {
+async function choose(product: ProductDto) {
   if (unavailableReason(product)) return
   chosen.value = product
   // The provider's default is never below the minimum, so a new line starts

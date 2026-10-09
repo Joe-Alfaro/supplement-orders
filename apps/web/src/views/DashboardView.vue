@@ -2,6 +2,7 @@
 import type {
   DashboardDto,
   DashboardRangePreset,
+  ProductDto,
 } from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import Column from 'primevue/column'
@@ -12,12 +13,7 @@ import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, type LocationQuery } from 'vue-router'
-import {
-  ApiRequestError,
-  getDashboard,
-  searchProducts,
-  type ProviderProductDto,
-} from '../api'
+import { ApiRequestError, getDashboard, searchProducts } from '../api'
 import {
   ErrorBanner,
   MoneyText,
@@ -106,10 +102,10 @@ const inventory = usePagedSearch(searchProducts, {
 listUrl.onLeave(inventory.cancel)
 
 // The product whose default price is being set; null when the dialog is closed.
-const pricing = ref<ProviderProductDto | null>(null)
+const pricing = ref<ProductDto | null>(null)
 
 /** Shows the server's row for a product in place, without refetching the page. */
-function showSavedDefault(updated: ProviderProductDto) {
+function showSavedDefault(updated: ProductDto) {
   const page = inventory.page.value
   if (!page) return
   inventory.page.value = {

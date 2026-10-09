@@ -1,9 +1,8 @@
-import type { PatientDto } from '@supplement-orders/domain'
+import type { PatientDto, ProductDto } from '@supplement-orders/domain'
 import userEvent from '@testing-library/user-event'
 import { screen, within } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
-import type { ProviderProductDto } from '../api'
 import { renderWithRouter } from '../test/renderWithRouter'
 import OrderBuilderView from './OrderBuilderView.vue'
 
@@ -22,7 +21,7 @@ vi.mock('../api', async (importOriginal) => {
 })
 
 // Vitamin D3's minimum price is $12.10; this provider's default is $20.00.
-const products: ProviderProductDto[] = [
+const products: ProductDto[] = [
   {
     id: 1,
     sku: 'VITD',

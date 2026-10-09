@@ -5,6 +5,7 @@ import type {
   PatientOrderDetailDto,
   PatientOrderSummaryDto,
   PatientPageDto,
+  ProductDto,
   ProviderOrderDetailDto,
   ProviderOrderSummaryDto,
   UserDto,
@@ -15,7 +16,6 @@ import PrimeVue from 'primevue/config'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory } from 'vue-router'
 import * as api from '../api'
-import type { ProviderProductDto } from '../api'
 import { atMinimum } from '../test/products'
 import App from '../App.vue'
 import { primeVueOptions } from '../primevue'
@@ -75,7 +75,7 @@ const patient: PatientDto = {
   latestOrderStatus: 'paid',
 }
 
-const vitamin: ProviderProductDto = atMinimum({
+const vitamin: ProductDto = atMinimum({
   id: 1,
   sku: 'VITD',
   name: 'Vitamin D3',
@@ -83,7 +83,7 @@ const vitamin: ProviderProductDto = atMinimum({
   stockQuantity: 10,
 })
 
-type ProductsPage = Page<ProviderProductDto>
+type ProductsPage = Page<ProductDto>
 
 const patientsPage: PatientPageDto = {
   items: [patient],

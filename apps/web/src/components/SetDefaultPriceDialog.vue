@@ -1,15 +1,11 @@
 <script setup lang="ts">
+import type { ProductDto } from '@supplement-orders/domain'
 import Button from 'primevue/button'
 import ConfirmDialog from 'primevue/confirmdialog'
 import Dialog from 'primevue/dialog'
 import { useConfirm } from 'primevue/useconfirm'
 import { computed, ref, watch } from 'vue'
-import {
-  handleApiError,
-  resetDefaultPrice,
-  setDefaultPrice,
-  type ProviderProductDto,
-} from '../api'
+import { handleApiError, resetDefaultPrice, setDefaultPrice } from '../api'
 import { centsToInput, usePricingForm } from '../builder'
 import { useSuccessToast } from '../toast'
 import ErrorBanner from './ErrorBanner.vue'
@@ -18,13 +14,13 @@ import PricingFields from './PricingFields.vue'
 
 interface Props {
   /** The product being priced; null keeps the dialog closed. */
-  product: ProviderProductDto | null
+  product: ProductDto | null
 }
 
 const props = defineProps<Props>()
 const emit = defineEmits<{
   close: []
-  saved: [product: ProviderProductDto]
+  saved: [product: ProductDto]
 }>()
 
 const confirm = useConfirm()
@@ -57,10 +53,7 @@ function onVisible(visible: boolean) {
   if (!visible) emit('close')
 }
 
-async function store(
-  action: () => Promise<ProviderProductDto>,
-  message: string,
-) {
+async function store(action: () => Promise<ProductDto>, message: string) {
   busy.value = true
   banner.value = null
   try {

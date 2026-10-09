@@ -18,8 +18,7 @@ import userEvent from '@testing-library/user-event'
 import type { UserEvent } from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
-import type { ProviderProductDto } from '../api'
-import { atMinimum } from '../test/products'
+import { atMinimum, type ProductFixture } from '../test/products'
 import { renderWithRouter } from '../test/renderWithRouter'
 import { useCurrentUser } from '../user'
 import AdminAccountsView from '../views/AdminAccountsView.vue'
@@ -85,7 +84,7 @@ const patient: PatientDto = {
   latestOrderStatus: 'paid',
 }
 
-const products: ProductDto[] = [
+const products: ProductFixture[] = [
   {
     id: 1,
     sku: 'VITD',
@@ -285,7 +284,7 @@ const dashboard: DashboardDto = {
   },
 }
 
-function productPage(query: ListQuery): Page<ProviderProductDto> {
+function productPage(query: ListQuery): Page<ProductDto> {
   const q = query.q?.toLowerCase() ?? ''
   const items = products.filter(
     (product) =>

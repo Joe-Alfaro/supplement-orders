@@ -9,8 +9,7 @@ import userEvent, { type UserEvent } from '@testing-library/user-event'
 import { screen, within } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
-import type { ProviderProductDto } from '../api'
-import { atMinimum } from '../test/products'
+import { atMinimum, type ProductFixture } from '../test/products'
 import { renderRoutes } from '../test/renderRoutes'
 import { renderWithRouter } from '../test/renderWithRouter'
 import { clearNoticeUnlessOn, notice } from '../user'
@@ -30,7 +29,7 @@ vi.mock('../api', async (importOriginal) => {
   }
 })
 
-const products: ProductDto[] = [
+const products: ProductFixture[] = [
   {
     id: 1,
     sku: 'VITD',
@@ -47,7 +46,7 @@ const products: ProductDto[] = [
 ]
 
 /** A fake GET /api/products: substring match on name or SKU, one page. */
-function productPage(query: ListQuery): Page<ProviderProductDto> {
+function productPage(query: ListQuery): Page<ProductDto> {
   const q = query.q?.toLowerCase() ?? ''
   const items = products.filter(
     (p) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q),

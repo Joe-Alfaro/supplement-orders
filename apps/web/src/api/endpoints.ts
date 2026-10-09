@@ -17,13 +17,13 @@ import type {
   OrderLineInput,
   OrderStatus,
   OrderSummaryDto,
-  Page,
   PatientDto,
   PatientPageDto,
   PatientOrderDetailDto,
   PayOrderRequest,
   SendOrderRequest,
   ProductDto,
+  ProductPageDto,
   ProviderOrderDetailDto,
   ReplaceOrderLinesRequest,
   SignInOptionDto,
@@ -53,35 +53,20 @@ function listQueryString(query: ListQuery) {
   return search ? `?${search}` : ''
 }
 
-/**
- * A product row for the calling provider (Revision 20). Provisional: the API
- * worker adds `defaultUnitPriceCents` to the domain `ProductDto`; switch to it
- * at merge.
- */
-export interface ProviderProductDto extends ProductDto {
-  /** This provider's default patient price; always at least the minimum. */
-  defaultUnitPriceCents: number
-}
-
 export function searchProducts(query: ListQuery = {}) {
-  return request<Page<ProviderProductDto>>(
-    'GET',
-    `/products${listQueryString(query)}`,
-  )
+  return request<ProductPageDto>('GET', `/products${listQueryString(query)}`)
 }
 
 /** PUT /api/products/:id/default-price: 400 VALIDATION_ERROR below the minimum. */
 export function setDefaultPrice(productId: number, unitPriceCents: number) {
-  return request<ProviderProductDto>(
-    'PUT',
-    `/products/${productId}/default-price`,
-    { unitPriceCents },
-  )
+  return request<ProductDto>('PUT', `/products/${productId}/default-price`, {
+    unitPriceCents,
+  })
 }
 
 /** POST /api/products/:id/default-price/reset: back to the minimum price. */
 export function resetDefaultPrice(productId: number) {
-  return request<ProviderProductDto>(
+  return request<ProductDto>(
     'POST',
     `/products/${productId}/default-price/reset`,
   )

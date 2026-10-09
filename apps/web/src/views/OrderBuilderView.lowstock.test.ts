@@ -1,13 +1,13 @@
 import type {
-  PatientDto,
   Page,
+  PatientDto,
+  ProductDto,
   ProviderOrderDetailDto,
 } from '@supplement-orders/domain'
 import userEvent from '@testing-library/user-event'
 import { screen, within } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
-import type { ProviderProductDto } from '../api'
 import { atMinimum } from '../test/products'
 import { renderWithRouter } from '../test/renderWithRouter'
 import OrderBuilderView from './OrderBuilderView.vue'
@@ -36,7 +36,7 @@ const patient: PatientDto = {
   latestOrderStatus: 'draft',
 }
 
-const productPage: Page<ProviderProductDto> = {
+const productPage: Page<ProductDto> = {
   items: [
     atMinimum({
       id: 2,
